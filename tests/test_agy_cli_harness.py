@@ -97,7 +97,8 @@ def _harness_fixture(tmp_path: Path) -> tuple[AGYCLIHarness, dict[str, str]]:
     fake = _write(
         tmp_path / "agy-fake",
         """#!/usr/bin/env python3
-import pathlib, re, sys
+import os, pathlib, re, sys
+os.umask(0o077)
 args = sys.argv[1:]
 prompt = args[args.index('--print') + 1]
 plan = re.search(r'plan to (.+?)\\. Then execute', prompt).group(1)

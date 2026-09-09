@@ -1,5 +1,6 @@
 """Distributed worker and execution engine for Prismatic Hypervisor."""
 
 from prismatic.worker.protocol import WorkerJob, WorkerNode, WorkerReceipt
+from prismatic.worker.harness import AgyHarnessRunner
 
-__all__ = ["WorkerJob", "WorkerNode", "WorkerReceipt"]
+__all__ = ["WorkerJob", "WorkerNode", "WorkerReceipt", "AgyHarnessRunner"]

@@ -11,6 +11,7 @@ from . import signals
 from . import tasks
 from .github import GitHubProvider
 from .llm import (
+    AntigravityProvider,
     BaseLLMProvider,
     LLMMessage,
     LLMRequest,
@@ -25,6 +26,7 @@ __all__ = [
     "signals",
     "tasks",
     "GitHubProvider",
+    "AntigravityProvider",
     "BaseLLMProvider",
     "LLMMessage",
     "LLMRequest",

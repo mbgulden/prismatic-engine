@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
+import subprocess
 import urllib.request
 import urllib.error
 from abc import ABC, abstractmethod
@@ -435,6 +438,180 @@ class MockProvider(BaseLLMProvider):
         return ["mock-model-v1"]
 
 
+class AntigravityProvider(BaseLLMProvider):
+    """Sovereign local/mesh inference provider via Google Antigravity CLI (agy-bin).
+
+    Provides keyless frontier reasoning (Gemini 3.8 Flash, Gemini 3.1 Pro, Claude Sonnet 4.6)
+    through the local authenticated AGY CLI binary using structured non-interactive JSON mode.
+    """
+
+    CANONICAL_MODELS = [
+        "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low",
+        "gemini-3.7-flash-high",
+        "gemini-3.7-flash-medium",
+        "gemini-3.7-flash-low",
+        "gemini-3.6-flash-high",
+        "gemini-3.6-flash-medium",
+        "gemini-3.6-flash-low",
+        "gemini-3.1-pro-high",
+        "gemini-3.1-pro-low",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6-thinking",
+        "gpt-oss-120b-medium",
+    ]
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        agy_binary: str | None = None,
+        default_model: str = "gemini-3.8-flash-high",
+        timeout: float = 60.0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(base_url=base_url or "agy://local", api_key=api_key, timeout=timeout, **kwargs)
+        self.default_model = default_model
+        self._agy_binary = self._resolve_binary(agy_binary)
+
+    @classmethod
+    def _resolve_binary(cls, preferred: str | None = None) -> str | None:
+        candidates = [
+            preferred,
+            os.environ.get("AGY_PATH"),
+            os.environ.get("AGY_BINARY"),
+            "/home/ubuntu/.local/bin/agy-bin",
+            "/home/ubuntu/.local/bin/agy",
+            shutil.which("agy-bin"),
+            shutil.which("agy"),
+        ]
+        for c in candidates:
+            if c and os.path.isfile(c) and os.access(c, os.X_OK):
+                return os.path.abspath(c)
+        return None
+
+    def check_health(self) -> bool:
+        if not self._agy_binary:
+            self._agy_binary = self._resolve_binary()
+        if not self._agy_binary or not os.path.isfile(self._agy_binary):
+            return False
+        try:
+            res = subprocess.run(
+                [self._agy_binary, "--help"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
+
+    def list_models(self) -> list[str]:
+        if not self._agy_binary:
+            self._agy_binary = self._resolve_binary()
+        if self._agy_binary and os.path.isfile(self._agy_binary):
+            try:
+                res = subprocess.run(
+                    [self._agy_binary, "models"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10.0,
+                )
+                if res.returncode == 0:
+                    models = []
+                    lines = res.stdout.replace("\r", "\n").splitlines()
+                    for line in lines:
+                        clean = re.sub(r"^.*?Fetching available models\.\.\.", "", line).strip()
+                        if clean:
+                            parts = clean.split()
+                            if parts and re.match(r"^[a-z0-9.-]+$", parts[0]):
+                                models.append(parts[0])
+                    if models:
+                        return models
+            except Exception as exc:
+                logger.debug("Failed to query live agy models: %s", exc)
+        return list(self.CANONICAL_MODELS)
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        if not self._agy_binary:
+            self._agy_binary = self._resolve_binary()
+        if not self._agy_binary:
+            raise RuntimeError("Antigravity binary (agy-bin) not found on host.")
+
+        # Build prompt from messages
+        prompt_parts: list[str] = []
+        for msg in request.messages:
+            if msg.role == "system":
+                prompt_parts.append(f"Instructions: {msg.content}\n")
+            elif msg.role == "user":
+                prompt_parts.append(msg.content)
+            elif msg.role == "assistant":
+                prompt_parts.append(f"Assistant: {msg.content}\n")
+        full_prompt = "\n".join(prompt_parts).strip()
+
+        model = request.model if request.model and request.model != "default" else self.default_model
+
+        cmd = [
+            self._agy_binary,
+            "--print",
+            full_prompt,
+            "--model",
+            model,
+            "--output-format",
+            "json",
+            "--dangerously-skip-permissions",
+        ]
+
+        try:
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"AGY inference timed out after {self.timeout}s") from exc
+        except Exception as exc:
+            raise RuntimeError(f"AGY execution failed: {exc}") from exc
+
+        if res.returncode != 0:
+            err = res.stderr.strip() or res.stdout.strip()
+            raise RuntimeError(f"AGY exited with code {res.returncode}: {err}")
+
+        try:
+            payload = json.loads(res.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Failed to parse AGY JSON response: {res.stdout}") from exc
+
+        text = payload.get("response", "")
+        raw_usage = payload.get("usage", {})
+        usage = {
+            "prompt_tokens": raw_usage.get("input_tokens", raw_usage.get("prompt_tokens", 0)),
+            "completion_tokens": raw_usage.get("output_tokens", raw_usage.get("completion_tokens", 0)),
+            "total_tokens": raw_usage.get("total_tokens", 0),
+            "thinking_tokens": raw_usage.get("thinking_tokens", 0),
+        }
+
+        return LLMResponse(
+            text=text,
+            model=model,
+            provider="antigravity",
+            finish_reason="stop" if payload.get("status") == "SUCCESS" else str(payload.get("status", "unknown")),
+            usage=usage,
+            raw=payload,
+        )
+
+    def stream_generate(self, request: LLMRequest) -> Iterator[str]:
+        full_resp = self.generate(request)
+        words = full_resp.text.split(" ")
+        for i, word in enumerate(words):
+            if i < len(words) - 1:
+                yield word + " "
+            else:
+                yield word
+
+
 def get_llm_provider(
     provider_name: str | None = None,
     base_url: str | None = None,
@@ -442,10 +619,23 @@ def get_llm_provider(
     **kwargs: Any,
 ) -> BaseLLMProvider:
     """Factory to acquire an instantiated LLMProvider based on configuration or environment."""
-    name = (provider_name or os.environ.get("PRISMATIC_LLM_PROVIDER") or "ollama").lower().strip()
+    env_provider = os.environ.get("PRISMATIC_LLM_PROVIDER")
+    if provider_name:
+        name = provider_name.lower().strip()
+    elif env_provider:
+        name = env_provider.lower().strip()
+    else:
+        # Default probe: if local agy-bin exists, use antigravity; else ollama
+        agy_bin = AntigravityProvider._resolve_binary()
+        if agy_bin:
+            name = "antigravity"
+        else:
+            name = "ollama"
 
     if name == "mock":
         return MockProvider(**kwargs)
+    elif name in {"antigravity", "agy"}:
+        return AntigravityProvider(base_url=base_url, api_key=api_key, **kwargs)
     elif name in {"ollama", "local"}:
         return OllamaProvider(base_url=base_url, api_key=api_key, **kwargs)
     elif name in {"vllm", "tgi"}:

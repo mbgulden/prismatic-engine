@@ -199,18 +199,34 @@ class WorkerDaemon:
         exit_code = 0
         artifacts: dict[str, Any] = {}
 
+        job_meta = getattr(job, "metadata", {}) or {}
+        is_agy_task = (
+            job_meta.get("harness") == "agy"
+            or any(t in {"agy", "antigravity"} for t in job.tags)
+            or job.command.strip().startswith(("agy ", "agy-bin ", "/home/ubuntu/.local/bin/agy"))
+        )
+
         try:
-            # Execute command in shell
-            proc = subprocess.run(
-                job.command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=job.timeout_seconds,
-            )
-            stdout = proc.stdout
-            stderr = proc.stderr
-            exit_code = proc.returncode
+            if is_agy_task:
+                from .harness import AgyHarnessRunner
+                runner = AgyHarnessRunner()
+                res = runner.execute(job)
+                stdout = res.stdout
+                stderr = res.stderr
+                exit_code = res.exit_code
+                artifacts.update(res.artifacts)
+            else:
+                # Execute command in shell
+                proc = subprocess.run(
+                    job.command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=job.timeout_seconds,
+                )
+                stdout = proc.stdout
+                stderr = proc.stderr
+                exit_code = proc.returncode
         except subprocess.TimeoutExpired:
             stderr = f"Job timed out after {job.timeout_seconds}s"
             exit_code = 124

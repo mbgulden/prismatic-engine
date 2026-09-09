@@ -5531,10 +5531,77 @@ async def get_chat_session(session_id: str):
             status_code=404,
             detail={
                 "error": "session_not_found",
-                "reason": f"Session '{session_id}' not found under the v0.1 contract (no live data path).",
+                "reason": f"Session '{session_id}' not found under the live brain archive.",
             },
         )
     return session
+
+
+@app.get("/api/gateway/agy/sessions")
+async def gateway_list_agy_sessions() -> list[dict[str, Any]]:
+    """Gateway API alias for AGY chat sessions."""
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    return cap.list_sessions()
+
+
+@app.get("/api/gateway/antigravity/status")
+@app.get("/api/antigravity/status")
+async def gateway_antigravity_status() -> dict[str, Any]:
+    """Get full system telemetry and operational status of Antigravity CLI and daemon."""
+    import hashlib
+    import os
+    import re
+    import subprocess
+    from pathlib import Path
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+    from prismatic.providers.llm import AntigravityProvider
+
+    cap = ChatAGYCapability()
+    reachable, reach_msg = cap.check_status()
+    provider = AntigravityProvider()
+    binary_path = provider._agy_binary
+    binary_sha = ""
+    if binary_path and os.path.isfile(binary_path):
+        try:
+            binary_sha = hashlib.sha256(Path(binary_path).read_bytes()).hexdigest()
+        except Exception:
+            pass
+
+    listening_ports = []
+    try:
+        ss_out = subprocess.run(
+            "ss -tulpn | grep agy-bin | awk '{print $5}'",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        ).stdout.strip()
+        for line in ss_out.splitlines():
+            m = re.search(r":(\d+)$", line)
+            if m:
+                listening_ports.append(int(m.group(1)))
+    except Exception:
+        pass
+
+    sessions_count = len(cap.list_sessions(limit=1000))
+    models = provider.list_models()
+
+    return {
+        "ok": reachable,
+        "status": "online" if reachable else "offline",
+        "message": reach_msg,
+        "binary_path": binary_path,
+        "binary_sha256": binary_sha,
+        "remote_control_instance": "hermes-webtop",
+        "remote_control_ports": listening_ports,
+        "proxy_port": 40589,
+        "available_models": models,
+        "recorded_sessions_count": sessions_count,
+        "active_brain_dirs": [str(d) for d in cap._get_brain_dirs()],
+    }
+
 
 
 # ── Schedule Observatory Endpoints ─────────────────────────────────

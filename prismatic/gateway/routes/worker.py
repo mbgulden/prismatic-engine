@@ -19,6 +19,12 @@ def get_queue_manager() -> WorkerQueueManager:
     return _queue_manager
 
 
+def set_queue_manager(manager: WorkerQueueManager | None) -> None:
+    """Set or reset the active queue manager instance (useful for test isolation)."""
+    global _queue_manager
+    _queue_manager = manager
+
+
 @worker_router.post("/api/gateway/jobs/enqueue")
 async def gateway_enqueue_job(request: Request) -> JSONResponse:
     """Enqueue a job into the distributed execution queue."""

@@ -3,8 +3,18 @@
 import pytest
 from fastapi.testclient import TestClient
 from prismatic.gateway.server import app
-from prismatic.gateway.routes.worker import get_queue_manager
+from prismatic.gateway.routes.worker import get_queue_manager, set_queue_manager
+from prismatic.worker.queue import WorkerQueueManager
 from prismatic.worker.daemon import WorkerDaemon
+
+
+@pytest.fixture(autouse=True)
+def isolated_worker_queue(tmp_path):
+    """Ensure every test operates on an isolated temporary SQLite queue."""
+    mgr = WorkerQueueManager(db_path=tmp_path / "test_worker_queue.db")
+    set_queue_manager(mgr)
+    yield mgr
+    set_queue_manager(None)
 
 
 def test_gateway_worker_routes_and_job_execution(tmp_path):
@@ -176,4 +186,48 @@ def test_worker_daemon_full_loop():
     assert matching[0]["result"]["exit_code"] == 0
 
 
+def test_agy_harness_runner_execution():
+    from prismatic.worker.harness import AgyHarnessRunner
+    from prismatic.worker.protocol import WorkerJob
 
+    runner = AgyHarnessRunner()
+    assert runner.is_available() is True
+
+    job = WorkerJob(
+        id="job-agy-test-1",
+        task_id="GRO-AGY-1",
+        command="Respond with exactly: HARNESS_OK",
+        tags=["agy"],
+        metadata={"harness": "agy", "model": "gemini-3.8-flash-high"},
+    )
+
+    result = runner.execute(job)
+    assert result.exit_code == 0
+    assert "HARNESS_OK" in result.stdout
+    assert result.artifacts.get("harness") == "agy"
+    assert result.artifacts.get("conversation_id") != ""
+
+
+def test_worker_daemon_execute_agy_job():
+    from prismatic.worker.daemon import WorkerDaemon
+    from prismatic.worker.protocol import WorkerJob
+
+    daemon = WorkerDaemon(
+        gateway_url="http://localhost:9000",
+        node_id="test-agy-worker-node",
+        tags=["general", "agy"],
+    )
+
+    job = WorkerJob(
+        id="job-agy-daemon-test",
+        task_id="GRO-AGY-DAEMON",
+        command="Respond with: DAEMON_AGY_SUCCESS",
+        tags=["agy"],
+        metadata={"harness": "agy", "model": "gemini-3.8-flash-high"},
+    )
+
+    receipt = daemon._execute_job(job)
+    assert receipt.exit_code == 0
+    assert "DAEMON_AGY_SUCCESS" in receipt.stdout
+    assert receipt.artifacts.get("harness") == "agy"
+    assert len(receipt.dld_digest) == 64

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import time
 import uuid
@@ -20,12 +21,16 @@ class WorkerQueueManager:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            base_dir = Path.home() / ".prismatic"
-            base_dir.mkdir(parents=True, exist_ok=True)
-            self.db_path = base_dir / "worker_queue.db"
+            env_db = os.environ.get("PRISMATIC_WORKER_QUEUE_DB")
+            if env_db:
+                self.db_path = Path(env_db)
+            else:
+                base_dir = Path.home() / ".prismatic"
+                base_dir.mkdir(parents=True, exist_ok=True)
+                self.db_path = base_dir / "worker_queue.db"
         else:
             self.db_path = Path(db_path)
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._init_db()
 

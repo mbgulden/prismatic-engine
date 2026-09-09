@@ -21,6 +21,7 @@ class WorkerJob:
     node_id: str | None = None
     lease_id: str | None = None
     fence_token: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
     result: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -41,6 +42,7 @@ class WorkerJob:
             node_id=data.get("node_id"),
             lease_id=data.get("lease_id"),
             fence_token=data.get("fence_token", 0),
+            metadata=data.get("metadata") or {},
             result=data.get("result") or {},
             created_at=data.get("created_at", time.time()),
             updated_at=data.get("updated_at", time.time()),
