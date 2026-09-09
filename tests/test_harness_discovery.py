@@ -34,11 +34,22 @@ def test_harness_discovery_manager_hermes():
     assert "review" in george_h.tags
 
 
-def test_hermes_profile_runner_execution(tmp_path):
+def test_hermes_profile_runner_execution(monkeypatch):
+    import subprocess
     runner = HermesProfileRunner()
     assert runner.is_available() is True
 
-    # Test execution with live george profile
+    # Deterministic mocked test
+    def mock_subprocess_run(cmd, capture_output=True, text=True, timeout=None, env=None):
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout="HERMES_PROFILE_OK\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+
     job = WorkerJob(
         id="job-hermes-discovery-test",
         task_id="GRO-HERMES-DISCOVERY",

@@ -1,8 +1,1281 @@
 {
+  "updated_at": 1788968301.4602888,
+  "total_harnesses": 38,
   "harnesses": [
-    {"name": "agy-cli", "module": "prismatic.harnesses.agy_cli", "enabled": true},
-    {"name": "codex-cli", "module": "prismatic.harnesses.codex_cli", "enabled": false},
-    {"name": "hermes", "module": "prismatic.harnesses.hermes", "enabled": true},
-    {"name": "vllm", "module": "prismatic.harnesses.vllm", "enabled": false}
+    {
+      "id": "agy:gemini-3.8-flash-high",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.8-flash-high",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.8-flash-high",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.8-flash-high",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058368,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.8-flash-medium",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.8-flash-medium",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.8-flash-medium",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.8-flash-medium",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058406,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.8-flash-low",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.8-flash-low",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.8-flash-low",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.8-flash-low",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058433,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.7-flash-high",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.7-flash-high",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.7-flash-high",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.7-flash-high",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.405846,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.7-flash-medium",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.7-flash-medium",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.7-flash-medium",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.7-flash-medium",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058483,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.7-flash-low",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.7-flash-low",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.7-flash-low",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.7-flash-low",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058506,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.6-flash-high",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.6-flash-high",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.6-flash-high",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.6-flash-high",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058533,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.6-flash-medium",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.6-flash-medium",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.6-flash-medium",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.6-flash-medium",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.405855,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.6-flash-low",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.6-flash-low",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.6-flash-low",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.6-flash-low",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058573,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.1-pro-high",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.1-pro-high",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.1-pro-high",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.1-pro-high",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058595,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gemini-3.1-pro-low",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gemini-3.1-pro-low",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gemini-3.1-pro-low",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gemini-3.1-pro-low",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058614,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:claude-sonnet-4-6",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "claude-sonnet-4-6",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "claude-sonnet-4-6",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "claude-sonnet-4-6",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058633,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:claude-opus-4-6-thinking",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "claude-opus-4-6-thinking",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "claude-opus-4-6-thinking",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "claude-opus-4-6-thinking",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058652,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "agy:gpt-oss-120b-medium",
+      "kind": "agy",
+      "name": "Google Antigravity",
+      "target": "gpt-oss-120b-medium",
+      "binary": "/home/ubuntu/.local/bin/agy-bin",
+      "endpoint": "",
+      "env": {},
+      "tags": [
+        "agy",
+        "antigravity",
+        "gpt-oss-120b-medium",
+        "general",
+        "code"
+      ],
+      "capabilities": [
+        "streaming",
+        "tools",
+        "worktrees",
+        "non-interactive",
+        "json-mode"
+      ],
+      "status": "online",
+      "metadata": {
+        "model": "gpt-oss-120b-medium",
+        "subscription": "Google One AI Ultra",
+        "cost_tier": "subscription-unlimited"
+      },
+      "last_discovered": 1788968301.4058673,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:active-oahu",
+      "kind": "hermes",
+      "name": "Hermes (Active-oahu)",
+      "target": "active-oahu",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/active-oahu"
+      },
+      "tags": [
+        "hermes",
+        "active-oahu",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "active-oahu",
+        "home_dir": "/home/ubuntu/.hermes/profiles/active-oahu",
+        "model": "k-v4-",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4477584,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:agy",
+      "kind": "hermes",
+      "name": "Hermes (Agy)",
+      "target": "agy",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/agy"
+      },
+      "tags": [
+        "hermes",
+        "agy",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "agy",
+        "home_dir": "/home/ubuntu/.hermes/profiles/agy",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4480407,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:ai-consulting",
+      "kind": "hermes",
+      "name": "Hermes (Ai-consulting)",
+      "target": "ai-consulting",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/ai-consulting"
+      },
+      "tags": [
+        "hermes",
+        "ai-consulting",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "ai-consulting",
+        "home_dir": "/home/ubuntu/.hermes/profiles/ai-consulting",
+        "model": "k-v4-",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4484909,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:autobot",
+      "kind": "hermes",
+      "name": "Hermes (Autobot)",
+      "target": "autobot",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/autobot"
+      },
+      "tags": [
+        "hermes",
+        "autobot",
+        "agent",
+        "ingestion",
+        "automation",
+        "fast"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "autobot",
+        "home_dir": "/home/ubuntu/.hermes/profiles/autobot",
+        "model": "",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4489958,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:beyondsaas-leads",
+      "kind": "hermes",
+      "name": "Hermes (Beyondsaas-leads)",
+      "target": "beyondsaas-leads",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/beyondsaas-leads"
+      },
+      "tags": [
+        "hermes",
+        "beyondsaas-leads",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "beyondsaas-leads",
+        "home_dir": "/home/ubuntu/.hermes/profiles/beyondsaas-leads",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4492464,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:codex-5-4",
+      "kind": "hermes",
+      "name": "Hermes (Codex-5-4)",
+      "target": "codex-5-4",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/codex-5-4"
+      },
+      "tags": [
+        "hermes",
+        "codex-5-4",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "codex-5-4",
+        "home_dir": "/home/ubuntu/.hermes/profiles/codex-5-4",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.449519,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:codex-5-5",
+      "kind": "hermes",
+      "name": "Hermes (Codex-5-5)",
+      "target": "codex-5-5",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/codex-5-5"
+      },
+      "tags": [
+        "hermes",
+        "codex-5-5",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "codex-5-5",
+        "home_dir": "/home/ubuntu/.hermes/profiles/codex-5-5",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4497836,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:deepseekv4",
+      "kind": "hermes",
+      "name": "Hermes (Deepseekv4)",
+      "target": "deepseekv4",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/deepseekv4"
+      },
+      "tags": [
+        "hermes",
+        "deepseekv4",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "deepseekv4",
+        "home_dir": "/home/ubuntu/.hermes/profiles/deepseekv4",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4500415,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:fred",
+      "kind": "hermes",
+      "name": "Hermes (Fred)",
+      "target": "fred",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/orchestrator"
+      },
+      "tags": [
+        "hermes",
+        "fred",
+        "agent",
+        "coordinator",
+        "dispatch",
+        "swarm"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "fred",
+        "home_dir": "/home/ubuntu/.hermes/profiles/fred",
+        "model": "",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4507668,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:george",
+      "kind": "hermes",
+      "name": "Hermes (George)",
+      "target": "george",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/george"
+      },
+      "tags": [
+        "hermes",
+        "george",
+        "agent",
+        "review",
+        "architecture",
+        "audit"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "george",
+        "home_dir": "/home/ubuntu/.hermes/profiles/george",
+        "model": "qwen3.8-27b",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4513187,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:google-ai-toolkit",
+      "kind": "hermes",
+      "name": "Hermes (Google-ai-toolkit)",
+      "target": "google-ai-toolkit",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/google-ai-toolkit"
+      },
+      "tags": [
+        "hermes",
+        "google-ai-toolkit",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "google-ai-toolkit",
+        "home_dir": "/home/ubuntu/.hermes/profiles/google-ai-toolkit",
+        "model": "k-v4-",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4517996,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:hdengine",
+      "kind": "hermes",
+      "name": "Hermes (Hdengine)",
+      "target": "hdengine",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/hdengine"
+      },
+      "tags": [
+        "hermes",
+        "hdengine",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "hdengine",
+        "home_dir": "/home/ubuntu/.hermes/profiles/hdengine",
+        "model": "cal-qwen-27b-q8-",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4522827,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:hermeslocal",
+      "kind": "hermes",
+      "name": "Hermes (Hermeslocal)",
+      "target": "hermeslocal",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/hermeslocal"
+      },
+      "tags": [
+        "hermes",
+        "hermeslocal",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "hermeslocal",
+        "home_dir": "/home/ubuntu/.hermes/profiles/hermeslocal",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4525952,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:home",
+      "kind": "hermes",
+      "name": "Hermes (Home)",
+      "target": "home",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/home"
+      },
+      "tags": [
+        "hermes",
+        "home",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "home",
+        "home_dir": "/home/ubuntu/.hermes/profiles/home",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4528852,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:jules",
+      "kind": "hermes",
+      "name": "Hermes (Jules)",
+      "target": "jules",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/jules"
+      },
+      "tags": [
+        "hermes",
+        "jules",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "jules",
+        "home_dir": "/home/ubuntu/.hermes/profiles/jules",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4531722,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:kai",
+      "kind": "hermes",
+      "name": "Hermes (Kai)",
+      "target": "kai",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/kai"
+      },
+      "tags": [
+        "hermes",
+        "kai",
+        "agent",
+        "frontend",
+        "css",
+        "ui",
+        "tailwind"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "kai",
+        "home_dir": "/home/ubuntu/.hermes/profiles/kai",
+        "model": "",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4537432,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:kai-content",
+      "kind": "hermes",
+      "name": "Hermes (Kai-content)",
+      "target": "kai-content",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/kai-content"
+      },
+      "tags": [
+        "hermes",
+        "kai-content",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "kai-content",
+        "home_dir": "/home/ubuntu/.hermes/profiles/kai-content",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.454036,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:kai-css",
+      "kind": "hermes",
+      "name": "Hermes (Kai-css)",
+      "target": "kai-css",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/kai-css"
+      },
+      "tags": [
+        "hermes",
+        "kai-css",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "kai-css",
+        "home_dir": "/home/ubuntu/.hermes/profiles/kai-css",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4543288,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:kai-js",
+      "kind": "hermes",
+      "name": "Hermes (Kai-js)",
+      "target": "kai-js",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/kai-js"
+      },
+      "tags": [
+        "hermes",
+        "kai-js",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "kai-js",
+        "home_dir": "/home/ubuntu/.hermes/profiles/kai-js",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4546354,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:ned",
+      "kind": "hermes",
+      "name": "Hermes (Ned)",
+      "target": "ned",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/ned"
+      },
+      "tags": [
+        "hermes",
+        "ned",
+        "agent",
+        "backend",
+        "engine",
+        "python"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "ned",
+        "home_dir": "/home/ubuntu/.hermes/profiles/ned",
+        "model": "",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4551964,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:next-step",
+      "kind": "hermes",
+      "name": "Hermes (Next-step)",
+      "target": "next-step",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/next-step"
+      },
+      "tags": [
+        "hermes",
+        "next-step",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "next-step",
+        "home_dir": "/home/ubuntu/.hermes/profiles/next-step",
+        "model": "",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.455821,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:orchestrator",
+      "kind": "hermes",
+      "name": "Hermes (Orchestrator)",
+      "target": "orchestrator",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/orchestrator"
+      },
+      "tags": [
+        "hermes",
+        "orchestrator",
+        "agent",
+        "coordinator",
+        "dispatch",
+        "swarm"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "orchestrator",
+        "home_dir": "/home/ubuntu/.hermes/profiles/orchestrator",
+        "model": "",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.4564447,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "hermes:qwenlocal",
+      "kind": "hermes",
+      "name": "Hermes (Qwenlocal)",
+      "target": "qwenlocal",
+      "binary": "/home/ubuntu/.local/bin/hermes",
+      "endpoint": "",
+      "env": {
+        "HERMES_HOME": "/home/ubuntu/.hermes/profiles/qwenlocal"
+      },
+      "tags": [
+        "hermes",
+        "qwenlocal",
+        "agent"
+      ],
+      "capabilities": [
+        "one-shot",
+        "tools",
+        "multi-turn",
+        "mcp",
+        "memory"
+      ],
+      "status": "ready",
+      "metadata": {
+        "profile": "qwenlocal",
+        "home_dir": "/home/ubuntu/.hermes/profiles/qwenlocal",
+        "model": "unknown",
+        "provider": "local",
+        "daemon_running": false
+      },
+      "last_discovered": 1788968301.456749,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    },
+    {
+      "id": "deepseek-local:qwen3.8-27b",
+      "kind": "deepseek-local",
+      "name": "DEEPSEEK-LOCAL (qwen3.8-27b)",
+      "target": "qwen3.8-27b",
+      "binary": "",
+      "endpoint": "http://192.168.1.232:8080/v1",
+      "env": {},
+      "tags": [
+        "deepseek-local",
+        "local-inference",
+        "qwen3.8-27b"
+      ],
+      "capabilities": [
+        "completions",
+        "streaming"
+      ],
+      "status": "online",
+      "metadata": {
+        "endpoint": "http://192.168.1.232:8080/v1/models",
+        "model": "qwen3.8-27b"
+      },
+      "last_discovered": 1788968301.4602757,
+      "last_benchmarked": 0.0,
+      "benchmark_latency_seconds": 0.0
+    }
   ]
 }
