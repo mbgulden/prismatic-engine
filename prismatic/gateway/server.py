@@ -4463,14 +4463,18 @@ async def gateway_emit_signal(body: dict[str, Any]) -> dict[str, Any]:
     """Emit a durable signal event from CLI, agent harness, or webhook."""
     from prismatic.agent_signal_stream import record_agent_signal
 
+    raw_agent = str(body.get("agent") or body.get("agent_id") or "unknown").strip().lower()
+    if raw_agent == "orchestrator":
+        raw_agent = "fred"
+
     item = record_agent_signal(
-        agent=body.get("agent", "unknown"),
-        event_type=body.get("event_type", "custom"),
+        agent=raw_agent,
+        event_type=body.get("event_type") or body.get("stage") or "custom",
         issue_id=body.get("issue_id", ""),
-        status=body.get("status", "info"),
+        status=body.get("status") or body.get("stage") or "info",
         message=body.get("message", ""),
         run_id=body.get("run_id", ""),
-        source=body.get("source", "api"),
+        source=body.get("source") or ("hermes" if raw_agent in {"fred", "george", "kai", "ned"} else "api"),
         severity=body.get("severity", "info"),
         metadata=body.get("metadata"),
     )
