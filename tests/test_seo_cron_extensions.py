@@ -15,8 +15,8 @@ def write_fixture_site(root: Path) -> Path:
     (site / "orphan").mkdir(parents=True)
     (site / "index.html").write_text(
         """
-        <html><head><title>Home</title><meta name="description" content="Tours"><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"AOT"}</script></head>
-        <body><h1>Active Oahu Tours</h1><a href="/kayak/">Kayak</a><a href="/missing/">Missing</a></body></html>
+        <html><head><title>Home</title><meta name="description" content="Tours"><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"ManagedSite"}</script></head>
+        <body><h1>Managed Site Portal</h1><a href="/kayak/">Kayak</a><a href="/missing/">Missing</a></body></html>
         """,
         encoding="utf-8",
     )

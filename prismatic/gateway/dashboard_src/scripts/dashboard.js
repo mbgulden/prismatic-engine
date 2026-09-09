@@ -6110,7 +6110,7 @@
                 if (icon) icon.textContent = "⏸";
                 if (label) label.textContent = "Pause Fleet";
                 if (headline) headline.textContent = "Swarm Fleet Operational & Synchronized";
-                if (subhead) subhead.textContent = "Fred, Kai, Ned, and Autobot are actively monitoring queues. Concurrency safety verified.";
+                if (subhead) subhead.textContent = "Autonomous agent fleet actively monitoring queues. Concurrency safety verified.";
                 if (dot) dot.className = "relative inline-flex rounded-full h-5 w-5 bg-emerald-500";
                 if (ping) ping.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75";
             }
@@ -6125,6 +6125,21 @@
                     const deflectionsCount = document.getElementById('pulse-deflections-count');
                     if (activeCount) activeCount.textContent = String(data.active_lock_count || 0);
                     if (deflectionsCount) deflectionsCount.textContent = String(data.deflected_collisions || 0);
+                }
+
+                const agentsRes = await fetch("/api/agents");
+                if (agentsRes.ok) {
+                    const agentData = await agentsRes.json();
+                    let agentsList = [];
+                    if (Array.isArray(agentData.agents)) {
+                        agentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        agentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    }
+                    renderFleetPulseCards(agentsList);
                 }
             } catch (err) {
                 console.debug("Failed fetching pulse data:", err);

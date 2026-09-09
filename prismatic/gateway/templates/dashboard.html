@@ -4503,7 +4503,7 @@ body.light-mode #dag-node-inspector-drawer {
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Dual-Mode Framework Importer</h3>
                                 <div>
                                     <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Client Property</label>
-                                    <input id="pwp-ingest-client" type="text" value="Active Oahu Tours" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <input id="pwp-ingest-client" type="text" value="Prismatic Showcase" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                                 </div>
                                 
                                 <div class="space-y-2">
@@ -4530,7 +4530,7 @@ body.light-mode #dag-node-inspector-drawer {
                             <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
                                 <div class="flex items-center justify-between">
                                     <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Client Knowledge Graph</h3>
-                                    <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Active Oahu Tours</span>
+                                    <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Prismatic Showcase</span>
                                 </div>
                                 <div id="pwp-graph-viewer" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[320px] overflow-y-auto text-xs font-mono text-slate-300">
                                     <!-- Knowledge graph JSON rendered here -->
@@ -4546,7 +4546,7 @@ body.light-mode #dag-node-inspector-drawer {
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Site Synthesis Configurator</h3>
                                 <div>
                                     <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Site Name</label>
-                                    <input id="pwp-synth-sitename" type="text" value="Active Oahu Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <input id="pwp-synth-sitename" type="text" value="Prismatic Engine Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                                 </div>
                                 <div>
                                     <label class="block text-[11px] font-medium text-slate-400 mb-1">Base Theme Blueprint</label>
@@ -5060,7 +5060,7 @@ body.light-mode #dag-node-inspector-drawer {
 
             async function pwpExportProjectScaffold() {
                 const select = document.getElementById('pwp-workspace-selector');
-                const slug = select ? select.value : 'active-oahu';
+                const slug = select ? select.value : 'prismatic-core';
                 const res = await fetch('/api/pwp/export-project', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -5097,7 +5097,7 @@ body.light-mode #dag-node-inspector-drawer {
 
             function pwpOpenConfigureKPIModal() {
                 const select = document.getElementById('pwp-workspace-selector');
-                const slug = select ? select.value : 'active-oahu';
+                const slug = select ? select.value : 'prismatic-core';
                 pwpConfigureWorkspaceKPIPrompt(slug);
             }
 
@@ -11770,7 +11770,7 @@ body.light-mode #dag-node-inspector-drawer {
                 if (icon) icon.textContent = "⏸";
                 if (label) label.textContent = "Pause Fleet";
                 if (headline) headline.textContent = "Swarm Fleet Operational & Synchronized";
-                if (subhead) subhead.textContent = "Fred, Kai, Ned, and Autobot are actively monitoring queues. Concurrency safety verified.";
+                if (subhead) subhead.textContent = "Autonomous agent fleet actively monitoring queues. Concurrency safety verified.";
                 if (dot) dot.className = "relative inline-flex rounded-full h-5 w-5 bg-emerald-500";
                 if (ping) ping.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75";
             }
@@ -11785,6 +11785,21 @@ body.light-mode #dag-node-inspector-drawer {
                     const deflectionsCount = document.getElementById('pulse-deflections-count');
                     if (activeCount) activeCount.textContent = String(data.active_lock_count || 0);
                     if (deflectionsCount) deflectionsCount.textContent = String(data.deflected_collisions || 0);
+                }
+
+                const agentsRes = await fetch("/api/agents");
+                if (agentsRes.ok) {
+                    const agentData = await agentsRes.json();
+                    let agentsList = [];
+                    if (Array.isArray(agentData.agents)) {
+                        agentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        agentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    }
+                    renderFleetPulseCards(agentsList);
                 }
             } catch (err) {
                 console.debug("Failed fetching pulse data:", err);

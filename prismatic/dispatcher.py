@@ -1336,50 +1336,131 @@ def record_launch_record(
 # Agent Configuration
 # ═══════════════════════════════════════════════════════════════
 
-AGENT_CONFIG: dict[str, dict[str, Any]] = {
-    "fred": {
-        "executable": AGY_PATH,  # fred is a Hermes/AGY instance
-        "mode": "signal",
-        "timeout": 300,
-        "next_label": "agent::kai",
-        "description": "Hermes orchestrator — first in pipeline",
-    },
-    "kai": {
-        "executable": "kai",
-        "mode": "signal",
-        "timeout": 600,
-        "next_label": "agent::agy",
-        "description": "Active Oahu Tours bot — review & deploy",
-    },
-    "agy": {
-        "executable": AGY_PATH,
-        "mode": "launch",
-        "timeout": 900,
-        "next_label": "agent::jules",
-        "description": "Antigravity CLI — code generation",
-    },
-    "george": {
-        "executable": "hermes --profile george",
-        "mode": "visible_hermes",
-        "timeout": 600,
-        "next_label": "",
-        "description": "Prismatic workflow/dashboard verification guard",
-    },
-    "jules": {
-        "executable": JULES_PATH,
-        "mode": "launch",
-        "timeout": 600,
-        "next_label": "agent::codex",
-        "description": "Jules CLI — testing & QA",
-    },
-    "codex": {
-        "executable": CODEX_PATH,
-        "mode": "launch",
-        "timeout": 1200,
-        "next_label": "",  # terminal — pipeline complete
-        "description": "Codex CLI — final polish & PR",
-    },
-}
+def _build_dynamic_agent_config() -> dict[str, dict[str, Any]]:
+    """Dynamically discover and construct agent configuration dictionary."""
+    config: dict[str, dict[str, Any]] = {}
+    try:
+        from prismatic.agents.discovery import AgentDiscoveryService
+        discovery = AgentDiscoveryService.get_instance()
+        profiles = discovery.discover_agents()
+        for p in profiles:
+            agent_id = p.agent_id.lower()
+            harness = (p.harness or "").lower()
+            if "antigravity" in harness or "agy" in harness:
+                exe = AGY_PATH
+                mode = "launch"
+            elif "jules" in harness:
+                exe = JULES_PATH
+                mode = "launch"
+            elif "codex" in harness:
+                exe = CODEX_PATH
+                mode = "launch"
+            else:
+                exe = f"hermes --profile {p.agent_id}"
+                mode = "signal"
+            config[agent_id] = {
+                "executable": exe,
+                "mode": mode,
+                "timeout": 600,
+                "next_label": "",
+                "description": f"{p.name} — {p.role}",
+                "model": p.model,
+                "harness": p.harness,
+            }
+    except Exception:
+        pass
+
+    if not config:
+        config = {
+            "orchestrator": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": "Sovereign Orchestration Agent",
+            },
+            "architect": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 900,
+                "next_label": "",
+                "description": "System Architecture & Spec Agent",
+            },
+            "executor": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 1200,
+                "next_label": "",
+                "description": "Code Execution & Refactoring Agent",
+            },
+            "verifier": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": "Deterministic Verification & Test Agent",
+            },
+            "curator": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 300,
+                "next_label": "",
+                "description": "Ledger & Audit Curation Agent",
+            },
+        }
+    return config
+
+
+class DynamicAgentConfigDict(dict):
+    """Dict proxy that transparently refreshes discovered agents if empty."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_refresh = 0.0
+        self._ttl = 30.0
+
+    def _ensure_fresh(self) -> None:
+        now = time.time()
+        if not self or (now - self._last_refresh > self._ttl):
+            fresh = _build_dynamic_agent_config()
+            self.clear()
+            self.update(fresh)
+            self._last_refresh = now
+
+    def __getitem__(self, key: Any) -> Any:
+        self._ensure_fresh()
+        return super().__getitem__(key)
+
+    def __iter__(self) -> Any:
+        self._ensure_fresh()
+        return super().__iter__()
+
+    def __len__(self) -> int:
+        self._ensure_fresh()
+        return super().__len__()
+
+    def __contains__(self, key: Any) -> bool:
+        self._ensure_fresh()
+        return super().__contains__(key)
+
+    def keys(self) -> Any:
+        self._ensure_fresh()
+        return super().keys()
+
+    def values(self) -> Any:
+        self._ensure_fresh()
+        return super().values()
+
+    def items(self) -> Any:
+        self._ensure_fresh()
+        return super().items()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._ensure_fresh()
+        return super().get(key, default)
+
+
+AGENT_CONFIG: dict[str, dict[str, Any]] = DynamicAgentConfigDict(_build_dynamic_agent_config())
 
 
 # Jules host-path pre-screen: Jules sessions cannot safely inspect host-only

@@ -16,11 +16,9 @@ from urllib.request import Request, urlopen
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SITE_DIR_CANDIDATES = [
     REPO_ROOT / "site",
-    Path("/home/ubuntu/work/active-oahu-tours-mirror/site"),
-    Path("/home/ubuntu/work/active-oahu-tours-mirror-1251/site"),
 ]
-AOT_ORIGIN = "https://activeoahutours.com"
-AOT_GSC_PROPERTY = "sc-domain:activeoahutours.com"
+AOT_ORIGIN = os.environ.get("PRISMATIC_PRIMARY_ORIGIN", "https://engine.local")
+AOT_GSC_PROPERTY = os.environ.get("PRISMATIC_PRIMARY_GSC_PROPERTY", "sc-domain:engine.local")
 
 
 def utc_now() -> datetime:

@@ -1,6 +1,5 @@
 # Static Mirror Link Audit & Fix Workflow
-
-Systematic approach for finding and fixing broken internal links on a static HTML site mirror (WordPress → wget mirror, SSG output, etc.). Used for GRO-945 (Japanese page link paths) on the Active Oahu Tours mirror.
+Systematic approach for finding and fixing broken internal links on a static HTML site mirror (WordPress → wget mirror, SSG output, etc.).
 
 ## Trigger Conditions
 

@@ -130,7 +130,7 @@ cronjob(
 ## Review Steps
 1. **Load the registry:** Read /home/ubuntu/work/project-registry.json
 2. **Pull Linear state:** Query all GRO issues with identifier, title, priority, state, labels, project
-3. **Group by Golden Thread:** Map each issue to its primary thread (HD Engine, Active Oahu, Sentinel ITAD, etc.)
+3. **Group by Golden Thread:** Map each issue to its primary thread (HD Engine, Sentinel ITAD, Platform Core, etc.)
 4. **Score each thread:** Green (active), Yellow (stalled), Red (cold)
 5. **Find duplicates:** Issues with similar titles/descriptions
 6. **Identify stale items:** Created >30 days with no activity

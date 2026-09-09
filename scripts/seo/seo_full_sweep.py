@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Active Oahu Tours — Full Competitive SEO Sweep
+Managed Site — Full Competitive SEO Sweep
 Runs autonomously. Saves structured reports to cron/output/seo-audit/
 Each phase opens/closes its own MCP session (max 3-4 calls per session).
 """
@@ -15,31 +15,29 @@ os.makedirs(OUTDIR, exist_ok=True)
 TS = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # === TARGETS ===
-MY_SITE = "activeoahutours.com"
+MY_SITE = os.environ.get("PRISMATIC_PRIMARY_SITE", "engine.local")
 
-# Direct local competitors
-DIRECT = [
-    "kailuabeachadventures.com",   # THE big one — DA 32, 155K traffic
-    "kahanaadventures.com",        # DA 7, tiny
-    "hawaiibeachtime.com",         # DA 24
-    "hawaiianwatersports.com",     # unknown — need to check
-    "bluebaykayakrentals.com",     # unknown — need to check
-    "surfnsea.com",                # DA 36 — not direct but overlapping
-]
+# Direct competitors
+_env_direct = os.environ.get("PRISMATIC_COMPETITORS", "")
+DIRECT = (
+    [d.strip() for d in _env_direct.split(",") if d.strip()]
+    if _env_direct
+    else ["competitor1.com", "competitor2.com"]
+)
 
 # Core seed keywords for content expansion
-SEED_KEYWORDS = [
-    "kailua kayak rental",
-    "oahu paddleboard rental",
-    "kaneohe sandbar kayak",
-    "lanikai beach kayak",
-    "sharks cove snorkeling",
-    "oahu e-bike rental",
-    "kailua beach equipment rental",
-    "mokulua islands kayak",
-    "chinaman's hat kayak",
-    "windward oahu activities",
-]
+_env_seeds = os.environ.get("PRISMATIC_SEED_KEYWORDS", "")
+SEED_KEYWORDS = (
+    [s.strip() for s in _env_seeds.split(",") if s.strip()]
+    if _env_seeds
+    else [
+        "agent hypervisor",
+        "swarm concurrency",
+        "autonomous multi-agent",
+        "worktree process isolation",
+        "deterministic verification",
+    ]
+)
 
 # === HELPERS ===
 TOKEN = open('/tmp/ubs_token').read().strip()
@@ -256,7 +254,7 @@ async def phase7_auto_competitors():
     return results
 
 async def main():
-    log(f"=== ACTIVE OAHU TOURS — FULL SEO SWEEP ===")
+    log(f"=== MANAGED SITE — FULL SEO SWEEP ===")
     log(f"Started: {datetime.now().isoformat()}")
     log(f"Token: {TOKEN[:20]}...")
     
