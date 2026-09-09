@@ -1310,17 +1310,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
 async def broadcast_ws_json(message: dict[str, Any]) -> None:
-    """Broadcast JSON payload to all connected FastAPI WebSocket clients."""
+    """Broadcast JSON payload to all connected FastAPI WebSocket clients concurrently."""
     if not _ws_clients:
         return
-    dead = set()
-    for ws in list(_ws_clients):
+
+    async def _send_one(ws: WebSocket) -> None:
         try:
-            await asyncio.wait_for(ws.send_json(message), timeout=1.0)
+            await asyncio.wait_for(ws.send_json(message), timeout=0.5)
         except Exception:
-            dead.add(ws)
-    for ws in dead:
-        _ws_clients.discard(ws)
+            _ws_clients.discard(ws)
+
+    await asyncio.gather(*[_send_one(ws) for ws in list(_ws_clients)], return_exceptions=True)
+
 
 
 
