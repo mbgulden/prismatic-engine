@@ -24,25 +24,25 @@ def mock_hermes_env(tmp_path):
     profiles_dir = hermes_root / "profiles"
     profiles_dir.mkdir(parents=True)
 
-    # 1. Healthy profile
+    # 1. Healthy profile (prompt_tokens=15000 is healthy under 48000 limit)
     healthy_dir = profiles_dir / "healthy_prof"
     healthy_dir.mkdir()
     healthy_cfg = healthy_dir / "config.yaml"
     healthy_cfg.write_text(
         yaml.dump({
-            "model": "qwen",
-            "compression": {"enabled": True, "threshold_tokens": 24000},
+            "model": {"default": "qwen", "context_window": 65536},
+            "compression": {"enabled": True, "threshold_tokens": 48000, "threshold": 0.75},
             "plugins": {"enabled": ["prismatic_telemetry"]},
         })
     )
-    _create_mock_state_db(healthy_dir / "state.db", prompt_tokens=5000, msg_count=10)
+    _create_mock_state_db(healthy_dir / "state.db", prompt_tokens=15000, msg_count=10)
 
-    # 2. Bloated profile
+    # 2. Bloated profile (prompt_tokens=52000 exceeds 48000 limit)
     bloated_dir = profiles_dir / "bloated_prof"
     bloated_dir.mkdir()
     bloated_cfg = bloated_dir / "config.yaml"
-    bloated_cfg.write_text(yaml.dump({"model": "qwen"}))
-    _create_mock_state_db(bloated_dir / "state.db", prompt_tokens=35000, msg_count=45)
+    bloated_cfg.write_text(yaml.dump({"model": {"default": "qwen", "context_window": 65536}}))
+    _create_mock_state_db(bloated_dir / "state.db", prompt_tokens=52000, msg_count=45)
 
     # 3. Degenerate profile (>65k tokens)
     degen_dir = profiles_dir / "degen_prof"
@@ -133,7 +133,8 @@ def test_fleet_discovery_and_health_inspection(mock_hermes_env):
         hermes_root=mock_hermes_env["root"],
         hermes_fork_dir=mock_hermes_env["fork"],
     )
-    profiles = mgr.discover_profiles(threshold_tokens=24000, threshold_messages=40)
+    # Test with default 48k threshold
+    profiles = mgr.discover_profiles()
     p_map = {p.name: p for p in profiles}
 
     assert "healthy_prof" in p_map
@@ -145,12 +146,33 @@ def test_fleet_discovery_and_health_inspection(mock_hermes_env):
     assert p_map["degen_prof"].sessions[0].health == SessionHealth.DEGENERATE
 
 
+def test_dynamic_threshold_resolution(mock_hermes_env):
+    mgr = PrismaticFleetManager(
+        hermes_root=mock_hermes_env["root"],
+        hermes_fork_dir=mock_hermes_env["fork"],
+    )
+    # 1. Configured threshold in healthy_prof
+    t1, ctx1, d1 = mgr.resolve_profile_thresholds("healthy_prof")
+    assert t1 == 48000
+    assert ctx1 == 65536
+    assert d1 == int(65536 * 0.95)
+
+    # 2. Explicit override
+    t2, ctx2, d2 = mgr.resolve_profile_thresholds("healthy_prof", threshold_tokens=30000)
+    assert t2 == 30000
+
+    # 3. Default resolution for profile without explicit compression config
+    t3, ctx3, d3 = mgr.resolve_profile_thresholds("degen_prof")
+    assert t3 == 48000
+    assert ctx3 == 65536
+
+
 def test_sync_profile_config(mock_hermes_env):
     mgr = PrismaticFleetManager(
         hermes_root=mock_hermes_env["root"],
         hermes_fork_dir=mock_hermes_env["fork"],
     )
-    res = mgr.sync_profile_config("bloated_prof", threshold_tokens=24000)
+    res = mgr.sync_profile_config("bloated_prof", threshold_tokens=48000, context_window=65536)
     assert res["status"] == "UPDATED"
 
     cfg_file = mock_hermes_env["bloated"] / "config.yaml"
@@ -158,7 +180,11 @@ def test_sync_profile_config(mock_hermes_env):
         cfg = yaml.safe_load(f)
 
     assert cfg["compression"]["enabled"] is True
-    assert cfg["compression"]["threshold_tokens"] == 24000
+    assert cfg["compression"]["threshold_tokens"] == 48000
+    assert cfg["compression"]["context_window"] == 65536
+    assert cfg["compression"]["threshold"] == 0.75
+    assert cfg["model"]["context_window"] == 65536
+    assert cfg["model"]["compression_threshold"] == 48000
     assert "prismatic_telemetry" in cfg["plugins"]["enabled"]
     assert cfg["environment"]["HERMES_AUTONOMOUS_MODE"] == "1"
     assert cfg["environment"]["PRISMATIC_AUTONOMOUS"] == "1"

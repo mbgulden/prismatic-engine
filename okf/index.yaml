@@ -164,7 +164,7 @@
       "system_of_record": "SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts",
       "key_results": [
         "zero concurrent write collisions on locked repository resources across profiles",
-        "automated context hygiene caps token growth at 24k tokens via /compress, preventing degenerate model token spew",
+        "automated context hygiene caps token growth at 48k tokens via /compress, preventing degenerate model token spew",
         "streaming telemetry synchronizes in real-time across Telegram bots, Prismatic Signals SSE, and Hermes Desktop Portal (port 9119)",
         "systemd template service hermes-gateway@ enables automated single-command fleet lifecycle management"
       ],

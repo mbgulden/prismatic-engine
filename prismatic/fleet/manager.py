@@ -79,6 +79,13 @@ class PrismaticFleetManager:
     DEFAULT_HERMES_FORK_DIR = Path("/home/ubuntu/work/hermes-agent-fork")
     DEFAULT_GATEWAY_URL = "http://127.0.0.1:9000"
 
+    # Default context window & hygiene thresholds
+    DEFAULT_THRESHOLD_TOKENS = 48000
+    DEFAULT_CONTEXT_WINDOW = 65536
+    DEFAULT_THRESHOLD_RATIO = 0.75
+    DEFAULT_THRESHOLD_MESSAGES = 40
+    DEFAULT_HEADROOM_TOKENS = 16000
+
     def __init__(
         self,
         hermes_root: Optional[Path] = None,
@@ -88,6 +95,59 @@ class PrismaticFleetManager:
         self.hermes_root = Path(hermes_root or os.getenv("HERMES_ROOT", self.DEFAULT_HERMES_ROOT))
         self.gateway_url = str(gateway_url or os.getenv("PRISMATIC_GATEWAY_URL", self.DEFAULT_GATEWAY_URL)).rstrip("/")
         self.hermes_fork_dir = Path(hermes_fork_dir or self.DEFAULT_HERMES_FORK_DIR)
+
+    def resolve_profile_thresholds(
+        self,
+        profile: str,
+        threshold_tokens: Optional[int] = None,
+        context_window: Optional[int] = None,
+    ) -> Tuple[int, int, int]:
+        """Resolve (threshold_tokens, context_window, degenerate_tokens) for a profile.
+
+        Priority order for threshold_tokens:
+        1. Explicitly passed threshold_tokens (if not None).
+        2. Configured compression.threshold_tokens or model.compression_threshold in profile's config.yaml.
+        3. 75% of context_window (if context_window configured).
+        4. DEFAULT_THRESHOLD_TOKENS (48000).
+        """
+        cfg_path = self.get_profile_path(profile) / "config.yaml"
+        cfg_threshold = None
+        cfg_ctx = None
+        cfg_ratio = self.DEFAULT_THRESHOLD_RATIO
+
+        if cfg_path.exists():
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+                compression = cfg.get("compression", {})
+                model = cfg.get("model", {})
+                if isinstance(compression, dict):
+                    cfg_threshold = compression.get("threshold_tokens")
+                    cfg_ctx = compression.get("context_window")
+                    cfg_ratio = float(compression.get("threshold") or compression.get("threshold_ratio") or cfg_ratio)
+                if isinstance(model, dict):
+                    if cfg_threshold is None:
+                        cfg_threshold = model.get("compression_threshold")
+                    if cfg_ctx is None:
+                        cfg_ctx = model.get("context_window")
+            except Exception:
+                pass
+
+        resolved_ctx = context_window or cfg_ctx or self.DEFAULT_CONTEXT_WINDOW
+
+        if threshold_tokens is not None:
+            resolved_threshold = threshold_tokens
+        elif cfg_threshold is not None:
+            resolved_threshold = int(cfg_threshold)
+        elif context_window is not None or cfg_ctx is not None:
+            resolved_threshold = int(resolved_ctx * cfg_ratio)
+        else:
+            resolved_threshold = self.DEFAULT_THRESHOLD_TOKENS
+
+        # Degenerate boundary is >= 95% of context window
+        degenerate_threshold = int(resolved_ctx * 0.95)
+
+        return resolved_threshold, resolved_ctx, degenerate_threshold
 
     def get_profiles_dir(self) -> Path:
         return self.hermes_root / "profiles"
@@ -133,8 +193,9 @@ class PrismaticFleetManager:
     def inspect_session_health(
         self,
         profile: str,
-        threshold_tokens: int = 24000,
-        threshold_messages: int = 40,
+        threshold_tokens: Optional[int] = None,
+        threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
+        context_window: Optional[int] = None,
     ) -> List[SessionInfo]:
         """Inspect all active gateway routing sessions for a profile and diagnose health."""
         profile_path = self.get_profile_path(profile)
@@ -143,6 +204,12 @@ class PrismaticFleetManager:
             return []
 
         results: List[SessionInfo] = []
+        resolved_threshold, resolved_ctx, degenerate_threshold = self.resolve_profile_thresholds(
+            profile,
+            threshold_tokens=threshold_tokens,
+            context_window=context_window,
+        )
+
         try:
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             cursor = conn.cursor()
@@ -180,17 +247,17 @@ class PrismaticFleetManager:
                 health = SessionHealth.HEALTHY
                 reason = "Session within optimal operational bounds."
 
-                if last_prompt_tokens >= 65000:
+                if last_prompt_tokens >= degenerate_threshold:
                     health = SessionHealth.DEGENERATE
                     reason = (
                         f"Degenerate prompt length ({last_prompt_tokens:,} tokens) "
-                        "exceeds safe AWQ quantization attention bounds (~65k). High risk of token spew."
+                        f"exceeds safe attention bounds (~{degenerate_threshold:,} tokens). High risk of token spew."
                     )
-                elif last_prompt_tokens >= threshold_tokens or msg_count >= threshold_messages:
+                elif last_prompt_tokens >= resolved_threshold or msg_count >= threshold_messages:
                     health = SessionHealth.BLOATED
                     reason = (
                         f"Context size ({last_prompt_tokens:,} tokens, {msg_count} msgs) "
-                        f"exceeds hygiene threshold ({threshold_tokens:,} tokens, {threshold_messages} msgs)."
+                        f"exceeds hygiene threshold ({resolved_threshold:,} tokens, {threshold_messages} msgs)."
                     )
                 elif active_turn_token:
                     # Check staleness: if updated_at is older than 15 mins
@@ -225,8 +292,9 @@ class PrismaticFleetManager:
 
     def discover_profiles(
         self,
-        threshold_tokens: int = 24000,
-        threshold_messages: int = 40,
+        threshold_tokens: Optional[int] = None,
+        threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
+        context_window: Optional[int] = None,
     ) -> List[ProfileStatus]:
         """Scan and inspect all profiles across the fleet."""
         names = self.discover_profile_names()
@@ -256,6 +324,7 @@ class PrismaticFleetManager:
                 name,
                 threshold_tokens=threshold_tokens,
                 threshold_messages=threshold_messages,
+                context_window=context_window,
             )
 
             statuses.append(
@@ -277,7 +346,8 @@ class PrismaticFleetManager:
     def sync_profile_config(
         self,
         profile: str,
-        threshold_tokens: int = 24000,
+        threshold_tokens: int = DEFAULT_THRESHOLD_TOKENS,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
     ) -> Dict[str, Any]:
         """Synchronize configuration for a single profile to enforce compression & telemetry."""
         profile_path = self.get_profile_path(profile)
@@ -289,14 +359,23 @@ class PrismaticFleetManager:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-            # 1. Update compression section
+            # 1. Update compression section (48k threshold on 65k context = 73.2% utilization)
             if "compression" not in cfg or not isinstance(cfg["compression"], dict):
                 cfg["compression"] = {}
+            headroom = max(context_window - threshold_tokens, 10000)
             cfg["compression"]["enabled"] = True
-            cfg["compression"]["threshold"] = 0.50
+            cfg["compression"]["threshold"] = 0.75
             cfg["compression"]["threshold_tokens"] = threshold_tokens
+            cfg["compression"]["context_window"] = context_window
+            cfg["compression"]["headroom_tokens"] = headroom
 
-            # 2. Update plugins section
+            # 2. Update model section if present
+            if "model" in cfg and isinstance(cfg["model"], dict):
+                cfg["model"]["context_window"] = context_window
+                cfg["model"]["compression_threshold"] = threshold_tokens
+                cfg["model"]["compression_headroom"] = headroom
+
+            # 3. Update plugins section
             if "plugins" not in cfg or not isinstance(cfg["plugins"], dict):
                 cfg["plugins"] = {}
             enabled_plugins = cfg["plugins"].get("enabled", [])
@@ -306,14 +385,14 @@ class PrismaticFleetManager:
                 enabled_plugins.append("prismatic_telemetry")
             cfg["plugins"]["enabled"] = enabled_plugins
 
-            # 3. Update environment section for non-blocking autonomous execution
+            # 4. Update environment section for non-blocking autonomous execution
             if "environment" not in cfg or not isinstance(cfg["environment"], dict):
                 cfg["environment"] = {}
             cfg["environment"]["PRISMATIC_GATEWAY_URL"] = self.gateway_url
             cfg["environment"]["HERMES_AUTONOMOUS_MODE"] = "1"
             cfg["environment"]["PRISMATIC_AUTONOMOUS"] = "1"
 
-            # 4. Backup and write
+            # 5. Backup and write
             bak_path = profile_path / f"config.yaml.bak-prismatic-{int(time.time())}"
             shutil.copy2(cfg_path, bak_path)
 
@@ -324,6 +403,7 @@ class PrismaticFleetManager:
                 "profile": profile,
                 "status": "UPDATED",
                 "threshold_tokens": threshold_tokens,
+                "context_window": context_window,
                 "telemetry_enabled": True,
                 "backup": str(bak_path),
             }
@@ -556,8 +636,9 @@ WantedBy=multi-user.target
 
     def run_auto_hygiene(
         self,
-        threshold_tokens: int = 24000,
-        threshold_messages: int = 40,
+        threshold_tokens: Optional[int] = None,
+        threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
+        context_window: Optional[int] = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """Autonomous hygiene pass across all profiles: detects and resets bloated/degenerate sessions."""
@@ -569,6 +650,7 @@ WantedBy=multi-user.target
                 p,
                 threshold_tokens=threshold_tokens,
                 threshold_messages=threshold_messages,
+                context_window=context_window,
             )
             for s in sessions:
                 if s.health in (SessionHealth.BLOATED, SessionHealth.DEGENERATE, SessionHealth.STALLED):
@@ -602,8 +684,9 @@ WantedBy=multi-user.target
 
     def sync_fleet(
         self,
-        threshold_tokens: int = 24000,
-        threshold_messages: int = 40,
+        threshold_tokens: int = DEFAULT_THRESHOLD_TOKENS,
+        threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
         reset_bloated: bool = True,
         install_service: bool = True,
     ) -> Dict[str, Any]:
@@ -619,7 +702,11 @@ WantedBy=multi-user.target
         config_results = []
         profiles = self.discover_profile_names()
         for p in profiles:
-            cfg_res = self.sync_profile_config(p, threshold_tokens=threshold_tokens)
+            cfg_res = self.sync_profile_config(
+                p,
+                threshold_tokens=threshold_tokens,
+                context_window=context_window,
+            )
             config_results.append(cfg_res)
         results["config_sync"] = config_results
 
@@ -627,6 +714,7 @@ WantedBy=multi-user.target
             results["hygiene_actions"] = self.run_auto_hygiene(
                 threshold_tokens=threshold_tokens,
                 threshold_messages=threshold_messages,
+                context_window=context_window,
                 dry_run=False,
             )
 

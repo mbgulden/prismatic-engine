@@ -219,8 +219,14 @@ def _build_parser() -> argparse.ArgumentParser:
     fleet_sync.add_argument(
         "--threshold-tokens",
         type=int,
-        default=24000,
-        help="Token threshold cap for compression (default: 24000)",
+        default=48000,
+        help="Token threshold cap for compression (default: 48000)",
+    )
+    fleet_sync.add_argument(
+        "--context-window",
+        type=int,
+        default=65536,
+        help="Model context window length (default: 65536)",
     )
     fleet_sync.add_argument(
         "--threshold-messages",
@@ -262,8 +268,14 @@ def _build_parser() -> argparse.ArgumentParser:
     fleet_hygiene.add_argument(
         "--threshold-tokens",
         type=int,
-        default=24000,
-        help="Token threshold cap for hygiene (default: 24000)",
+        default=48000,
+        help="Token threshold cap for hygiene (default: 48000)",
+    )
+    fleet_hygiene.add_argument(
+        "--context-window",
+        type=int,
+        default=65536,
+        help="Model context window length (default: 65536)",
     )
     fleet_hygiene.add_argument(
         "--threshold-messages",
@@ -506,6 +518,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             res = mgr.sync_fleet(
                 threshold_tokens=args.threshold_tokens,
                 threshold_messages=args.threshold_messages,
+                context_window=args.context_window,
                 reset_bloated=not args.no_reset,
                 install_service=not args.no_service,
             )
@@ -549,6 +562,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             res = mgr.run_auto_hygiene(
                 threshold_tokens=args.threshold_tokens,
                 threshold_messages=args.threshold_messages,
+                context_window=args.context_window,
                 dry_run=args.dry_run,
             )
             if args.json:

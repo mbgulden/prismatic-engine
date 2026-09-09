@@ -70,7 +70,7 @@ If a workflow exists in PE Core, it should have:
 
 | Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
 |---|---|---|---|---|---|
-| Multi-agent fleet executes concurrently without collisions | Zero concurrent write collisions; token growth capped at 24k tokens; multi-surface telemetry synced | Distributed SwarmLock leases, automated fleet hygiene (`prismatic fleet sync`), and Telegram edit-streaming | `docs/okf-hermes-prismatic-fleet-integration.md`, `docs/UNIFIED_STREAMING_SWARM_AUDIT.md`, `tests/test_fleet_manager.py`, `tests/test_multi_agent_concurrency_barrage.py` | SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts | Telegram/Signals SSE/Hermes Desktop (9119)/SwarmLock API |
+| Multi-agent fleet executes concurrently without collisions | Zero concurrent write collisions; token growth capped at 48k tokens (75% of 65k context); multi-surface telemetry synced | Distributed SwarmLock leases, automated fleet hygiene (`prismatic fleet sync`), and Telegram edit-streaming | `docs/okf-hermes-prismatic-fleet-integration.md`, `docs/UNIFIED_STREAMING_SWARM_AUDIT.md`, `tests/test_fleet_manager.py`, `tests/test_multi_agent_concurrency_barrage.py` | SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts | Telegram/Signals SSE/Hermes Desktop (9119)/SwarmLock API |
 
 ## Public-launch OKF map
 
