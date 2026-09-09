@@ -523,11 +523,88 @@ class HypervisorClient:
             ctx.emit_signal("FAILED", f"Task {task_id} failed: {err}")
             raise
 
-    def emit_signal(self, signal: SignalPayload | dict[str, Any]) -> bool:
-        """Emit a real-time signal to Prismatic Hub."""
-        data = signal.to_dict() if isinstance(signal, SignalPayload) else signal
+    def emit_signal(
+        self,
+        signal: SignalPayload | dict[str, Any] | None = None,
+        source: str | None = None,
+        action: str | None = None,
+        details: dict[str, Any] | None = None,
+        severity: str = "info",
+        task_id: str | None = None,
+    ) -> DualReturn:
+        """Emit a real-time signal to Prismatic Hub (supports both sync and async await)."""
+        if signal is not None:
+            data = signal.to_dict() if isinstance(signal, SignalPayload) else signal
+        else:
+            t_id = task_id or (details.get("task_id") if isinstance(details, dict) else None)
+            data = {
+                "agent_id": source or "agy",
+                "agent": source or "agy",
+                "stage": action or "info",
+                "event_type": action or "info",
+                "message": f"{source or 'agy'}: {action or 'signal'}",
+                "task_id": t_id,
+                "issue_id": t_id or "",
+                "metadata": details or {},
+                "severity": severity,
+                "timestamp": time.time(),
+            }
         res = self._post("/api/gateway/signals/emit", data)
-        return bool(res and res.get("status") == "ok")
+        ok = bool(res and (res.get("status") == "ok" or res.get("ok") is True))
+        return DualReturn(ok)
+
+    def acquire_swarmlock(
+        self,
+        resource: str,
+        agent_id: str = "agy",
+        task_id: str | None = None,
+        lease_seconds: int = 120,
+    ) -> DualReturn:
+        """Acquire a SwarmLock lease (supports both sync and async await)."""
+        payload = {
+            "resource": resource,
+            "paths": [resource],
+            "agent_id": agent_id,
+            "owner": agent_id,
+            "task_id": task_id,
+            "ttl": lease_seconds,
+        }
+        res = self._post("/api/gateway/swarmlock/acquire", payload)
+        if res is None:
+            return DualReturn({
+                "ok": False,
+                "status": "offline",
+                "error": "Gateway unreachable",
+            })
+        if not res.get("ok") and "error" not in res:
+            holder = res.get("holder", "unknown")
+            res["error"] = f"Resource '{resource}' is currently locked by '{holder}'"
+        return DualReturn(res)
+
+    def release_swarmlock(
+        self,
+        resource: str,
+        agent_id: str = "agy",
+        task_id: str | None = None,
+        lease_id: str | None = None,
+    ) -> DualReturn:
+        """Release a SwarmLock lease (supports both sync and async await)."""
+        payload = {
+            "resource": resource,
+            "paths": [resource],
+            "agent_id": agent_id,
+            "owner": agent_id,
+            "task_id": task_id,
+            "lease_id": lease_id,
+        }
+        res = self._post("/api/gateway/swarmlock/release", payload)
+        if res is None:
+            return DualReturn({
+                "ok": False,
+                "status": "offline",
+                "error": "Gateway unreachable",
+            })
+        return DualReturn(res)
 
     def get_status(self) -> dict[str, Any]:
         """Get live Hypervisor health and lock status."""
@@ -552,3 +629,40 @@ class HypervisorClient:
         if agent_id and agent_id.lower() in status.get("paused_agents", []):
             return True
         return False
+
+
+class DualReturn:
+    """Wrapper that can be evaluated synchronously or awaited asynchronously."""
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __bool__(self) -> bool:
+        if isinstance(self.value, dict):
+            return bool(self.value.get("ok", self.value.get("status") == "ok"))
+        return bool(self.value)
+
+    def __getitem__(self, item: Any) -> Any:
+        return self.value[item]
+
+    def get(self, k: str, default: Any = None) -> Any:
+        return self.value.get(k, default) if isinstance(self.value, dict) else default
+
+    def __repr__(self) -> str:
+        return repr(self.value)
+
+    def __await__(self):
+        async def _coro():
+            return self.value
+        return _coro().__await__()
+
+
+_DEFAULT_HYPERVISOR_CLIENT: HypervisorClient | None = None
+
+
+def get_hypervisor_client(endpoint: str | None = None) -> HypervisorClient:
+    """Get or create singleton HypervisorClient instance."""
+    global _DEFAULT_HYPERVISOR_CLIENT
+    if _DEFAULT_HYPERVISOR_CLIENT is None or endpoint is not None:
+        _DEFAULT_HYPERVISOR_CLIENT = HypervisorClient(endpoint=endpoint)
+    return _DEFAULT_HYPERVISOR_CLIENT

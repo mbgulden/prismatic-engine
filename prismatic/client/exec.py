@@ -1,28 +1,27 @@
-"""Fail-safe SwarmLock wrapper CLI for Prismatic Engine (`prismatic exec`).
+"""Fail-safe process execution supervisor with SwarmLock fencing (`prismatic exec`).
 
-Wraps process execution inside a fail-safe lifecycle:
-1. Acquires SwarmLock lease with background heartbeat renewal.
-2. Emits real-time telemetry signal to Prismatic Hub.
-3. Streams stdout and stderr live with zero buffer lag.
-4. Optionally verifies python AST integrity (--pre-commit).
-5. Unconditionally releases lease in finally block, with SIGINT/SIGTERM cleanup.
+Lifecycle:
+1. Acquire SwarmLock lease via HypervisorClient (fail-closed, return 423 if locked).
+2. Emit "fenced_exec_started" telemetry signal to Prismatic Hub.
+3. Run subprocess with SIGINT/SIGTERM trapping.
+4. Pre-commit syntax validation check if target resource is a python file.
+5. Guaranteed cleanup in `finally:` block: release SwarmLock lease and emit "fenced_exec_finished".
 """
 
 from __future__ import annotations
 
 import argparse
-import ast
+import asyncio
 import logging
 import os
+import py_compile
 import signal
-import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, List, Sequence
 
-from prismatic.client.interceptor import HypervisorClient, LeaseContext, SignalPayload
+from prismatic.client.interceptor import get_hypervisor_client
 
 logger = logging.getLogger("prismatic.client.exec")
 
@@ -32,17 +31,18 @@ def validate_python_ast(paths: list[str] | None = None) -> list[str]:
 
     Returns a list of error strings (empty if all clean).
     """
+    import ast
+    import subprocess
+
     errors: list[str] = []
     files_to_check: set[Path] = set()
 
-    # 1. Check explicitly passed files
     if paths:
         for p in paths:
             target = Path(p)
             if target.is_file() and target.suffix == ".py":
                 files_to_check.add(target)
 
-    # 2. Check git-modified python files in current workspace
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -55,17 +55,15 @@ def validate_python_ast(paths: list[str] | None = None) -> list[str]:
                 line = line.strip()
                 if not line:
                     continue
-                # Line format: ' M path/to/file.py' or '?? path/to/file.py'
                 parts = line.split(maxsplit=1)
                 if len(parts) == 2:
-                    raw_path = parts[1].strip().strip('"')
+                    raw_path = parts[1].strip().strip('"\'')
                     path_obj = Path(raw_path)
                     if path_obj.suffix == ".py" and path_obj.is_file():
                         files_to_check.add(path_obj)
     except Exception as exc:
         logger.debug("Could not inspect git status for AST validation: %s", exc)
 
-    # 3. Parse AST for each file
     for file_path in sorted(files_to_check):
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
@@ -80,40 +78,171 @@ def validate_python_ast(paths: list[str] | None = None) -> list[str]:
     return errors
 
 
+async def run_fenced_execution(
+    resource: str,
+    task_id: str,
+    agent_id: str,
+    command: List[str],
+    lease_seconds: int = 120,
+    pre_commit: bool = True,
+) -> int:
+    """Run an arbitrary command under an exclusive SwarmLock lease and telemetry envelope.
+
+    Enforces:
+    - Step 1: Acquire lease (fail-closed if 423 Locked).
+    - Step 2: Emit Start Telemetry Signal.
+    - Step 3: Run Subprocess with Signal Trapping.
+    - Step 3.5: Pre-Commit Syntax Validation Check on python files.
+    - Step 4: GUARANTEED Cleanup in `finally:` block (release lease + emit finished signal).
+    """
+    client = get_hypervisor_client()
+    lease_id: str | None = None
+    exit_code = 1
+
+    try:
+        # Step 1: Acquire lease (fail-closed if 423 Locked)
+        acquire_res = await client.acquire_swarmlock(
+            resource=resource,
+            agent_id=agent_id,
+            task_id=task_id,
+            lease_seconds=lease_seconds,
+        )
+        if not acquire_res.get("ok"):
+            err_msg = acquire_res.get("error") or f"Resource '{resource}' is locked"
+            sys.stderr.write(f"SwarmLock rejection: {err_msg}\n")
+            sys.stderr.flush()
+            return 423
+
+        lease_id = acquire_res.get("lease_id")
+
+        # Step 2: Emit Start Telemetry Signal
+        await client.emit_signal(
+            source=agent_id,
+            action="fenced_exec_started",
+            details={"task_id": task_id, "resource": resource, "command": command},
+        )
+
+        # Step 3: Run Subprocess with Signal Trapping
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+            )
+        except Exception as proc_err:
+            sys.stderr.write(f"[prismatic exec] Failed to start command {command}: {proc_err}\n")
+            sys.stderr.flush()
+            return 1
+
+        loop = asyncio.get_running_loop()
+
+        def handle_signal() -> None:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+
+        registered_signals: list[int] = []
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, handle_signal)
+                registered_signals.append(sig)
+            except (NotImplementedError, RuntimeError):
+                pass
+
+        try:
+            raw_code = await proc.wait()
+            if raw_code < 0:
+                exit_code = 128 + abs(raw_code)
+            else:
+                exit_code = raw_code
+        finally:
+            for sig in registered_signals:
+                try:
+                    loop.remove_signal_handler(sig)
+                except Exception:
+                    pass
+
+        # Step 3.5: Pre-Commit Syntax Validation Check
+        # Before releasing the lock, if the modified resource is a .py file:
+        # - Execute py_compile.compile(resource, doraise=True).
+        # - If AST syntax is invalid, emit a CRITICAL telemetry signal and notify the operator before releasing the lease.
+        if pre_commit and resource.endswith(".py") and Path(resource).is_file():
+            try:
+                py_compile.compile(resource, doraise=True)
+            except Exception as syn_err:
+                sys.stderr.write(
+                    f"[prismatic exec] 🚫 CRITICAL: Pre-commit syntax failure on {resource}: {syn_err}\n"
+                )
+                sys.stderr.flush()
+                await client.emit_signal(
+                    source=agent_id,
+                    action="pre_commit_syntax_failure",
+                    severity="CRITICAL",
+                    task_id=task_id,
+                    details={"resource": resource, "error": str(syn_err)},
+                )
+                exit_code = 1
+
+        return exit_code
+
+    finally:
+        # Step 4: GUARANTEED Cleanup in finally block
+        if lease_id:
+            try:
+                await asyncio.shield(
+                    client.release_swarmlock(
+                        resource=resource,
+                        agent_id=agent_id,
+                        task_id=task_id,
+                        lease_id=lease_id,
+                    )
+                )
+            except Exception as exc:
+                sys.stderr.write(f"[prismatic exec] Warning: release_swarmlock failed: {exc}\n")
+                sys.stderr.flush()
+
+            try:
+                await asyncio.shield(
+                    client.emit_signal(
+                        source=agent_id,
+                        action="fenced_exec_finished",
+                        details={
+                            "task_id": task_id,
+                            "resource": resource,
+                            "lease_id": lease_id,
+                            "exit_code": exit_code,
+                        },
+                    )
+                )
+            except Exception as exc:
+                sys.stderr.write(f"[prismatic exec] Warning: emit_signal failed: {exc}\n")
+                sys.stderr.flush()
+
+
 def run_exec_cli(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for `prismatic exec`.
 
     Usage:
-        prismatic exec [--resource <file>] [--task <id>] [--timeout <sec>] [--agent <name>] [--pre-commit] -- <command> [args...]
+        python3 -m prismatic.cli exec \
+            --resource "prismatic/mesh/tailscale.py" \
+            --task "GRO-4852" \
+            --agent-id "kai" \
+            --lease-seconds 120 \
+            -- python3 build_component.py
     """
     raw_args = list(argv) if argv is not None else sys.argv[1:]
 
-    # Separate options from command after '--' if present
     flags: list[str] = []
     command: list[str] = []
+
     if "--" in raw_args:
         idx = raw_args.index("--")
         flags = raw_args[:idx]
         command = raw_args[idx + 1 :]
     else:
-        # Find first non-flag argument to treat as command
-        i = 0
-        while i < len(raw_args):
-            arg = raw_args[i]
-            if arg in {"-r", "--resource", "-t", "--task", "--timeout", "-a", "--agent"}:
-                flags.append(arg)
-                if i + 1 < len(raw_args):
-                    flags.append(raw_args[i + 1])
-                    i += 2
-                    continue
-            elif arg in {"--pre-commit", "-h", "--help"}:
-                flags.append(arg)
-                i += 1
-                continue
-            else:
-                command = raw_args[i:]
-                break
-            i += 1
+        flags = raw_args
+        command = []
 
     parser = argparse.ArgumentParser(
         prog="prismatic exec",
@@ -122,182 +251,87 @@ def run_exec_cli(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--resource",
         "-r",
-        action="append",
-        default=None,
-        help="Target resource or file path to lock (can specify multiple times or comma-separated)",
+        default="file:workspace",
+        help="Target resource or file path to lock (default: file:workspace)",
     )
     parser.add_argument(
         "--task",
         "-t",
-        default=None,
-        help="Task identifier (e.g. GRO-3319 or custom task ID)",
+        default="GRO-4852",
+        help="Task identifier (default: GRO-4852)",
     )
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=300,
-        help="Maximum execution timeout in seconds (default: 300)",
-    )
-    parser.add_argument(
+        "--agent-id",
         "--agent",
         "-a",
+        dest="agent_id",
         default="agy",
         help="Agent identifier holding the SwarmLock (default: agy)",
     )
     parser.add_argument(
+        "--lease-seconds",
+        "--timeout",
+        "-l",
+        dest="lease_seconds",
+        type=int,
+        default=120,
+        help="Maximum lease duration in seconds (default: 120)",
+    )
+    parser.add_argument(
         "--pre-commit",
+        dest="pre_commit",
         action="store_true",
-        help="Verify python AST syntax on target/modified files before and after execution",
+        default=True,
+        help="Verify python AST syntax on target resource (default: True)",
+    )
+    parser.add_argument(
+        "--no-pre-commit",
+        dest="pre_commit",
+        action="store_false",
+        help="Disable pre-commit syntax check",
     )
 
-    args = parser.parse_args(flags)
+    parsed, remaining = parser.parse_known_args(flags)
+    if not command and remaining:
+        command = remaining
 
     if not command:
-        print("[prismatic exec] Error: No command specified to execute. Use: prismatic exec -- <command> [args...]", file=sys.stderr)
+        sys.stderr.write(
+            "[prismatic exec] Error: No command specified to execute. Use: prismatic exec [options] -- <command> [args...]\n"
+        )
+        sys.stderr.flush()
         return 1
 
-    # 1. Resolve resources
-    resources: list[str] = []
-    if args.resource:
-        for item in args.resource:
-            for piece in item.split(","):
-                piece = piece.strip()
-                if piece and piece not in resources:
-                    resources.append(piece)
-    if not resources:
-        resources = ["file:workspace"]
-
-    task_id = args.task or f"TASK-EXEC-{int(time.time())}"
-    agent_id = args.agent or "agy"
-    timeout_sec = max(5, int(args.timeout))
-
-    # 2. Pre-execution AST check
-    if args.pre_commit:
-        ast_errors = validate_python_ast(resources)
-        if ast_errors:
-            print("[prismatic exec] 🚫 Pre-commit AST syntax check failed:", file=sys.stderr)
-            for err in ast_errors:
-                print(f"  {err}", file=sys.stderr)
-            return 1
-
-    # 3. Setup client and lease
-    client = HypervisorClient()
-    lease = client.acquire_lease(paths=resources, ttl=timeout_sec, owner=agent_id, task_id=task_id)
-
-    proc: subprocess.Popen | None = None
-    interrupted = False
-
-    def _sig_handler(signum: int, _frame: Any) -> None:
-        nonlocal interrupted
-        interrupted = True
-        sig_name = signal.Signals(signum).name
-        print(f"[prismatic exec] Received {sig_name}; terminating process and releasing locks...", file=sys.stderr)
-        if proc and proc.poll() is None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=3)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-
-    prev_sigint = signal.signal(signal.SIGINT, _sig_handler)
-    prev_sigterm = signal.signal(signal.SIGTERM, _sig_handler)
-
-    start_time = time.time()
-    exit_code = 1
-
     try:
-        # Acquire SwarmLock
-        lease.acquire()
-        client.emit_signal(
-            SignalPayload(
-                agent_id=agent_id,
-                stage="EXEC_STARTED",
-                message=f"prismatic exec started: {' '.join(command)}",
-                task_id=task_id,
-                metadata={"command": command, "resources": resources, "timeout": timeout_sec},
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(
+                asyncio.run,
+                run_fenced_execution(
+                    resource=parsed.resource,
+                    task_id=parsed.task,
+                    agent_id=parsed.agent_id,
+                    command=command,
+                    lease_seconds=parsed.lease_seconds,
+                    pre_commit=parsed.pre_commit,
+                ),
+            ).result()
+    else:
+        return asyncio.run(
+            run_fenced_execution(
+                resource=parsed.resource,
+                task_id=parsed.task,
+                agent_id=parsed.agent_id,
+                command=command,
+                lease_seconds=parsed.lease_seconds,
+                pre_commit=parsed.pre_commit,
             )
         )
-
-        # Launch child process
-        proc = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-
-        # Stream stdout and stderr live concurrently
-        def _stream(pipe: Any, out_stream: Any) -> None:
-            try:
-                for line in iter(pipe.readline, ''):
-                    out_stream.write(line)
-                    out_stream.flush()
-            except Exception:
-                pass
-            finally:
-                pipe.close()
-
-        stdout_thread = threading.Thread(target=_stream, args=(proc.stdout, sys.stdout), daemon=True)
-        stderr_thread = threading.Thread(target=_stream, args=(proc.stderr, sys.stderr), daemon=True)
-        stdout_thread.start()
-        stderr_thread.start()
-
-        # Wait with timeout
-        try:
-            exit_code = proc.wait(timeout=timeout_sec)
-        except subprocess.TimeoutExpired:
-            print(f"[prismatic exec] Command timed out after {timeout_sec}s: {' '.join(command)}", file=sys.stderr)
-            proc.kill()
-            exit_code = 124
-            client.emit_signal(
-                SignalPayload(
-                    agent_id=agent_id,
-                    stage="EXEC_TIMEOUT",
-                    message=f"Command timed out after {timeout_sec}s",
-                    task_id=task_id,
-                    metadata={"command": command, "timeout": timeout_sec},
-                )
-            )
-
-        stdout_thread.join(timeout=2.0)
-        stderr_thread.join(timeout=2.0)
-
-        # 4. Post-execution AST check
-        if args.pre_commit and exit_code == 0:
-            post_ast_errors = validate_python_ast(resources)
-            if post_ast_errors:
-                print("[prismatic exec] 🚫 Post-commit AST syntax check failed:", file=sys.stderr)
-                for err in post_ast_errors:
-                    print(f"  {err}", file=sys.stderr)
-                exit_code = 1
-
-        duration = round(time.time() - start_time, 3)
-        stage = "EXEC_COMPLETED" if exit_code == 0 else "EXEC_FAILED"
-        client.emit_signal(
-            SignalPayload(
-                agent_id=agent_id,
-                stage=stage,
-                message=f"prismatic exec finished with code {exit_code} ({duration}s)",
-                task_id=task_id,
-                metadata={"command": command, "exit_code": exit_code, "duration_seconds": duration},
-            )
-        )
-
-    finally:
-        # Restore signal handlers
-        signal.signal(signal.SIGINT, prev_sigint)
-        signal.signal(signal.SIGTERM, prev_sigterm)
-
-        # Guaranteed fail-safe release
-        lease.release()
-
-    if interrupted:
-        return 130
-    return exit_code
 
 
 def main() -> None:
