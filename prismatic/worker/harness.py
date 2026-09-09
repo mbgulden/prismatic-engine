@@ -180,3 +180,106 @@ class AgyHarnessRunner:
             duration_seconds=duration,
             artifacts=artifacts,
         )
+
+
+class HermesProfileRunner:
+    """Headless Hermes profile execution adapter for distributed mesh tasks."""
+
+    DEFAULT_BINARY_PATHS = [
+        "/home/ubuntu/.local/bin/hermes",
+    ]
+
+    def __init__(self, binary_path: str | None = None) -> None:
+        self.binary_path = self._resolve_binary(binary_path)
+
+    @classmethod
+    def _resolve_binary(cls, preferred: str | None = None) -> str | None:
+        candidates = [
+            preferred,
+            os.environ.get("HERMES_PATH"),
+            os.environ.get("HERMES_BINARY"),
+            *cls.DEFAULT_BINARY_PATHS,
+            shutil.which("hermes"),
+        ]
+        for c in candidates:
+            if c and os.path.isfile(c) and os.access(c, os.X_OK):
+                return os.path.abspath(c)
+        return None
+
+    def is_available(self) -> bool:
+        return self.binary_path is not None
+
+    def execute(self, job: WorkerJob) -> HarnessResult:
+        """Execute a taskEnvelope via Hermes in non-interactive one-shot mode."""
+        if not self.is_available():
+            return HarnessResult(
+                exit_code=127,
+                stdout="",
+                stderr=f"Hermes binary not found. Checked: {self.DEFAULT_BINARY_PATHS}",
+                duration_seconds=0.0,
+                artifacts={"error": "binary_not_found", "harness": "hermes"},
+            )
+
+        t_start = time.time()
+        meta = getattr(job, "metadata", {}) or {}
+        profile = meta.get("profile")
+        if not profile:
+            for tag in job.tags:
+                if tag.startswith("hermes:"):
+                    profile = tag.split(":", 1)[1]
+                    break
+                elif tag in {"george", "kai", "ned", "autobot", "fred", "orchestrator", "next-step"}:
+                    profile = tag
+                    break
+        if not profile:
+            profile = "george"
+
+        profile_home = Path.home() / ".hermes" / "profiles" / profile
+        env = os.environ.copy()
+        if profile_home.is_dir():
+            env["HERMES_HOME"] = str(profile_home.resolve())
+        else:
+            env["HERMES_HOME"] = str((Path.home() / ".hermes").resolve())
+
+        prompt = job.command.strip()
+        cmd = [self.binary_path, "--profile", profile, "-z", prompt]
+
+        model = meta.get("model")
+        if model:
+            cmd.extend(["-m", model])
+
+        logger.info("HermesProfileRunner executing profile %s via %s", profile, cmd[0])
+
+        stdout = ""
+        stderr = ""
+        exit_code = 0
+        artifacts: dict[str, Any] = {"harness": "hermes", "profile": profile}
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=job.timeout_seconds,
+                env=env,
+            )
+            stdout = proc.stdout
+            stderr = proc.stderr
+            exit_code = proc.returncode
+        except subprocess.TimeoutExpired:
+            stderr = f"Hermes task timed out after {job.timeout_seconds}s"
+            exit_code = 124
+            artifacts["error"] = "timeout"
+        except Exception as exc:
+            stderr = f"Hermes execution error: {exc}"
+            exit_code = 1
+            artifacts["error"] = str(exc)
+
+        duration = round(time.time() - t_start, 3)
+        return HarnessResult(
+            exit_code=exit_code,
+            stdout=stdout[:8000],
+            stderr=stderr[:4000],
+            duration_seconds=duration,
+            artifacts=artifacts,
+        )

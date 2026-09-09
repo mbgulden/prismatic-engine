@@ -200,6 +200,12 @@ class WorkerDaemon:
         artifacts: dict[str, Any] = {}
 
         job_meta = getattr(job, "metadata", {}) or {}
+        is_hermes_task = (
+            job_meta.get("harness") == "hermes"
+            or any(t == "hermes" or t.startswith("hermes:") for t in job.tags)
+            or any(t in {"george", "kai", "ned", "autobot", "fred", "orchestrator", "next-step"} for t in job.tags)
+            or job.command.strip().startswith(("hermes ", "/home/ubuntu/.local/bin/hermes"))
+        )
         is_agy_task = (
             job_meta.get("harness") == "agy"
             or any(t in {"agy", "antigravity"} for t in job.tags)
@@ -207,7 +213,15 @@ class WorkerDaemon:
         )
 
         try:
-            if is_agy_task:
+            if is_hermes_task:
+                from .harness import HermesProfileRunner
+                runner = HermesProfileRunner()
+                res = runner.execute(job)
+                stdout = res.stdout
+                stderr = res.stderr
+                exit_code = res.exit_code
+                artifacts.update(res.artifacts)
+            elif is_agy_task:
                 from .harness import AgyHarnessRunner
                 runner = AgyHarnessRunner()
                 res = runner.execute(job)

@@ -5603,6 +5603,55 @@ async def gateway_antigravity_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/gateway/harnesses")
+@app.get("/api/harnesses")
+async def gateway_list_harnesses() -> dict[str, Any]:
+    """List all dynamically discovered LLM and agent harnesses."""
+    from prismatic.harnesses.discovery import HarnessDiscoveryManager
+    mgr = HarnessDiscoveryManager()
+    harnesses = mgr.discover_all()
+    return {
+        "ok": True,
+        "total": len(harnesses),
+        "harnesses": [h.to_dict() for h in harnesses],
+    }
+
+
+@app.post("/api/gateway/harnesses/discover")
+@app.post("/api/harnesses/discover")
+async def gateway_discover_harnesses(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Trigger dynamic harness discovery and update the active registry."""
+    from prismatic.harnesses.discovery import HarnessDiscoveryManager
+    body = body or {}
+    auto_bench = bool(body.get("auto_bench", False))
+    mgr = HarnessDiscoveryManager()
+    harnesses = mgr.sync_registry(auto_bench=auto_bench)
+    return {
+        "ok": True,
+        "message": f"Successfully discovered and synchronized {len(harnesses)} harnesses",
+        "total": len(harnesses),
+        "harnesses": [h.to_dict() for h in harnesses],
+    }
+
+
+@app.post("/api/gateway/harnesses/benchmark")
+async def gateway_benchmark_harness(body: dict[str, Any]) -> dict[str, Any]:
+    """Execute a micro-benchmark verification run against a target harness."""
+    harness_id = body.get("harness_id")
+    if not harness_id:
+        raise HTTPException(status_code=400, detail="harness_id is required")
+
+    from prismatic.harnesses.discovery import HarnessDiscoveryManager
+    mgr = HarnessDiscoveryManager()
+    all_h = mgr.discover_all()
+    target_h = next((h for h in all_h if h.id == harness_id), None)
+    if not target_h:
+        raise HTTPException(status_code=404, detail=f"Harness '{harness_id}' not found")
+
+    prompt = body.get("prompt", "Respond with: HARNESS_BENCH_OK")
+    res = mgr.benchmark_harness(target_h, prompt=prompt)
+    return {"ok": res.get("ok", False), "benchmark": res}
+
 
 # ── Schedule Observatory Endpoints ─────────────────────────────────
 
