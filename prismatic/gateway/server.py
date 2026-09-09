@@ -45,7 +45,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from prismatic.mesh.tailscale import TailscaleAuthMiddleware, get_tailscale_mesh_client
 
@@ -1306,8 +1306,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WebSocket client disconnected (total=%d)", len(_ws_clients))
 
 
+_sse_clients: set[asyncio.Queue] = set()
+
+
 async def broadcast_ws_json(message: dict[str, Any]) -> None:
-    """Broadcast JSON payload to all connected FastAPI WebSocket clients concurrently."""
+    """Broadcast JSON payload to all connected FastAPI WebSocket and SSE clients concurrently."""
+    if _sse_clients:
+        for q in list(_sse_clients):
+            try:
+                q.put_nowait(message)
+            except Exception:
+                _sse_clients.discard(q)
+
     if not _ws_clients:
         return
 
@@ -4069,6 +4079,79 @@ async def gateway_agent_signals(
     from prismatic.agent_signal_stream import list_agent_signals
 
     return list_agent_signals(limit=limit, agent=agent, include_log_tails=True)
+
+
+@app.get("/api/signals/stream")
+@app.get("/api/gateway/signals/stream")
+@app.get("/events")
+@app.get("/stream")
+@app.get("/sse")
+async def gateway_agent_signals_stream(
+    request: Request,
+    limit: int = Query(10, ge=0, le=100),
+    agent: str | None = None,
+    once: bool = Query(False),
+) -> StreamingResponse:
+    """Continuous Server-Sent Events (SSE) telemetry stream for agents, CLI tools, and dashboards."""
+    from prismatic.agent_signal_stream import list_agent_signals
+
+    async def _event_generator():
+        q: asyncio.Queue = asyncio.Queue(maxsize=500)
+        _sse_clients.add(q)
+        try:
+            # 1. Connect handshake event
+            connect_event = {
+                "type": "connection.open",
+                "status": "connected",
+                "server": "prismatic-gateway",
+                "timestamp": time.time(),
+                "endpoints": [
+                    "/api/signals/stream",
+                    "/api/gateway/signals/stream",
+                    "/events",
+                    "/stream",
+                    "/sse",
+                    "/ws/events",
+                ],
+            }
+            yield f"event: connect\ndata: {json.dumps(connect_event)}\n\n"
+
+            # 2. Replay recent snapshot if requested
+            if limit > 0:
+                snapshot = list_agent_signals(limit=limit, agent=agent, include_log_tails=False)
+                snapshot_event = {
+                    "type": "signals.snapshot",
+                    "count": len(snapshot.get("items", [])),
+                    "signals": snapshot.get("items", []),
+                }
+                yield f"event: snapshot\ndata: {json.dumps(snapshot_event)}\n\n"
+
+            if once:
+                return
+
+            # 3. Stream real-time events as they occur
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15.0)
+                    evt_type = event.get("type", "signal.emitted")
+                    yield f"event: {evt_type}\ndata: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            _sse_clients.discard(q)
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 
 @app.get("/api/swarmlock/status")
