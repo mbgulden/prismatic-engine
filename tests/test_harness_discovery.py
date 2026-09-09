@@ -48,6 +48,7 @@ def test_hermes_profile_runner_execution(monkeypatch):
             stderr="",
         )
 
+    monkeypatch.setattr(HermesProfileRunner, "_try_gateway_socket_dispatch", staticmethod(lambda *args, **kwargs: None))
     monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
 
     job = WorkerJob(
@@ -55,7 +56,7 @@ def test_hermes_profile_runner_execution(monkeypatch):
         task_id="GRO-HERMES-DISCOVERY",
         command="Respond with: HERMES_PROFILE_OK",
         tags=["hermes:george"],
-        metadata={"harness": "hermes", "profile": "george"},
+        metadata={"harness": "hermes", "profile": "george", "live_gateway": False},
         timeout_seconds=30,
     )
     result = runner.execute(job)
@@ -63,6 +64,36 @@ def test_hermes_profile_runner_execution(monkeypatch):
     assert "HERMES_PROFILE_OK" in result.stdout
     assert result.artifacts["harness"] == "hermes"
     assert result.artifacts["profile"] == "george"
+
+
+def test_hermes_profile_runner_gateway_socket_dispatch(monkeypatch):
+    runner = HermesProfileRunner()
+
+    def mock_socket_dispatch(socket_path, prompt, chat_id="8190664947", timeout=600.0):
+        return {
+            "status": "completed",
+            "response": "FRED_TELEGRAM_STREAMING_VERIFIED",
+        }
+
+    monkeypatch.setattr(HermesProfileRunner, "_try_gateway_socket_dispatch", staticmethod(mock_socket_dispatch))
+
+    # Fake socket presence
+    import pathlib
+    monkeypatch.setattr(pathlib.Path, "is_socket", lambda self: True)
+
+    job = WorkerJob(
+        id="job-hermes-telegram-stream-test",
+        task_id="GRO-HERMES-TELEGRAM",
+        command="Execute Fred audit task",
+        tags=["hermes:orchestrator"],
+        metadata={"harness": "hermes", "profile": "orchestrator", "chat_id": "8190664947"},
+        timeout_seconds=30,
+    )
+    result = runner.execute(job)
+    assert result.exit_code == 0
+    assert "FRED_TELEGRAM_STREAMING_VERIFIED" in result.stdout
+    assert result.artifacts["mode"] == "live_gateway_telegram"
+    assert result.artifacts["streamed_to"] == "telegram:8190664947"
 
 
 def test_gateway_harnesses_endpoints():

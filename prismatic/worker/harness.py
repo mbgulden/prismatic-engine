@@ -209,6 +209,52 @@ class HermesProfileRunner:
     def is_available(self) -> bool:
         return self.binary_path is not None
 
+    @staticmethod
+    def _try_gateway_socket_dispatch(
+        socket_path: Path,
+        prompt: str,
+        chat_id: str = "8190664947",
+        timeout: float = 600.0,
+    ) -> dict[str, Any] | None:
+        """Attempt to dispatch the turn directly to the running Hermes Gateway control socket.
+
+        This triggers real-time Telegram streaming, in-flight steering (/steer),
+        and dashboard visibility.
+        """
+        import socket
+        try:
+            if not socket_path.is_socket():
+                return None
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(min(timeout, 10.0))
+            sock.connect(str(socket_path))
+            req = {
+                "verb": "inject-turn",
+                "text": prompt,
+                "chat_id": chat_id,
+                "platform": "telegram",
+                "user_id": chat_id,
+                "user_name": "Michael Gulden",
+                "wait": True,
+                "timeout": timeout,
+            }
+            sock.sendall(json.dumps(req).encode("utf-8") + b"\n")
+            sock.settimeout(timeout + 5.0)
+            raw = b""
+            while b"\n" not in raw:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                raw += chunk
+            sock.close()
+            if raw:
+                res = json.loads(raw.decode("utf-8").strip())
+                if res.get("ok"):
+                    return res.get("result", {})
+        except Exception as exc:
+            logger.warning("Gateway socket dispatch failed, falling back to batch CLI: %s", exc)
+        return None
+
     def execute(self, job: WorkerJob) -> HarnessResult:
         """Execute a taskEnvelope via Hermes in non-interactive one-shot mode."""
         if not self.is_available():
@@ -242,6 +288,32 @@ class HermesProfileRunner:
             env["HERMES_HOME"] = str((Path.home() / ".hermes").resolve())
 
         prompt = job.command.strip()
+        artifacts: dict[str, Any] = {"harness": "hermes", "profile": profile}
+        sock_path = profile_home / "gateway.sock"
+        chat_id = meta.get("chat_id") or "8190664947"
+        use_live_gateway = meta.get("live_gateway", True)
+
+        if use_live_gateway and sock_path.is_socket():
+            gw_result = self._try_gateway_socket_dispatch(
+                sock_path,
+                prompt,
+                chat_id=chat_id,
+                timeout=float(job.timeout_seconds),
+            )
+            if gw_result and gw_result.get("status") in {"completed", "dispatched"}:
+                stdout = gw_result.get("response") or "Dispatched and completed via Hermes Gateway"
+                artifacts["mode"] = "live_gateway_telegram"
+                artifacts["streamed_to"] = f"telegram:{chat_id}"
+                artifacts["gateway_status"] = gw_result.get("status")
+                duration = round(time.time() - t_start, 3)
+                return HarnessResult(
+                    exit_code=0,
+                    stdout=stdout[:8000],
+                    stderr="",
+                    duration_seconds=duration,
+                    artifacts=artifacts,
+                )
+
         cmd = [self.binary_path, "--profile", profile, "-z", prompt]
 
         model = meta.get("model")
