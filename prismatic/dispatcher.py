@@ -1341,11 +1341,20 @@ def _build_dynamic_agent_config() -> dict[str, dict[str, Any]]:
     config: dict[str, dict[str, Any]] = {}
     try:
         from prismatic.agents.discovery import AgentDiscoveryService
-        discovery = AgentDiscoveryService.get_instance()
-        profiles = discovery.discover_agents()
+        profiles = AgentDiscoveryService.get_agents()
         for p in profiles:
             agent_id = p.agent_id.lower()
-            harness = (p.harness or "").lower()
+            harness = str((p.metadata or {}).get("harness", "") or "").lower()
+            if not harness:
+                if "agy" in agent_id or "antigravity" in agent_id:
+                    harness = "antigravity"
+                elif "jules" in agent_id:
+                    harness = "jules"
+                elif "codex" in agent_id:
+                    harness = "codex"
+                else:
+                    harness = "hermes"
+
             if "antigravity" in harness or "agy" in harness:
                 exe = AGY_PATH
                 mode = "launch"
@@ -1364,8 +1373,8 @@ def _build_dynamic_agent_config() -> dict[str, dict[str, Any]]:
                 "timeout": 600,
                 "next_label": "",
                 "description": f"{p.name} — {p.role}",
-                "model": p.model,
-                "harness": p.harness,
+                "model": p.active_model,
+                "harness": harness,
             }
     except Exception:
         pass
@@ -1418,14 +1427,21 @@ class DynamicAgentConfigDict(dict):
         super().__init__(*args, **kwargs)
         self._last_refresh = 0.0
         self._ttl = 30.0
+        self._refreshing = False
 
     def _ensure_fresh(self) -> None:
+        if self._refreshing:
+            return
         now = time.time()
-        if not self or (now - self._last_refresh > self._ttl):
-            fresh = _build_dynamic_agent_config()
-            self.clear()
-            self.update(fresh)
-            self._last_refresh = now
+        if super().__len__() == 0 or (now - self._last_refresh > self._ttl):
+            self._refreshing = True
+            try:
+                fresh = _build_dynamic_agent_config()
+                self.clear()
+                self.update(fresh)
+                self._last_refresh = now
+            finally:
+                self._refreshing = False
 
     def __getitem__(self, key: Any) -> Any:
         self._ensure_fresh()
