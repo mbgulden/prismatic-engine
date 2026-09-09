@@ -201,6 +201,83 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Control plane auth token (or PRISMATIC_WORKER_TOKEN)",
     )
 
+    fleet = subparsers.add_parser(
+        "fleet", help="Hermes agent fleet management and automated session hygiene"
+    )
+    fleet_subparsers = fleet.add_subparsers(dest="fleet_command")
+
+    fleet_status = fleet_subparsers.add_parser(
+        "status", help="Inspect health, session token sizes, and services across fleet"
+    )
+    fleet_status.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON output"
+    )
+
+    fleet_sync = fleet_subparsers.add_parser(
+        "sync", help="Zero-touch sync of compression limits, telemetry, and systemd fleet template"
+    )
+    fleet_sync.add_argument(
+        "--threshold-tokens",
+        type=int,
+        default=24000,
+        help="Token threshold cap for compression (default: 24000)",
+    )
+    fleet_sync.add_argument(
+        "--threshold-messages",
+        type=int,
+        default=40,
+        help="Message count threshold for session hygiene (default: 40)",
+    )
+    fleet_sync.add_argument(
+        "--no-reset",
+        action="store_true",
+        help="Skip resetting currently bloated or degenerate sessions",
+    )
+    fleet_sync.add_argument(
+        "--no-service",
+        action="store_true",
+        help="Skip installing systemd fleet template service",
+    )
+    fleet_sync.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON output"
+    )
+
+    fleet_reset = fleet_subparsers.add_parser(
+        "reset", help="Reset/rotate active session for a specific Hermes profile"
+    )
+    fleet_reset.add_argument("profile", help="Profile name (e.g. orchestrator, george, kai)")
+    fleet_reset.add_argument(
+        "--session-key", default=None, help="Target specific routing session key"
+    )
+    fleet_reset.add_argument(
+        "--no-restart", action="store_true", help="Do not restart gateway service"
+    )
+    fleet_reset.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON output"
+    )
+
+    fleet_hygiene = fleet_subparsers.add_parser(
+        "auto-hygiene", help="Autonomous background hygiene pass to rotate bloated sessions"
+    )
+    fleet_hygiene.add_argument(
+        "--threshold-tokens",
+        type=int,
+        default=24000,
+        help="Token threshold cap for hygiene (default: 24000)",
+    )
+    fleet_hygiene.add_argument(
+        "--threshold-messages",
+        type=int,
+        default=40,
+        help="Message count threshold for hygiene (default: 40)",
+    )
+    fleet_hygiene.add_argument(
+        "--dry-run", action="store_true", help="Inspect without modifying state.db"
+    )
+    fleet_hygiene.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON output"
+    )
+
     return parser
 
 
@@ -396,6 +473,92 @@ def run(argv: Sequence[str] | None = None) -> int:
             max_jobs=args.max_jobs,
             token=args.token,
         )
+
+    if args.command == "fleet":
+        import json
+        from prismatic.fleet import PrismaticFleetManager
+
+        mgr = PrismaticFleetManager()
+
+        if args.fleet_command == "status":
+            profiles = mgr.discover_profiles()
+            if args.json:
+                print(json.dumps([p.to_dict() for p in profiles], indent=2))
+                return 0
+
+            print("======================== HERMES FLEET STATUS ========================")
+            print(f"{'Profile':<15} {'Service':<32} {'Active':<8} {'Tokens':<10} {'Msgs':<6} {'Health':<10}")
+            print("-" * 88)
+            for p in profiles:
+                svc_status = "UP" if p.systemd_active else "DOWN"
+                active_sessions = p.sessions
+                if not active_sessions:
+                    print(f"{p.name:<15} {p.systemd_service:<32} {svc_status:<8} {'-':<10} {'-':<6} {'IDLE':<10}")
+                else:
+                    for s in active_sessions:
+                        print(f"{p.name:<15} {p.systemd_service:<32} {svc_status:<8} {s.last_prompt_tokens:<10,d} {s.message_count:<6} {s.health.value:<10}")
+                        if s.health.value != "HEALTHY":
+                            print(f"  └─ Issue: {s.health_reason}")
+            print("=====================================================================")
+            return 0
+
+        if args.fleet_command == "sync":
+            res = mgr.sync_fleet(
+                threshold_tokens=args.threshold_tokens,
+                threshold_messages=args.threshold_messages,
+                reset_bloated=not args.no_reset,
+                install_service=not args.no_service,
+            )
+            if args.json:
+                print(json.dumps(res, indent=2))
+                return 0
+
+            print("======================== HERMES FLEET SYNC =========================")
+            print(f"Global Plugins:     {res['global_plugins']['status']}")
+            if 'systemd_template' in res:
+                print(f"Systemd Template:   {res['systemd_template']['status']} ({res['systemd_template'].get('template_path', '')})")
+            print(f"Profiles Synced:    {len(res['config_sync'])}")
+            if 'hygiene_actions' in res:
+                actions = res['hygiene_actions']['actions_taken']
+                print(f"Sessions Reset:     {len(actions)}")
+                for act in actions:
+                    print(f"  └─ Reset {act['profile']} [{act['health']} - {act['tokens']:,} tokens]: {act.get('reset_result', {}).get('status')}")
+            print("====================================================================")
+            return 0
+
+        if args.fleet_command == "reset":
+            res = mgr.reset_profile_session(
+                profile=args.profile,
+                session_key=args.session_key,
+                reason="manual_cli_reset",
+                restart_gateway=not args.no_restart,
+            )
+            if args.json:
+                print(json.dumps(res, indent=2))
+            else:
+                print(f"Profile: {args.profile}")
+                print(f"Status:  {res.get('status')}")
+                if "resets" in res:
+                    for r in res["resets"]:
+                        print(f"  Rotated session: {r['old_session_id']} -> {r['new_session_id']}")
+                if res.get("restarted_service"):
+                    print(f"  Restarted service: {res['restarted_service']}")
+            return 0 if res.get("status") == "SUCCESS" else 1
+
+        if args.fleet_command == "auto-hygiene":
+            res = mgr.run_auto_hygiene(
+                threshold_tokens=args.threshold_tokens,
+                threshold_messages=args.threshold_messages,
+                dry_run=args.dry_run,
+            )
+            if args.json:
+                print(json.dumps(res, indent=2))
+            else:
+                print(f"Profiles Scanned: {res['profiles_scanned']}")
+                print(f"Actions Taken:    {len(res['actions_taken'])}")
+                for act in res["actions_taken"]:
+                    print(f"  - [{act['health']}] {act['profile']} ({act['tokens']:,} tokens, {act['messages']} msgs): {act.get('reset_result')}")
+            return 0
 
 
     parser.print_help()
