@@ -18,6 +18,7 @@ Integration:
 from __future__ import annotations
 
 import argparse
+import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import hmac as _hmac
