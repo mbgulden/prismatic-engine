@@ -51,6 +51,20 @@ def mock_hermes_env(tmp_path):
     degen_cfg.write_text(yaml.dump({"model": "qwen"}))
     _create_mock_state_db(degen_dir / "state.db", prompt_tokens=120000, msg_count=300)
 
+    # 4. 32k model profile (context_window = 32000)
+    p32_dir = profiles_dir / "prof_32k"
+    p32_dir.mkdir()
+    (p32_dir / "config.yaml").write_text(
+        yaml.dump({"model": {"default": "qwen-7b", "context_window": 32000}})
+    )
+
+    # 5. 128k model profile (context_window = 128000)
+    p128_dir = profiles_dir / "prof_128k"
+    p128_dir.mkdir()
+    (p128_dir / "config.yaml").write_text(
+        yaml.dump({"model": {"default": "qwen-128k", "context_window": 128000}})
+    )
+
     # Mock fork dir
     fork_dir = tmp_path / "hermes-agent-fork"
     plugin_target = fork_dir / "plugins" / "observability" / "prismatic_telemetry"
@@ -63,6 +77,8 @@ def mock_hermes_env(tmp_path):
         "healthy": healthy_dir,
         "bloated": bloated_dir,
         "degen": degen_dir,
+        "p32": p32_dir,
+        "p128": p128_dir,
     }
 
 
@@ -151,20 +167,57 @@ def test_dynamic_threshold_resolution(mock_hermes_env):
         hermes_root=mock_hermes_env["root"],
         hermes_fork_dir=mock_hermes_env["fork"],
     )
-    # 1. Configured threshold in healthy_prof
-    t1, ctx1, d1 = mgr.resolve_profile_thresholds("healthy_prof")
-    assert t1 == 48000
-    assert ctx1 == 65536
-    assert d1 == int(65536 * 0.95)
+    # 1. 32k model profile -> resolves to 24,000 (75%)
+    t_32k, ctx_32k, deg_32k = mgr.resolve_profile_thresholds("prof_32k")
+    assert ctx_32k == 32000
+    assert t_32k == 24000
+    assert deg_32k == int(32000 * 0.95)
 
-    # 2. Explicit override
-    t2, ctx2, d2 = mgr.resolve_profile_thresholds("healthy_prof", threshold_tokens=30000)
-    assert t2 == 30000
+    # 2. 65k model profile -> resolves to 49,152 (75%)
+    t_65k, ctx_65k, deg_65k = mgr.resolve_profile_thresholds("healthy_prof")
+    assert ctx_65k == 65536
+    assert t_65k == 49152
+    assert deg_65k == int(65536 * 0.95)
 
-    # 3. Default resolution for profile without explicit compression config
-    t3, ctx3, d3 = mgr.resolve_profile_thresholds("degen_prof")
-    assert t3 == 48000
-    assert ctx3 == 65536
+    # 3. 128k model profile -> resolves to 96,000 (75%)
+    t_128k, ctx_128k, deg_128k = mgr.resolve_profile_thresholds("prof_128k")
+    assert ctx_128k == 128000
+    assert t_128k == 96000
+    assert deg_128k == int(128000 * 0.95)
+
+    # 4. Explicit override below 90%
+    t_ov, ctx_ov, _ = mgr.resolve_profile_thresholds("healthy_prof", threshold_tokens=30000)
+    assert t_ov == 30000
+    assert ctx_ov == 65536
+
+    # 5. Degenerate threshold >90% rejected (raises ValueError)
+    with pytest.raises(ValueError, match="exceeds 90%"):
+        mgr.resolve_profile_thresholds("healthy_prof", threshold_tokens=60000)
+
+    # 6. Degenerate threshold >90% clamped when clamp_degenerate=True
+    t_clamped, ctx_clamped, _ = mgr.resolve_profile_thresholds(
+        "healthy_prof", threshold_tokens=60000, clamp_degenerate=True
+    )
+    assert t_clamped == 49152  # clamped to 75%
+
+
+def test_dynamic_vllm_context_discovery(mock_hermes_env, monkeypatch):
+    mgr = PrismaticFleetManager(
+        hermes_root=mock_hermes_env["root"],
+        hermes_fork_dir=mock_hermes_env["fork"],
+    )
+
+    # Mock query_model_context_window_sync returning 262,144
+    monkeypatch.setattr(
+        mgr,
+        "query_model_context_window_sync",
+        lambda model_name, base_url, api_key: 262144,
+    )
+
+    t_dyn, ctx_dyn, deg_dyn = mgr.resolve_profile_thresholds("degen_prof", dynamic=True)
+    assert ctx_dyn == 262144
+    assert t_dyn == int(262144 * 0.75)  # 196608
+    assert deg_dyn == int(262144 * 0.95)  # 249036
 
 
 def test_sync_profile_config(mock_hermes_env):
@@ -172,19 +225,24 @@ def test_sync_profile_config(mock_hermes_env):
         hermes_root=mock_hermes_env["root"],
         hermes_fork_dir=mock_hermes_env["fork"],
     )
-    res = mgr.sync_profile_config("bloated_prof", threshold_tokens=48000, context_window=65536)
+    res = mgr.sync_profile_config("bloated_prof", context_window=65536)
     assert res["status"] == "UPDATED"
+    assert res["threshold_tokens"] == 49152
+    assert res["context_window"] == 65536
+    assert res["headroom_tokens"] == 16384
 
     cfg_file = mock_hermes_env["bloated"] / "config.yaml"
     with open(cfg_file) as f:
         cfg = yaml.safe_load(f)
 
     assert cfg["compression"]["enabled"] is True
-    assert cfg["compression"]["threshold_tokens"] == 48000
+    assert cfg["compression"]["threshold_tokens"] == 49152
     assert cfg["compression"]["context_window"] == 65536
     assert cfg["compression"]["threshold"] == 0.75
+    assert cfg["compression"]["headroom_tokens"] == 16384
     assert cfg["model"]["context_window"] == 65536
-    assert cfg["model"]["compression_threshold"] == 48000
+    assert cfg["model"]["compression_threshold"] == 49152
+    assert cfg["model"]["compression_headroom"] == 16384
     assert "prismatic_telemetry" in cfg["plugins"]["enabled"]
     assert cfg["environment"]["HERMES_AUTONOMOUS_MODE"] == "1"
     assert cfg["environment"]["PRISMATIC_AUTONOMOUS"] == "1"

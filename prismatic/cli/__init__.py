@@ -210,6 +210,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "status", help="Inspect health, session token sizes, and services across fleet"
     )
     fleet_status.add_argument(
+        "--dynamic", action="store_true", help="Dynamically query upstream vLLM models"
+    )
+    fleet_status.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON output"
     )
 
@@ -219,14 +222,19 @@ def _build_parser() -> argparse.ArgumentParser:
     fleet_sync.add_argument(
         "--threshold-tokens",
         type=int,
-        default=48000,
-        help="Token threshold cap for compression (default: 48000)",
+        default=None,
+        help="Token threshold cap for compression override (default: dynamic 75% of context window)",
     )
     fleet_sync.add_argument(
         "--context-window",
         type=int,
-        default=65536,
-        help="Model context window length (default: 65536)",
+        default=None,
+        help="Model context window length override (default: detected or 65536)",
+    )
+    fleet_sync.add_argument(
+        "--dynamic",
+        action="store_true",
+        help="Dynamically query upstream vLLM for registered models to detect context window",
     )
     fleet_sync.add_argument(
         "--threshold-messages",
@@ -253,10 +261,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fleet_reset.add_argument("profile", help="Profile name (e.g. orchestrator, george, kai)")
     fleet_reset.add_argument(
-        "--session-key", default=None, help="Target specific routing session key"
+        "--session-key",
+        default=None,
+        help="Specific session key to reset (defaults to active routing session)",
     )
     fleet_reset.add_argument(
-        "--no-restart", action="store_true", help="Do not restart gateway service"
+        "--no-restart",
+        action="store_true",
+        help="Skip restarting systemd gateway service after reset",
     )
     fleet_reset.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON output"
@@ -268,14 +280,19 @@ def _build_parser() -> argparse.ArgumentParser:
     fleet_hygiene.add_argument(
         "--threshold-tokens",
         type=int,
-        default=48000,
-        help="Token threshold cap for hygiene (default: 48000)",
+        default=None,
+        help="Token threshold cap for hygiene override (default: dynamic 75% of context window)",
     )
     fleet_hygiene.add_argument(
         "--context-window",
         type=int,
-        default=65536,
-        help="Model context window length (default: 65536)",
+        default=None,
+        help="Model context window length override (default: detected or 65536)",
+    )
+    fleet_hygiene.add_argument(
+        "--dynamic",
+        action="store_true",
+        help="Dynamically query upstream vLLM for registered models to detect context window",
     )
     fleet_hygiene.add_argument(
         "--threshold-messages",
@@ -493,25 +510,30 @@ def run(argv: Sequence[str] | None = None) -> int:
         mgr = PrismaticFleetManager()
 
         if args.fleet_command == "status":
-            profiles = mgr.discover_profiles()
+            profiles = mgr.discover_profiles(dynamic=args.dynamic)
             if args.json:
                 print(json.dumps([p.to_dict() for p in profiles], indent=2))
                 return 0
 
-            print("======================== HERMES FLEET STATUS ========================")
-            print(f"{'Profile':<15} {'Service':<32} {'Active':<8} {'Tokens':<10} {'Msgs':<6} {'Health':<10}")
+            print("================================ HERMES FLEET STATUS ================================")
+            print(f"{'Profile':<15} {'Context':<9} {'Thresh(75%)':<12} {'Headroom':<10} {'Tokens':<9} {'Util %':<8} {'Active':<7} {'Health':<10}")
             print("-" * 88)
             for p in profiles:
                 svc_status = "UP" if p.systemd_active else "DOWN"
                 active_sessions = p.sessions
+                ctx_str = f"{p.context_window:,}" if p.context_window else "-"
+                thresh_str = f"{p.compression_threshold_tokens:,}" if p.compression_threshold_tokens else "-"
+                headroom_str = f"{p.headroom_tokens:,}" if p.headroom_tokens else "-"
                 if not active_sessions:
-                    print(f"{p.name:<15} {p.systemd_service:<32} {svc_status:<8} {'-':<10} {'-':<6} {'IDLE':<10}")
+                    print(f"{p.name:<15} {ctx_str:<9} {thresh_str:<12} {headroom_str:<10} {'-':<9} {'-':<8} {svc_status:<7} {'IDLE':<10}")
                 else:
                     for s in active_sessions:
-                        print(f"{p.name:<15} {p.systemd_service:<32} {svc_status:<8} {s.last_prompt_tokens:<10,d} {s.message_count:<6} {s.health.value:<10}")
+                        tok_str = f"{s.last_prompt_tokens:,}"
+                        util_str = f"{(s.last_prompt_tokens / p.context_window * 100):.1f}%" if p.context_window else "-"
+                        print(f"{p.name:<15} {ctx_str:<9} {thresh_str:<12} {headroom_str:<10} {tok_str:<9} {util_str:<8} {svc_status:<7} {s.health.value:<10}")
                         if s.health.value != "HEALTHY":
                             print(f"  └─ Issue: {s.health_reason}")
-            print("=====================================================================")
+            print("=====================================================================================")
             return 0
 
         if args.fleet_command == "sync":
@@ -519,6 +541,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 threshold_tokens=args.threshold_tokens,
                 threshold_messages=args.threshold_messages,
                 context_window=args.context_window,
+                dynamic=args.dynamic,
                 reset_bloated=not args.no_reset,
                 install_service=not args.no_service,
             )
@@ -563,6 +586,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 threshold_tokens=args.threshold_tokens,
                 threshold_messages=args.threshold_messages,
                 context_window=args.context_window,
+                dynamic=args.dynamic,
                 dry_run=args.dry_run,
             )
             if args.json:

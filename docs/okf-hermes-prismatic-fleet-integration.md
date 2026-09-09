@@ -17,7 +17,7 @@ Objective → Key Result → Function → Evidence
 | Objective | Key Result | Function / Workflow | System of Record & Evidence |
 |---|---|---|---|
 | **Zero-Collision Concurrent File Mutation** | Multiple autonomous agents (Fred, George, Kai, Ned) mutate shared workspace documents without clobbering, race conditions, or unhandled file corruption. | Distributed mutex leases via `/api/gateway/swarmlock/acquire` and `/release` with explicit TTL, intention tagging, and collision deflection tracking. | Gateway in-memory lease ledger, collision deflection logs, and Playwright live lease visualizer screenshots. |
-| **Fail-Closed Context & Token Hygiene** | Background autonomous runs never exceed model context windows (65k baseline tokens) or trigger degenerate token loops (`Le 0LEASE 0...`). | Automated `/compress` threshold enforcement at 48,000 tokens (`threshold_tokens: 48000`, ~75% of 65k context with 17.5k headroom), active session rotation, and authenticated VLLM API key scoping. | `prismatic fleet sync`, `tests/test_fleet_manager.py` (5/5 passed), and SQLite `state.db` session token counters. |
+| **Fail-Closed Context & Token Hygiene** | Background autonomous runs never exceed model context windows or trigger degenerate token loops (`Le 0LEASE 0...`). | Dynamic 75% `/compress` threshold enforcement (`int(context_window * 0.75)` with 25% reasoning headroom and vLLM runtime discovery), active session rotation, and authenticated VLLM API key scoping. | `prismatic fleet sync --dynamic`, `tests/test_fleet_manager.py` (6/6 passed), and SQLite `state.db` session token counters. |
 | **Unified Multi-Surface Real-Time Streaming** | Swarm activities stream continuously and simultaneously to operator mobile chats, web dashboards, and desktop portals. | Progressive Telegram message editing (0.8s cadence), SSE telemetry stream (`/api/gateway/signals/stream`), and SQLite session synchronization into Hermes Desktop Portal (port 9119). | Telegram message edit receipts (chat `8190664947`), SSE signal packets, and Playwright desktop/mobile snapshots. |
 | **Standardized Single-Command Fleet Lifecycle** | Operator onboards, updates, resets, and monitors the entire multi-profile agent fleet using single canonical commands rather than brittle manual configurations. | Systemd template service (`hermes-gateway@.service`), CLI commands (`prismatic fleet status/sync/reset`), and automated profile config migration. | `systemctl status hermes-gateway@<profile>`, CLI outputs, and centralized fleet JSON reports. |
 
@@ -70,9 +70,9 @@ Objective → Key Result → Function → Evidence
 ## 🔒 Invariant & Failure-Mode Fencing
 
 1. **Context Bloat & Token Degradation Fence**:
-   - **Invariant**: No Hermes session is permitted to accumulate more than 48,000 tokens without an automatic `/compress` invocation (maintaining ~75% utilization on a 65k context window with >17k headroom).
+   - **Invariant**: No Hermes session is permitted to accumulate more than 75% of its effective model context window without an automatic `/compress` invocation (25% reserved for reasoning headroom). Manual thresholds >= 90% are strictly rejected.
    - **Failure Mode**: When unmanaged sessions approach context window limits, AWQ 4-bit quantization breaks down, producing repetitive single-character loops.
-   - **Mitigation**: `FleetManager.check_and_compress_profile()` monitors token usage and executes `/compress` via CLI or archives bloated sessions when compression fails.
+   - **Mitigation**: `FleetManager.resolve_profile_thresholds()` dynamically discovers context length from upstream vLLM models and config, calculates 75% threshold, and `FleetManager.run_auto_hygiene()` rotates bloated sessions.
 2. **Distributed Mutation Fence (SwarmLock)**:
    - **Invariant**: No agent may author, refactor, or delete shared documentation or code files without holding an active SwarmLock lease (`/api/gateway/swarmlock/acquire`).
    - **Failure Mode**: Uncoordinated parallel edits clobber preceding changes, leading to lost work or corrupt markdown tables.
@@ -92,15 +92,15 @@ Objective → Key Result → Function → Evidence
 
 ### 1. Check Fleet Status
 ```bash
-python3 -m prismatic.cli fleet status
+python3 -m prismatic.cli fleet status --dynamic
 ```
-Returns profile name, active session ID, token count, hygiene health, and systemd service status.
+Returns profile name, active session ID, context window, 75% threshold, headroom, token count, utilization %, and systemd service status.
 
-### 2. Synchronize Fleet Hygiene & Compress Bloated Sessions
+### 2. Synchronize Fleet Hygiene with Dynamic vLLM Discovery
 ```bash
-python3 -m prismatic.cli fleet sync --compress
+python3 -m prismatic.cli fleet sync --dynamic
 ```
-Iterates across all registered profiles, checks token counts against the 48,000 token threshold (or profile-specific ratio), compresses or rotates sessions, and updates API keys.
+Iterates across all registered profiles, discovers actual model context length from upstream vLLM `/v1/models` and config metadata, dynamically calculates the 75% threshold with 25% headroom, and updates `config.yaml`.
 
 ### 3. Run Unified Multi-Surface Streaming Audit
 ```bash
@@ -118,7 +118,7 @@ Captures 1440x900 desktop and 375x812 mobile screenshots across the Signals cons
 
 ## 📊 Verification Receipts
 
-- **Unit Tests**: [`tests/test_fleet_manager.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_fleet_manager.py) (5/5 PASSED)
+- **Unit Tests**: [`tests/test_fleet_manager.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_fleet_manager.py) (6/6 PASSED)
 - **Concurrency Barrage**: [`tests/test_multi_agent_concurrency_barrage.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_multi_agent_concurrency_barrage.py) (5/5 PASSED)
 - **Documentation Parity**: [`tests/test_okf_docs.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_okf_docs.py) (7/7 PASSED)
 - **Unified Audit Report**: [`docs/UNIFIED_STREAMING_SWARM_AUDIT.md`](https://prismatic.growthwebdev.com/workspaces?file=docs/UNIFIED_STREAMING_SWARM_AUDIT.md) (SHA-256: `0472a672714a19f10831fe87b090d4b3d59ba88a64fb49731d117b5981fc1863`)

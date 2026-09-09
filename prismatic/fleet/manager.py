@@ -22,6 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 import yaml
 
 logger = logging.getLogger("prismatic.fleet")
@@ -60,9 +61,11 @@ class ProfileStatus:
     has_config: bool
     has_state_db: bool
     compression_threshold_tokens: Optional[int]
-    telemetry_enabled: bool
-    systemd_service: str
-    systemd_active: bool
+    context_window: Optional[int] = None
+    headroom_tokens: Optional[int] = None
+    telemetry_enabled: bool = False
+    systemd_service: str = ""
+    systemd_active: bool = False
     sessions: List[SessionInfo] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -79,12 +82,12 @@ class PrismaticFleetManager:
     DEFAULT_HERMES_FORK_DIR = Path("/home/ubuntu/work/hermes-agent-fork")
     DEFAULT_GATEWAY_URL = "http://127.0.0.1:9000"
 
-    # Default context window & hygiene thresholds
-    DEFAULT_THRESHOLD_TOKENS = 48000
+    # Default context window & dynamic hygiene ratios
     DEFAULT_CONTEXT_WINDOW = 65536
     DEFAULT_THRESHOLD_RATIO = 0.75
+    DEFAULT_THRESHOLD_TOKENS = int(DEFAULT_CONTEXT_WINDOW * DEFAULT_THRESHOLD_RATIO)  # 49152
     DEFAULT_THRESHOLD_MESSAGES = 40
-    DEFAULT_HEADROOM_TOKENS = 16000
+    DEFAULT_HEADROOM_TOKENS = DEFAULT_CONTEXT_WINDOW - DEFAULT_THRESHOLD_TOKENS  # 16384
 
     def __init__(
         self,
@@ -96,53 +99,193 @@ class PrismaticFleetManager:
         self.gateway_url = str(gateway_url or os.getenv("PRISMATIC_GATEWAY_URL", self.DEFAULT_GATEWAY_URL)).rstrip("/")
         self.hermes_fork_dir = Path(hermes_fork_dir or self.DEFAULT_HERMES_FORK_DIR)
 
+    async def query_model_context_window(
+        self,
+        model_name: str,
+        base_url: str,
+        api_key: Optional[str] = None,
+    ) -> Optional[int]:
+        """Query vLLM /v1/models endpoint to discover actual max_model_len."""
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                endpoint = base_url.rstrip("/")
+                if not endpoint.endswith("/models"):
+                    if endpoint.endswith("/v1"):
+                        endpoint = f"{endpoint}/models"
+                    else:
+                        endpoint = f"{endpoint}/v1/models"
+                resp = await client.get(endpoint, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for m in data.get("data", []):
+                        if m.get("id") == model_name:
+                            # vLLM exposes max_model_len in model card if available
+                            return m.get("max_model_len")
+        except Exception as exc:
+            logger.debug("Failed to query runtime context length: %s", exc)
+        return None
+
+    def query_model_context_window_sync(
+        self,
+        model_name: str,
+        base_url: str,
+        api_key: Optional[str] = None,
+    ) -> Optional[int]:
+        """Synchronously query vLLM /v1/models endpoint to discover actual max_model_len."""
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            endpoint = base_url.rstrip("/")
+            if not endpoint.endswith("/models"):
+                if endpoint.endswith("/v1"):
+                    endpoint = f"{endpoint}/models"
+                else:
+                    endpoint = f"{endpoint}/v1/models"
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.get(endpoint, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for m in data.get("data", []):
+                        if m.get("id") == model_name:
+                            return m.get("max_model_len")
+        except Exception as exc:
+            logger.debug("Failed to synchronously query runtime context length: %s", exc)
+        return None
+
+    def get_profile_model_info(self, profile: str) -> Dict[str, Any]:
+        """Extract model metadata, provider, base_url, api_key, and configured context length."""
+        cfg_path = self.get_profile_path(profile) / "config.yaml"
+        info: Dict[str, Any] = {
+            "model_name": None,
+            "provider_name": None,
+            "base_url": None,
+            "api_key": None,
+            "configured_context_window": None,
+        }
+        if not cfg_path.exists():
+            return info
+
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+
+            model = cfg.get("model", {})
+            if isinstance(model, dict):
+                info["model_name"] = model.get("default") or model.get("model") or model.get("name")
+                info["provider_name"] = model.get("provider")
+                info["configured_context_window"] = model.get("context_window")
+                info["base_url"] = model.get("base_url")
+                info["api_key"] = model.get("api_key")
+            elif isinstance(model, str):
+                info["model_name"] = model
+
+            # Check compression context window if not in model
+            if not info["configured_context_window"]:
+                comp = cfg.get("compression", {})
+                if isinstance(comp, dict):
+                    info["configured_context_window"] = comp.get("context_window")
+
+            # Check auxiliary sections for base_url and api_key
+            auxiliary = cfg.get("auxiliary", {})
+            if isinstance(auxiliary, dict):
+                for aux_key in ["compression", "approval"]:
+                    aux = auxiliary.get(aux_key, {})
+                    if isinstance(aux, dict):
+                        if not info["base_url"] and aux.get("base_url"):
+                            info["base_url"] = aux.get("base_url")
+                        if not info["api_key"] and aux.get("api_key"):
+                            info["api_key"] = aux.get("api_key")
+
+            # Check providers section
+            providers = cfg.get("providers", {})
+            if isinstance(providers, dict):
+                p_name = info["provider_name"]
+                if p_name and p_name in providers:
+                    p_cfg = providers[p_name]
+                    if isinstance(p_cfg, dict):
+                        if not info["base_url"]:
+                            info["base_url"] = p_cfg.get("base_url") or p_cfg.get("api")
+                        if not info["api_key"]:
+                            key_env = p_cfg.get("key_env") or p_cfg.get("api_key_env")
+                            info["api_key"] = p_cfg.get("api_key") or (os.getenv(key_env) if key_env else None)
+                        if not info["configured_context_window"]:
+                            models_map = p_cfg.get("models", {})
+                            if isinstance(models_map, dict) and info["model_name"] in models_map:
+                                m_info = models_map[info["model_name"]]
+                                if isinstance(m_info, dict):
+                                    info["configured_context_window"] = m_info.get("context_length")
+                            if not info["configured_context_window"]:
+                                info["configured_context_window"] = p_cfg.get("context_length")
+
+            # Fallback environment variables
+            if not info["api_key"]:
+                info["api_key"] = os.getenv("VLLM_FRED_API_KEY") or os.getenv("OPENAI_API_KEY")
+            if not info["base_url"]:
+                info["base_url"] = os.getenv("VLLM_BASE_URL", "http://192.168.1.230:8000/v1")
+
+        except Exception as e:
+            logger.debug("Failed to extract model info for profile %s: %s", profile, e)
+
+        return info
+
     def resolve_profile_thresholds(
         self,
         profile: str,
         threshold_tokens: Optional[int] = None,
         context_window: Optional[int] = None,
+        dynamic: bool = False,
+        clamp_degenerate: bool = False,
     ) -> Tuple[int, int, int]:
         """Resolve (threshold_tokens, context_window, degenerate_tokens) for a profile.
 
         Priority order for threshold_tokens:
-        1. Explicitly passed threshold_tokens (if not None).
-        2. Configured compression.threshold_tokens or model.compression_threshold in profile's config.yaml.
-        3. 75% of context_window (if context_window configured).
-        4. DEFAULT_THRESHOLD_TOKENS (48000).
+        1. Explicit CLI overrides passed by operator (e.g. --threshold-tokens or --context-window).
+        2. Profile config.yaml model.context_window. If present:
+             threshold_tokens = int(context_window * 0.75)
+             headroom_tokens = context_window - threshold_tokens
+        3. Discovered context window from upstream vLLM /v1/models (if dynamic=True or no config).
+        4. Fallback safe default (65,536 context -> 49,152 threshold).
+
+        Hard Rule: Reject any manual threshold where threshold_tokens >= context_window * 0.90.
         """
-        cfg_path = self.get_profile_path(profile) / "config.yaml"
-        cfg_threshold = None
-        cfg_ctx = None
-        cfg_ratio = self.DEFAULT_THRESHOLD_RATIO
+        model_info = self.get_profile_model_info(profile)
+        cfg_ctx = model_info.get("configured_context_window")
 
-        if cfg_path.exists():
-            try:
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                compression = cfg.get("compression", {})
-                model = cfg.get("model", {})
-                if isinstance(compression, dict):
-                    cfg_threshold = compression.get("threshold_tokens")
-                    cfg_ctx = compression.get("context_window")
-                    cfg_ratio = float(compression.get("threshold") or compression.get("threshold_ratio") or cfg_ratio)
-                if isinstance(model, dict):
-                    if cfg_threshold is None:
-                        cfg_threshold = model.get("compression_threshold")
-                    if cfg_ctx is None:
-                        cfg_ctx = model.get("context_window")
-            except Exception:
-                pass
+        # Discover context window if dynamic=True or if no context_window configured
+        discovered_ctx = None
+        if dynamic or (context_window is None and cfg_ctx is None):
+            m_name = model_info.get("model_name")
+            b_url = model_info.get("base_url")
+            a_key = model_info.get("api_key")
+            if m_name and b_url:
+                discovered_ctx = self.query_model_context_window_sync(m_name, b_url, a_key)
 
-        resolved_ctx = context_window or cfg_ctx or self.DEFAULT_CONTEXT_WINDOW
-
-        if threshold_tokens is not None:
-            resolved_threshold = threshold_tokens
-        elif cfg_threshold is not None:
-            resolved_threshold = int(cfg_threshold)
-        elif context_window is not None or cfg_ctx is not None:
-            resolved_threshold = int(resolved_ctx * cfg_ratio)
+        if context_window is not None:
+            resolved_ctx = context_window
+        elif dynamic and discovered_ctx is not None:
+            resolved_ctx = discovered_ctx
+        elif cfg_ctx is not None:
+            resolved_ctx = int(cfg_ctx)
+        elif discovered_ctx is not None:
+            resolved_ctx = discovered_ctx
         else:
-            resolved_threshold = self.DEFAULT_THRESHOLD_TOKENS
+            resolved_ctx = self.DEFAULT_CONTEXT_WINDOW
+
+        # Hard Rule: Reject any manual threshold where threshold_tokens >= context_window * 0.90
+        max_allowed = int(resolved_ctx * 0.90)
+        if threshold_tokens is not None:
+            if threshold_tokens >= max_allowed:
+                if clamp_degenerate:
+                    resolved_threshold = int(resolved_ctx * self.DEFAULT_THRESHOLD_RATIO)
+                else:
+                    raise ValueError(
+                        f"Manual threshold {threshold_tokens} exceeds 90% of context window "
+                        f"{resolved_ctx} (max allowed: {max_allowed})"
+                    )
+            else:
+                resolved_threshold = threshold_tokens
+        else:
+            resolved_threshold = int(resolved_ctx * self.DEFAULT_THRESHOLD_RATIO)
 
         # Degenerate boundary is >= 95% of context window
         degenerate_threshold = int(resolved_ctx * 0.95)
@@ -196,6 +339,7 @@ class PrismaticFleetManager:
         threshold_tokens: Optional[int] = None,
         threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
         context_window: Optional[int] = None,
+        dynamic: bool = False,
     ) -> List[SessionInfo]:
         """Inspect all active gateway routing sessions for a profile and diagnose health."""
         profile_path = self.get_profile_path(profile)
@@ -208,6 +352,8 @@ class PrismaticFleetManager:
             profile,
             threshold_tokens=threshold_tokens,
             context_window=context_window,
+            dynamic=dynamic,
+            clamp_degenerate=True,
         )
 
         try:
@@ -295,6 +441,7 @@ class PrismaticFleetManager:
         threshold_tokens: Optional[int] = None,
         threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
         context_window: Optional[int] = None,
+        dynamic: bool = False,
     ) -> List[ProfileStatus]:
         """Scan and inspect all profiles across the fleet."""
         names = self.discover_profile_names()
@@ -305,15 +452,20 @@ class PrismaticFleetManager:
             cfg_path = p_path / "config.yaml"
             db_path = p_path / "state.db"
 
-            threshold_cap = None
-            telemetry_enabled = False
+            p_threshold, p_ctx, _ = self.resolve_profile_thresholds(
+                name,
+                threshold_tokens=threshold_tokens,
+                context_window=context_window,
+                dynamic=dynamic,
+                clamp_degenerate=True,
+            )
+            p_headroom = p_ctx - p_threshold
 
+            telemetry_enabled = False
             if cfg_path.exists():
                 try:
                     with open(cfg_path, "r", encoding="utf-8") as f:
                         cfg = yaml.safe_load(f) or {}
-                    compression = cfg.get("compression", {})
-                    threshold_cap = compression.get("threshold_tokens")
                     plugins = cfg.get("plugins", {}).get("enabled", [])
                     telemetry_enabled = "prismatic_telemetry" in plugins
                 except Exception:
@@ -325,6 +477,7 @@ class PrismaticFleetManager:
                 threshold_tokens=threshold_tokens,
                 threshold_messages=threshold_messages,
                 context_window=context_window,
+                dynamic=dynamic,
             )
 
             statuses.append(
@@ -333,7 +486,9 @@ class PrismaticFleetManager:
                     path=str(p_path),
                     has_config=cfg_path.exists(),
                     has_state_db=db_path.exists(),
-                    compression_threshold_tokens=threshold_cap,
+                    compression_threshold_tokens=p_threshold,
+                    context_window=p_ctx,
+                    headroom_tokens=p_headroom,
                     telemetry_enabled=telemetry_enabled,
                     systemd_service=svc_name,
                     systemd_active=svc_active,
@@ -346,34 +501,44 @@ class PrismaticFleetManager:
     def sync_profile_config(
         self,
         profile: str,
-        threshold_tokens: int = DEFAULT_THRESHOLD_TOKENS,
-        context_window: int = DEFAULT_CONTEXT_WINDOW,
+        threshold_tokens: Optional[int] = None,
+        context_window: Optional[int] = None,
+        dynamic: bool = False,
     ) -> Dict[str, Any]:
-        """Synchronize configuration for a single profile to enforce compression & telemetry."""
+        """Synchronize configuration for a single profile to enforce dynamic 75% compression & telemetry."""
         profile_path = self.get_profile_path(profile)
         cfg_path = profile_path / "config.yaml"
         if not cfg_path.exists():
             return {"profile": profile, "status": "SKIPPED", "reason": "No config.yaml found"}
 
         try:
+            resolved_threshold, resolved_ctx, _ = self.resolve_profile_thresholds(
+                profile,
+                threshold_tokens=threshold_tokens,
+                context_window=context_window,
+                dynamic=dynamic,
+                clamp_degenerate=True,
+            )
+            headroom = resolved_ctx - resolved_threshold
+
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-            # 1. Update compression section (48k threshold on 65k context = 73.2% utilization)
+            # 1. Update compression section (dynamic 75% threshold, 25% headroom)
             if "compression" not in cfg or not isinstance(cfg["compression"], dict):
                 cfg["compression"] = {}
-            headroom = max(context_window - threshold_tokens, 10000)
             cfg["compression"]["enabled"] = True
             cfg["compression"]["threshold"] = 0.75
-            cfg["compression"]["threshold_tokens"] = threshold_tokens
-            cfg["compression"]["context_window"] = context_window
+            cfg["compression"]["threshold_tokens"] = resolved_threshold
+            cfg["compression"]["context_window"] = resolved_ctx
             cfg["compression"]["headroom_tokens"] = headroom
 
-            # 2. Update model section if present
-            if "model" in cfg and isinstance(cfg["model"], dict):
-                cfg["model"]["context_window"] = context_window
-                cfg["model"]["compression_threshold"] = threshold_tokens
-                cfg["model"]["compression_headroom"] = headroom
+            # 2. Update model section
+            if "model" not in cfg or not isinstance(cfg["model"], dict):
+                cfg["model"] = {}
+            cfg["model"]["context_window"] = resolved_ctx
+            cfg["model"]["compression_threshold"] = resolved_threshold
+            cfg["model"]["compression_headroom"] = headroom
 
             # 3. Update plugins section
             if "plugins" not in cfg or not isinstance(cfg["plugins"], dict):
@@ -402,8 +567,9 @@ class PrismaticFleetManager:
             return {
                 "profile": profile,
                 "status": "UPDATED",
-                "threshold_tokens": threshold_tokens,
-                "context_window": context_window,
+                "threshold_tokens": resolved_threshold,
+                "context_window": resolved_ctx,
+                "headroom_tokens": headroom,
                 "telemetry_enabled": True,
                 "backup": str(bak_path),
             }
@@ -639,6 +805,7 @@ WantedBy=multi-user.target
         threshold_tokens: Optional[int] = None,
         threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
         context_window: Optional[int] = None,
+        dynamic: bool = False,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """Autonomous hygiene pass across all profiles: detects and resets bloated/degenerate sessions."""
@@ -651,6 +818,7 @@ WantedBy=multi-user.target
                 threshold_tokens=threshold_tokens,
                 threshold_messages=threshold_messages,
                 context_window=context_window,
+                dynamic=dynamic,
             )
             for s in sessions:
                 if s.health in (SessionHealth.BLOATED, SessionHealth.DEGENERATE, SessionHealth.STALLED):
@@ -684,9 +852,10 @@ WantedBy=multi-user.target
 
     def sync_fleet(
         self,
-        threshold_tokens: int = DEFAULT_THRESHOLD_TOKENS,
+        threshold_tokens: Optional[int] = None,
         threshold_messages: int = DEFAULT_THRESHOLD_MESSAGES,
-        context_window: int = DEFAULT_CONTEXT_WINDOW,
+        context_window: Optional[int] = None,
+        dynamic: bool = False,
         reset_bloated: bool = True,
         install_service: bool = True,
     ) -> Dict[str, Any]:
@@ -706,6 +875,7 @@ WantedBy=multi-user.target
                 p,
                 threshold_tokens=threshold_tokens,
                 context_window=context_window,
+                dynamic=dynamic,
             )
             config_results.append(cfg_res)
         results["config_sync"] = config_results
@@ -715,6 +885,7 @@ WantedBy=multi-user.target
                 threshold_tokens=threshold_tokens,
                 threshold_messages=threshold_messages,
                 context_window=context_window,
+                dynamic=dynamic,
                 dry_run=False,
             )
 
