@@ -392,10 +392,23 @@ class HypervisorClient:
     3. Distributed Tailscale mesh (http://webtop-hermes:9000 or http://100.83.32.92:9000)
     """
 
-    def __init__(self, endpoint: str | None = None) -> None:
+    def __init__(self, endpoint: str | None = None, fallback: bool | None = None) -> None:
         self.explicit_endpoint = endpoint
         self._active_transport: TransportCandidate | None = None
-        self._candidates = get_candidate_transports(endpoint)
+        # If an explicit endpoint is provided, do not fall back to ambient local sockets/loopback
+        # unless fallback is explicitly requested.
+        use_fallback = fallback if fallback is not None else (endpoint is None)
+        if use_fallback:
+            self._candidates = get_candidate_transports(endpoint)
+        elif endpoint:
+            ov = endpoint.strip()
+            if ov.startswith("unix://") or ov.endswith(".sock") or (os.path.isabs(ov) and ("/" in ov or "\\" in ov)):
+                sock_path = ov.removeprefix("unix://")
+                self._candidates = [TransportCandidate("uds", sock_path, f"Explicit UDS: {sock_path}")]
+            else:
+                self._candidates = [TransportCandidate("http", ov.rstrip("/"), f"Explicit HTTP: {ov}")]
+        else:
+            self._candidates = []
 
     @property
     def endpoint(self) -> str:
@@ -412,7 +425,12 @@ class HypervisorClient:
     def endpoint(self, value: str) -> None:
         self.explicit_endpoint = value
         self._active_transport = None
-        self._candidates = get_candidate_transports(value)
+        ov = value.strip()
+        if ov.startswith("unix://") or ov.endswith(".sock") or (os.path.isabs(ov) and ("/" in ov or "\\" in ov)):
+            sock_path = ov.removeprefix("unix://")
+            self._candidates = [TransportCandidate("uds", sock_path, f"Explicit UDS: {sock_path}")]
+        else:
+            self._candidates = [TransportCandidate("http", ov.rstrip("/"), f"Explicit HTTP: {ov}")]
 
     @property
     def active_transport(self) -> TransportCandidate | None:
