@@ -159,7 +159,51 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     exec_cmd.add_argument("args", nargs=argparse.REMAINDER)
 
+    worker = subparsers.add_parser(
+        "worker",
+        help="Run headless distributed worker daemon to poll and execute tasks",
+    )
+    worker.add_argument(
+        "--gateway",
+        default=None,
+        help="Prismatic Gateway URL (e.g. http://localhost:9000 or http://100.x.y.z:9000)",
+    )
+    worker.add_argument(
+        "--node-id",
+        default=None,
+        help="Unique node identifier for this worker instance (default: hostname)",
+    )
+    worker.add_argument(
+        "--tags",
+        default="general",
+        help="Comma-separated capability tags (e.g. general,gpu,linux,python)",
+    )
+    worker.add_argument(
+        "--poll-interval",
+        type=float,
+        default=2.0,
+        help="Queue polling interval in seconds (default: 2.0)",
+    )
+    worker.add_argument(
+        "--once",
+        action="store_true",
+        help="Poll and execute at most one job, then exit",
+    )
+    worker.add_argument(
+        "--max-jobs",
+        type=int,
+        default=None,
+        help="Exit after executing this many jobs",
+    )
+    worker.add_argument(
+        "--token",
+        default=None,
+        help="Control plane auth token (or PRISMATIC_WORKER_TOKEN)",
+    )
+
     return parser
+
+
 
 
 
@@ -339,7 +383,23 @@ def run(argv: Sequence[str] | None = None) -> int:
             forwarded = list(args.args or []) + extra
         return int(run_exec_cli(forwarded) or 0)
 
+    if args.command == "worker":
+        from prismatic.worker.daemon import run_worker_daemon
+
+        tag_list = [t.strip() for t in args.tags.split(",") if t.strip()]
+        return run_worker_daemon(
+            gateway_url=args.gateway,
+            node_id=args.node_id,
+            tags=tag_list,
+            poll_interval=args.poll_interval,
+            once=args.once,
+            max_jobs=args.max_jobs,
+            token=args.token,
+        )
+
+
     parser.print_help()
+
     return 0
 
 

@@ -252,8 +252,13 @@ async def required_role(request: Request) -> str | None:
         or path.startswith("/api/gateway/studio")
         or path.startswith("/api/deliverables")
         or path.startswith("/api/gateway/deliverables")
+        or path.startswith("/api/jobs")
+        or path.startswith("/api/gateway/jobs")
+        or path.startswith("/api/workers")
+        or path.startswith("/api/gateway/workers")
     ):
         return None
+
 
     if path.startswith("/native-crons/") and path.endswith("/action"):
         try:

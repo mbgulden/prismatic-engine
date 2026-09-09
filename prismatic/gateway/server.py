@@ -6179,6 +6179,9 @@ if _dep_router:
 from prismatic.gateway.routes.pwp import pwp_router  # noqa: E402
 app.include_router(pwp_router)
 
+from prismatic.gateway.routes.worker import worker_router  # noqa: E402
+app.include_router(worker_router)
+
 
 
 @app.get("/api/workspace/tree")
