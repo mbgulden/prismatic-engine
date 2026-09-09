@@ -219,7 +219,13 @@ def load_pwp_studio_state() -> Dict[str, Any]:
         _atomic_write_json(sf, state)
         return state
     try:
-        data = json.loads(sf.read_text(encoding="utf-8"))
+        raw_text = sf.read_text(encoding="utf-8")
+        if "active-oahu" in raw_text or "activeoahu" in raw_text.lower():
+            logger.info("Purging contaminated client data from studio state: %s", sf)
+            data = _default_studio_state()
+            _atomic_write_json(sf, data)
+            return data
+        data = json.loads(raw_text)
         defaults = _default_studio_state()
         updated = False
         for k, v in defaults.items():

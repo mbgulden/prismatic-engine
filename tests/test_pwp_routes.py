@@ -112,17 +112,17 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     assert len(resp_ws.json()["workspaces"]) >= 1
 
     # Project Export
-    resp_exp = client.post("/api/pwp/export-project", json={"slug": "active-oahu"})
+    resp_exp = client.post("/api/pwp/export-project", json={"slug": "prismatic-core"})
     assert resp_exp.status_code == 200
     assert "scaffold" in resp_exp.json()
 
     # Webhooks
-    resp_zap = client.post("/api/pwp/webhooks/zapier", json={"site_slug": "active-oahu", "event": "lead_captured"})
+    resp_zap = client.post("/api/pwp/webhooks/zapier", json={"site_slug": "prismatic-core", "event": "lead_captured"})
     assert resp_zap.status_code == 200
     assert resp_zap.json()["ok"] is True
 
     # Linear Sync
-    resp_sync = client.post("/api/pwp/sync-linear", json={"slug": "active-oahu"})
+    resp_sync = client.post("/api/pwp/sync-linear", json={"slug": "prismatic-core"})
     assert resp_sync.status_code == 200
     assert resp_sync.json()["kpi_status"] == "configured"
 
@@ -132,11 +132,11 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     assert "rankings" in resp_seo.json()
 
     # Codified CLI Capabilities (DNS, Vitals Audit, Staging Queue, Cron)
-    resp_dns = client.post("/api/pwp/provision/verify-dns", json={"domain": "activeoahutours.com"})
+    resp_dns = client.post("/api/pwp/provision/verify-dns", json={"domain": "engine.prismatic.local"})
     assert resp_dns.status_code == 200
     assert resp_dns.json()["dns_status"] == "propagated"
 
-    resp_vitals = client.post("/api/pwp/audit-vitals", json={"slug": "active-oahu"})
+    resp_vitals = client.post("/api/pwp/audit-vitals", json={"slug": "prismatic-core"})
     assert resp_vitals.status_code == 200
     assert "metrics" in resp_vitals.json()
 

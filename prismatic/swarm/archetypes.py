@@ -131,10 +131,10 @@ class ArchetypeRegistry:
     @classmethod
     def get_lead_agents(cls, archetype: Archetype) -> list[str]:
         """Return dynamically matched team of agents for an archetype."""
-        content_id = cls._resolve_agent_for_role("kai", "content_specialist")
-        compiler_id = cls._resolve_agent_for_role("ned", "compiler_engineer")
-        deploy_id = cls._resolve_agent_for_role("autobot", "deployer_engineer")
-        review_id = cls._resolve_agent_for_role("george", "review_sentinel")
+        content_id = cls._resolve_agent_for_role("content", "content_specialist")
+        compiler_id = cls._resolve_agent_for_role("compiler", "compiler_engineer")
+        deploy_id = cls._resolve_agent_for_role("deployer", "deployer_engineer")
+        review_id = cls._resolve_agent_for_role("reviewer", "review_sentinel")
         orch_id = cls._resolve_agent_for_role("orchestrator", "fleet_orchestrator")
 
         if archetype == Archetype.WEB_PROPERTY:
@@ -160,10 +160,10 @@ class ArchetypeRegistry:
         contracts: list[ArchetypeContract] = []
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 
-        content_id = cls._resolve_agent_for_role("kai", "content_specialist")
-        compiler_id = cls._resolve_agent_for_role("ned", "compiler_engineer")
-        deploy_id = cls._resolve_agent_for_role("autobot", "deployer_engineer")
-        review_id = cls._resolve_agent_for_role("george", "review_sentinel")
+        content_id = cls._resolve_agent_for_role("content", "content_specialist")
+        compiler_id = cls._resolve_agent_for_role("compiler", "compiler_engineer")
+        deploy_id = cls._resolve_agent_for_role("deployer", "deployer_engineer")
+        review_id = cls._resolve_agent_for_role("reviewer", "review_sentinel")
         orch_id = cls._resolve_agent_for_role("orchestrator", "fleet_orchestrator")
 
         if arch == Archetype.WEB_PROPERTY:

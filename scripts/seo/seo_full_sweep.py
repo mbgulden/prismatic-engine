@@ -117,7 +117,7 @@ async def phase2_competitor_keywords():
     if MY_SITE in results and "organicKeywords" in results[MY_SITE]:
         my_kws = {k.get("keyword", "").lower() for k in results[MY_SITE]["organicKeywords"]}
     
-    print(f"\n--- Keywords NOT in activeoahutours.com ---")
+    print(f"\n--- Keywords NOT in {MY_SITE} ---")
     for domain, data in results.items():
         if domain == MY_SITE or "error" in data:
             continue
@@ -132,7 +132,7 @@ async def phase2_competitor_keywords():
 async def phase3_top_pages():
     """Phase 3: domain_top_pages for top competitors"""
     log("\n=== PHASE 3: Top Pages ===")
-    top = ["kailuabeachadventures.com", "surfnsea.com", "hawaiianwatersports.com", "hawaiibeachtime.com", "hawaiibeachtime.com"]
+    top = DIRECT[:5]
     calls = []
     for domain in [MY_SITE] + top:
         calls.append(("domain_top_pages", {"domain": domain, "limit": 20}, domain))
