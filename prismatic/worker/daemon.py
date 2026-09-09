@@ -359,6 +359,10 @@ def run_worker_daemon(
     token: str | None = None,
 ) -> int:
     """CLI entry point for running the headless worker daemon."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     daemon = WorkerDaemon(
         gateway_url=gateway_url,
         node_id=node_id,

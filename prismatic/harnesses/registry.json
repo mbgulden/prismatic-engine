@@ -1,5 +1,5 @@
 {
-  "updated_at": 1788968301.4602888,
+  "updated_at": 1788975013.247474,
   "total_harnesses": 38,
   "harnesses": [
     {
@@ -30,7 +30,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058368,
+      "last_discovered": 1788975013.1944218,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -62,7 +62,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058406,
+      "last_discovered": 1788975013.1944265,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -94,7 +94,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058433,
+      "last_discovered": 1788975013.1944299,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -126,7 +126,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.405846,
+      "last_discovered": 1788975013.194432,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -158,7 +158,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058483,
+      "last_discovered": 1788975013.1944344,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -190,7 +190,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058506,
+      "last_discovered": 1788975013.1944366,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -222,7 +222,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058533,
+      "last_discovered": 1788975013.194439,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -254,7 +254,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.405855,
+      "last_discovered": 1788975013.1944413,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -286,7 +286,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058573,
+      "last_discovered": 1788975013.1944437,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -318,7 +318,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058595,
+      "last_discovered": 1788975013.194446,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -350,7 +350,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058614,
+      "last_discovered": 1788975013.1944487,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -382,7 +382,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058633,
+      "last_discovered": 1788975013.1944504,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -414,7 +414,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058652,
+      "last_discovered": 1788975013.1944525,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -446,7 +446,7 @@
         "subscription": "Google One AI Ultra",
         "cost_tier": "subscription-unlimited"
       },
-      "last_discovered": 1788968301.4058673,
+      "last_discovered": 1788975013.194454,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -480,7 +480,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4477584,
+      "last_discovered": 1788975013.2344465,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -514,7 +514,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4480407,
+      "last_discovered": 1788975013.2347682,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -548,7 +548,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4484909,
+      "last_discovered": 1788975013.2352724,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -585,7 +585,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4489958,
+      "last_discovered": 1788975013.2358506,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -619,7 +619,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4492464,
+      "last_discovered": 1788975013.2361283,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -653,7 +653,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.449519,
+      "last_discovered": 1788975013.2364476,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -687,7 +687,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4497836,
+      "last_discovered": 1788975013.236729,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -721,7 +721,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4500415,
+      "last_discovered": 1788975013.237013,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -758,7 +758,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4507668,
+      "last_discovered": 1788975013.2377658,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -795,7 +795,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4513187,
+      "last_discovered": 1788975013.2383924,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -829,7 +829,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4517996,
+      "last_discovered": 1788975013.238865,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -863,7 +863,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4522827,
+      "last_discovered": 1788975013.2393696,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -897,7 +897,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4525952,
+      "last_discovered": 1788975013.2396724,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -931,7 +931,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4528852,
+      "last_discovered": 1788975013.2399611,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -965,7 +965,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4531722,
+      "last_discovered": 1788975013.2402673,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1003,7 +1003,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4537432,
+      "last_discovered": 1788975013.2408335,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1037,7 +1037,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.454036,
+      "last_discovered": 1788975013.2411308,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1071,7 +1071,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4543288,
+      "last_discovered": 1788975013.2415135,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1105,7 +1105,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4546354,
+      "last_discovered": 1788975013.2418058,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1142,7 +1142,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4551964,
+      "last_discovered": 1788975013.2424135,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1176,7 +1176,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.455821,
+      "last_discovered": 1788975013.2430356,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1213,7 +1213,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.4564447,
+      "last_discovered": 1788975013.2437084,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1247,7 +1247,7 @@
         "provider": "local",
         "daemon_running": false
       },
-      "last_discovered": 1788968301.456749,
+      "last_discovered": 1788975013.2439744,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     },
@@ -1273,7 +1273,7 @@
         "endpoint": "http://192.168.1.232:8080/v1/models",
         "model": "qwen3.8-27b"
       },
-      "last_discovered": 1788968301.4602757,
+      "last_discovered": 1788975013.2474608,
       "last_benchmarked": 0.0,
       "benchmark_latency_seconds": 0.0
     }
