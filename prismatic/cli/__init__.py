@@ -223,7 +223,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--threshold-tokens",
         type=int,
         default=None,
-        help="Token threshold cap for compression override (default: dynamic 75% of context window)",
+        help="Token threshold cap for compression override (default: dynamic 75%% of context window)",
     )
     fleet_sync.add_argument(
         "--context-window",
@@ -281,7 +281,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--threshold-tokens",
         type=int,
         default=None,
-        help="Token threshold cap for hygiene override (default: dynamic 75% of context window)",
+        help="Token threshold cap for hygiene override (default: dynamic 75%% of context window)",
     )
     fleet_hygiene.add_argument(
         "--context-window",
@@ -304,6 +304,47 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Inspect without modifying state.db"
     )
     fleet_hygiene.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON output"
+    )
+
+    fleet_compress = fleet_subparsers.add_parser(
+        "compress",
+        help="Trigger state-preserving operational context compression for a Hermes profile",
+    )
+    fleet_compress.add_argument(
+        "profile", help="Profile name (e.g. orchestrator, george, kai)"
+    )
+    fleet_compress.add_argument(
+        "--session-key",
+        default=None,
+        help="Specific session key to compress (defaults to active routing session)",
+    )
+    fleet_compress.add_argument(
+        "--threshold-tokens",
+        type=int,
+        default=None,
+        help="Token threshold cap for compression override (default: dynamic 75%% of context window)",
+    )
+    fleet_compress.add_argument(
+        "--context-window",
+        type=int,
+        default=None,
+        help="Model context window length override (default: detected or 65536)",
+    )
+    fleet_compress.add_argument(
+        "--dynamic",
+        action="store_true",
+        help="Dynamically query upstream vLLM for registered models to detect context window",
+    )
+    fleet_compress.add_argument(
+        "--force",
+        action="store_true",
+        help="Force compression even if token count is below 75%% threshold",
+    )
+    fleet_compress.add_argument(
+        "--dry-run", action="store_true", help="Inspect without modifying state.db"
+    )
+    fleet_compress.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON output"
     )
 
@@ -646,6 +687,33 @@ def run(argv: Sequence[str] | None = None) -> int:
                 for act in res["actions_taken"]:
                     print(f"  - [{act['health']}] {act['profile']} ({act['tokens']:,} tokens, {act['messages']} msgs): {act.get('reset_result')}")
             return 0
+
+        if args.fleet_command == "compress":
+            res = mgr.check_and_compress_profile(
+                profile=args.profile,
+                session_key=args.session_key,
+                threshold_tokens=args.threshold_tokens,
+                context_window=args.context_window,
+                dynamic=args.dynamic,
+                force=args.force,
+                dry_run=args.dry_run,
+            )
+            if args.json:
+                print(json.dumps(res, indent=2))
+            else:
+                print(f"Profile:    {args.profile}")
+                print(f"Status:     {res.get('status')}")
+                if res.get("compressed"):
+                    print(f"Tokens:     {res.get('pre_tokens'):,} -> {res.get('post_tokens'):,} tokens")
+                    preserved = res.get("state_preserved", {})
+                    print(f"Task ID:    {preserved.get('task_id')}")
+                    print(f"Held Locks: {preserved.get('held_locks')}")
+                    print(f"Git HEAD:   {preserved.get('git_head')}")
+                    print(f"Next Step:  {preserved.get('next_step')}")
+                    print(f"Gate:       {'Programmatically Prepended' if res.get('programmatically_prepended') else 'Preserved by Summarizer'}")
+                else:
+                    print(f"Reason:     {res.get('reason')}")
+            return 0 if res.get("status") in ("COMPRESSED", "HEALTHY", "DRY_RUN") else 1
 
     if args.command == "chat" or (args.command == "fleet" and getattr(args, "fleet_command", None) == "chat"):
         from prismatic.fleet.telegram import run_hermes_chat_with_guard

@@ -11,10 +11,13 @@ from prismatic.fleet.db import (
     init_sqlite_connection,
 )
 from prismatic.fleet.manager import (
+    COMPRESSION_SYSTEM_PROMPT,
+    OPERATIONAL_STATE_TEMPLATE,
     PrismaticFleetManager,
     ProfileStatus,
     SessionHealth,
     SessionInfo,
+    verify_and_anchor_compressed_summary,
 )
 from prismatic.fleet.telegram import (
     DynamicTelegramThrottler,
@@ -29,6 +32,9 @@ __all__ = [
     "SessionHealth",
     "SessionInfo",
     "ProfileStatus",
+    "OPERATIONAL_STATE_TEMPLATE",
+    "COMPRESSION_SYSTEM_PROMPT",
+    "verify_and_anchor_compressed_summary",
     "init_sqlite_connection",
     "execute_with_retry",
     "checkpoint_sqlite_database",
