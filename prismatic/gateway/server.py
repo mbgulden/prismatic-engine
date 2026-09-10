@@ -4552,6 +4552,59 @@ async def gateway_nudge_agent(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "nudge": item}
 
 
+# ── Fleet Telegram Multi-Bot Streaming Throttler API ──────────────────────────
+
+
+@app.get("/api/telegram/throttler/status")
+@app.get("/api/gateway/telegram/throttler/status")
+async def gateway_telegram_throttler_status() -> dict[str, Any]:
+    """Inspect current active Telegram streamers and dynamic edit pacing."""
+    from prismatic.fleet.telegram import DynamicTelegramThrottler
+
+    return {
+        "ok": True,
+        "active_streamers": DynamicTelegramThrottler.get_active_streamers(),
+        "active_count": DynamicTelegramThrottler.get_active_count(),
+        "cadence_seconds": DynamicTelegramThrottler.get_cadence_seconds(),
+    }
+
+
+@app.post("/api/telegram/throttler/register")
+@app.post("/api/gateway/telegram/throttler/register")
+async def gateway_telegram_throttler_register(body: dict[str, Any]) -> dict[str, Any]:
+    """Register an active bot streamer with the centralized throttler."""
+    from prismatic.fleet.telegram import DynamicTelegramThrottler
+
+    bot_id = body.get("bot_id")
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="Missing 'bot_id' parameter")
+    await DynamicTelegramThrottler.register_active(str(bot_id))
+    return {
+        "ok": True,
+        "bot_id": str(bot_id),
+        "active_count": DynamicTelegramThrottler.get_active_count(),
+        "cadence_seconds": DynamicTelegramThrottler.get_cadence_seconds(),
+    }
+
+
+@app.post("/api/telegram/throttler/unregister")
+@app.post("/api/gateway/telegram/throttler/unregister")
+async def gateway_telegram_throttler_unregister(body: dict[str, Any]) -> dict[str, Any]:
+    """Unregister an active bot streamer from the centralized throttler."""
+    from prismatic.fleet.telegram import DynamicTelegramThrottler
+
+    bot_id = body.get("bot_id")
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="Missing 'bot_id' parameter")
+    await DynamicTelegramThrottler.unregister_active(str(bot_id))
+    return {
+        "ok": True,
+        "bot_id": str(bot_id),
+        "active_count": DynamicTelegramThrottler.get_active_count(),
+        "cadence_seconds": DynamicTelegramThrottler.get_cadence_seconds(),
+    }
+
+
 # ── Swarm 7-Step Loop & Deliverables API (Phase 4 / Sprint 3) ──────────────
 
 

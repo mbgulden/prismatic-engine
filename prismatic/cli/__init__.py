@@ -307,6 +307,52 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Emit machine-readable JSON output"
     )
 
+    fleet_chat = fleet_subparsers.add_parser(
+        "chat",
+        help="Launch interactive Hermes chat session with automatic daemon conflict prevention (HTTP 409)",
+    )
+    fleet_chat.add_argument(
+        "--profile",
+        default="default",
+        help="Hermes profile to chat with (e.g. orchestrator, george, kai, ned)",
+    )
+    fleet_chat.add_argument(
+        "--auto-pause",
+        action="store_true",
+        default=True,
+        help="Automatically pause running systemd gateway service and restore on exit (default: True)",
+    )
+    fleet_chat.add_argument(
+        "--no-auto-pause",
+        dest="auto_pause",
+        action="store_false",
+        help="Do not pause running systemd service; warn operator instead",
+    )
+    fleet_chat.add_argument("args", nargs=argparse.REMAINDER)
+
+    chat = subparsers.add_parser(
+        "chat",
+        help="Interactive Hermes chat session with automatic daemon conflict prevention (HTTP 409)",
+    )
+    chat.add_argument(
+        "--profile",
+        default="default",
+        help="Hermes profile to chat with (e.g. orchestrator, george, kai, ned)",
+    )
+    chat.add_argument(
+        "--auto-pause",
+        action="store_true",
+        default=True,
+        help="Automatically pause running systemd gateway service and restore on exit (default: True)",
+    )
+    chat.add_argument(
+        "--no-auto-pause",
+        dest="auto_pause",
+        action="store_false",
+        help="Do not pause running systemd service; warn operator instead",
+    )
+    chat.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -601,6 +647,36 @@ def run(argv: Sequence[str] | None = None) -> int:
                     print(f"  - [{act['health']}] {act['profile']} ({act['tokens']:,} tokens, {act['messages']} msgs): {act.get('reset_result')}")
             return 0
 
+    if args.command == "chat" or (args.command == "fleet" and getattr(args, "fleet_command", None) == "chat"):
+        from prismatic.fleet.telegram import run_hermes_chat_with_guard
+
+        raw_argv = list(argv) if argv is not None else sys.argv[1:]
+        try:
+            cmd_idx = raw_argv.index("chat")
+            remaining = raw_argv[cmd_idx + 1:]
+        except ValueError:
+            remaining = list(args.args or []) + extra
+
+        forwarded: list[str] = []
+        skip_next = False
+        for a in remaining:
+            if skip_next:
+                skip_next = False
+                continue
+            if a in {"--auto-pause", "--no-auto-pause"}:
+                continue
+            if a == "--profile":
+                skip_next = True
+                continue
+            if a.startswith("--profile="):
+                continue
+            forwarded.append(a)
+
+        return run_hermes_chat_with_guard(
+            profile=args.profile,
+            extra_args=forwarded,
+            auto_pause=args.auto_pause,
+        )
 
     parser.print_help()
 
@@ -611,4 +687,17 @@ def main() -> None:
     sys.exit(run())
 
 
-__all__ = ["run", "main", "doctor_cli_run"]
+from prismatic.fleet.telegram import (
+    check_hermes_daemon_collision,
+    daemon_collision_guard,
+    run_hermes_chat_with_guard,
+)
+
+__all__ = [
+    "run",
+    "main",
+    "doctor_cli_run",
+    "check_hermes_daemon_collision",
+    "daemon_collision_guard",
+    "run_hermes_chat_with_guard",
+]

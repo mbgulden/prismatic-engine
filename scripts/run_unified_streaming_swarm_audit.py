@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 from prismatic.fleet.db import execute_with_retry, init_sqlite_connection
+from prismatic.fleet.telegram import DynamicTelegramThrottler, TelegramStreamer
 
 GATEWAY_URL = "http://127.0.0.1:9000"
 DASHBOARD_URL = "http://127.0.0.1:9119"
@@ -50,56 +51,6 @@ AGENTS = {
         "color": "🟠",
     },
 }
-
-
-class TelegramStreamer:
-    """Streams live progressive updates to Telegram via message edits."""
-
-    def __init__(self, token: str, chat_id: str, prefix: str):
-        self.token = token
-        self.chat_id = chat_id
-        self.prefix = prefix
-        self.message_id = None
-        self.lines = []
-
-    def start(self, initial_text: str):
-        self.lines = [initial_text]
-        text = f"{self.prefix}\n" + "\n".join(self.lines)
-        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                data = json.loads(resp.read())
-                self.message_id = data.get("result", {}).get("message_id")
-        except Exception as e:
-            print(f"[Telegram] Failed to start stream for {self.prefix}: {e}")
-
-    def update(self, new_line: str, delay_s: float = 0.8):
-        self.lines.append(new_line)
-        if not self.message_id:
-            return
-        time.sleep(delay_s)
-        text = f"{self.prefix}\n" + "\n".join(self.lines)
-        url = f"https://api.telegram.org/bot{self.token}/editMessageText"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({
-                "chat_id": self.chat_id,
-                "message_id": self.message_id,
-                "text": text,
-                "parse_mode": "Markdown",
-            }).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                pass
-        except Exception as e:
-            print(f"[Telegram] Edit error for {self.prefix}: {e}")
 
 
 def emit_prismatic_signal(agent_id: str, event_type: str, stage: str, metadata: dict = None):
@@ -227,19 +178,25 @@ def execute_unified_audit():
     # PHASE 1: FRED (Orchestrator)
     # -------------------------------------------------------------------------
     fred_cfg = AGENTS["fred"]
-    fred_stream = TelegramStreamer(fred_cfg["token"], TELEGRAM_CHAT_ID, f"{fred_cfg['color']} *Fred (Orchestrator & Lead)*")
-    fred_stream.start("🚀 *Phase 1 Initiated*: Intake and Multi-Agent Orchestration Dispatch")
+    fred_stream = TelegramStreamer(
+        fred_cfg["token"],
+        TELEGRAM_CHAT_ID,
+        f"{fred_cfg['color']} *Fred (Orchestrator & Lead)*",
+        bot_id="fred",
+    )
+    with fred_stream:
+        fred_stream.start("🚀 *Phase 1 Initiated*: Intake and Multi-Agent Orchestration Dispatch")
 
-    emit_prismatic_signal("fred", "audit_session_started", "orchestration_dispatch", {"task": "GRO-STREAMING-AUDIT-ALL-SURFACES"})
-    fred_stream.update("📡 Signal emitted to Prismatic Hub Signals Console.")
+        emit_prismatic_signal("fred", "audit_session_started", "orchestration_dispatch", {"task": "GRO-STREAMING-AUDIT-ALL-SURFACES"})
+        fred_stream.update("📡 Signal emitted to Prismatic Hub Signals Console.")
 
-    fred_lease = acquire_swarmlock("fred", DOC_RESOURCE)
-    fred_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
+        fred_lease = acquire_swarmlock("fred", DOC_RESOURCE)
+        fred_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
 
-    fred_stream.update("📊 Auditing multi-profile dispatch routing and autonomous non-blocking rules...")
-    time.sleep(1.0)
+        fred_stream.update("📊 Auditing multi-profile dispatch routing and autonomous non-blocking rules...")
+        time.sleep(1.0)
 
-    sec1_content = """# Unified Multi-Agent Streaming Swarm Audit Report
+        sec1_content = """# Unified Multi-Agent Streaming Swarm Audit Report
 **Task Reference**: [GRO-STREAMING-AUDIT-ALL-SURFACES](https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-STREAMING-AUDIT-ALL-SURFACES)  
 **Execution Timestamp**: 2026-09-09T20:15:00Z  
 **Participating Agents**: Fred, George, Kai, Ned  
@@ -258,38 +215,44 @@ The Prismatic Engine architecture synchronizes swarm operations across four conc
 4. **Hermes Chat Desktop Portal**: Real-time session state synchronization into SQLite `state.db` rendered via `http://127.0.0.1:9119/`.
 
 """
-    AUDIT_DOC.write_text(sec1_content, encoding="utf-8")
-    fred_stream.update("📝 Section 1 authored and written to workspace.")
+        AUDIT_DOC.write_text(sec1_content, encoding="utf-8")
+        fred_stream.update("📝 Section 1 authored and written to workspace.")
 
-    record_hermes_dashboard_session(
-        profile=fred_cfg["profile"],
-        user_prompt="Fred, run comprehensive swarm orchestration audit with multi-channel streaming.",
-        assistant_reply="Phase 1 complete: SwarmLock verified, Prismatic signals emitted, and Section 1 committed. Passing lease to George.",
-    )
-    fred_stream.update("💻 Synced turn into Hermes Web Dashboard.")
+        record_hermes_dashboard_session(
+            profile=fred_cfg["profile"],
+            user_prompt="Fred, run comprehensive swarm orchestration audit with multi-channel streaming.",
+            assistant_reply="Phase 1 complete: SwarmLock verified, Prismatic signals emitted, and Section 1 committed. Passing lease to George.",
+        )
+        fred_stream.update("💻 Synced turn into Hermes Web Dashboard.")
 
-    release_swarmlock("fred", DOC_RESOURCE, fred_lease)
-    emit_prismatic_signal("fred", "section1_completed", "orchestration_handoff", {"next_agent": "george"})
-    fred_stream.update("✅ *Phase 1 Complete*: SwarmLock released. Handing off to George.")
+        release_swarmlock("fred", DOC_RESOURCE, fred_lease)
+        emit_prismatic_signal("fred", "section1_completed", "orchestration_handoff", {"next_agent": "george"})
+        fred_stream.update("✅ *Phase 1 Complete*: SwarmLock released. Handing off to George.")
     time.sleep(1.5)
 
     # -------------------------------------------------------------------------
     # PHASE 2: GEORGE (Concurrency)
     # -------------------------------------------------------------------------
     geo_cfg = AGENTS["george"]
-    geo_stream = TelegramStreamer(geo_cfg["token"], TELEGRAM_CHAT_ID, f"{geo_cfg['color']} *George (Backend & Concurrency)*")
-    geo_stream.start("🔧 *Phase 2 Initiated*: Accepting handoff from Fred for Concurrency Audit")
+    geo_stream = TelegramStreamer(
+        geo_cfg["token"],
+        TELEGRAM_CHAT_ID,
+        f"{geo_cfg['color']} *George (Backend & Concurrency)*",
+        bot_id="george",
+    )
+    with geo_stream:
+        geo_stream.start("🔧 *Phase 2 Initiated*: Accepting handoff from Fred for Concurrency Audit")
 
-    emit_prismatic_signal("george", "concurrency_audit_started", "backend_concurrency", {"resource": DOC_RESOURCE})
-    geo_stream.update("📡 Telemetry signal emitted to Prismatic Hub.")
+        emit_prismatic_signal("george", "concurrency_audit_started", "backend_concurrency", {"resource": DOC_RESOURCE})
+        geo_stream.update("📡 Telemetry signal emitted to Prismatic Hub.")
 
-    geo_lease = acquire_swarmlock("george", DOC_RESOURCE)
-    geo_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
+        geo_lease = acquire_swarmlock("george", DOC_RESOURCE)
+        geo_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
 
-    geo_stream.update("⚡ Benchmarking SQLite WAL concurrency, token compression caps (24k tokens), and systemd fleet template...")
-    time.sleep(1.0)
+        geo_stream.update("⚡ Benchmarking SQLite WAL concurrency, token compression caps (24k tokens), and systemd fleet template...")
+        time.sleep(1.0)
 
-    sec2_content = """---
+        sec2_content = """---
 
 ## Section 2: Concurrency Invariants, SwarmLock & Fleet Hygiene Mechanics
 *Lead Author: George (Backend & Systems Implementation Engineer)*
@@ -300,39 +263,45 @@ The Prismatic Engine architecture synchronizes swarm operations across four conc
 - **Service Isolation**: All profiles standardized under `/etc/systemd/system/hermes-gateway@.service`.
 
 """
-    with open(AUDIT_DOC, "a", encoding="utf-8") as f:
-        f.write(sec2_content)
-    geo_stream.update("📝 Section 2 authored and appended.")
+        with open(AUDIT_DOC, "a", encoding="utf-8") as f:
+            f.write(sec2_content)
+        geo_stream.update("📝 Section 2 authored and appended.")
 
-    record_hermes_dashboard_session(
-        profile=geo_cfg["profile"],
-        user_prompt="George, audit backend concurrency and fleet hygiene invariants.",
-        assistant_reply="Phase 2 complete: SwarmLock verified, token caps benchmarked at 24k tokens, and Section 2 committed. Passing lease to Kai.",
-    )
-    geo_stream.update("💻 Synced turn into Hermes Web Dashboard.")
+        record_hermes_dashboard_session(
+            profile=geo_cfg["profile"],
+            user_prompt="George, audit backend concurrency and fleet hygiene invariants.",
+            assistant_reply="Phase 2 complete: SwarmLock verified, token caps benchmarked at 24k tokens, and Section 2 committed. Passing lease to Kai.",
+        )
+        geo_stream.update("💻 Synced turn into Hermes Web Dashboard.")
 
-    release_swarmlock("george", DOC_RESOURCE, geo_lease)
-    emit_prismatic_signal("george", "section2_completed", "backend_handoff", {"next_agent": "kai"})
-    geo_stream.update("✅ *Phase 2 Complete*: SwarmLock released. Handing off to Kai.")
+        release_swarmlock("george", DOC_RESOURCE, geo_lease)
+        emit_prismatic_signal("george", "section2_completed", "backend_handoff", {"next_agent": "kai"})
+        geo_stream.update("✅ *Phase 2 Complete*: SwarmLock released. Handing off to Kai.")
     time.sleep(1.5)
 
     # -------------------------------------------------------------------------
     # PHASE 3: KAI (UI/UX & Mobile)
     # -------------------------------------------------------------------------
     kai_cfg = AGENTS["kai"]
-    kai_stream = TelegramStreamer(kai_cfg["token"], TELEGRAM_CHAT_ID, f"{kai_cfg['color']} *Kai (UI/UX & Mobile Specialist)*")
-    kai_stream.start("🎨 *Phase 3 Initiated*: Accepting handoff from George for UI/UX & Mobile Audit")
+    kai_stream = TelegramStreamer(
+        kai_cfg["token"],
+        TELEGRAM_CHAT_ID,
+        f"{kai_cfg['color']} *Kai (UI/UX & Mobile Specialist)*",
+        bot_id="kai",
+    )
+    with kai_stream:
+        kai_stream.start("🎨 *Phase 3 Initiated*: Accepting handoff from George for UI/UX & Mobile Audit")
 
-    emit_prismatic_signal("kai", "ui_ux_audit_started", "mobile_375px_audit", {"viewport": "375x812"})
-    kai_stream.update("📡 Telemetry signal emitted to Prismatic Hub.")
+        emit_prismatic_signal("kai", "ui_ux_audit_started", "mobile_375px_audit", {"viewport": "375x812"})
+        kai_stream.update("📡 Telemetry signal emitted to Prismatic Hub.")
 
-    kai_lease = acquire_swarmlock("kai", DOC_RESOURCE)
-    kai_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
+        kai_lease = acquire_swarmlock("kai", DOC_RESOURCE)
+        kai_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
 
-    kai_stream.update("📱 Auditing 375px responsive layout, touch padding (>44px), WCAG 4.5:1 contrast, and SSE stream latency (<20ms)...")
-    time.sleep(1.0)
+        kai_stream.update("📱 Auditing 375px responsive layout, touch padding (>44px), WCAG 4.5:1 contrast, and SSE stream latency (<20ms)...")
+        time.sleep(1.0)
 
-    sec3_content = """---
+        sec3_content = """---
 
 ## Section 3: Visual Presentation, 375px Mobile Accessibility & Signals Telemetry
 *Lead Author: Kai (UI/UX Specialist & Frontend Systems Architect)*
@@ -343,41 +312,47 @@ The Prismatic Engine architecture synchronizes swarm operations across four conc
 - **Live SSE Streaming**: Telemetry delivery via `/api/gateway/signals/stream` operating at sub-20ms latency.
 
 """
-    with open(AUDIT_DOC, "a", encoding="utf-8") as f:
-        f.write(sec3_content)
-    kai_stream.update("📝 Section 3 authored and appended.")
+        with open(AUDIT_DOC, "a", encoding="utf-8") as f:
+            f.write(sec3_content)
+        kai_stream.update("📝 Section 3 authored and appended.")
 
-    record_hermes_dashboard_session(
-        profile=kai_cfg["profile"],
-        user_prompt="Kai, audit 375px mobile responsiveness and SSE signal stream performance.",
-        assistant_reply="Phase 3 complete: Mobile viewport verified, touch targets validated, and Section 3 committed. Passing lease to Ned.",
-    )
-    kai_stream.update("💻 Synced turn into Hermes Web Dashboard.")
+        record_hermes_dashboard_session(
+            profile=kai_cfg["profile"],
+            user_prompt="Kai, audit 375px mobile responsiveness and SSE signal stream performance.",
+            assistant_reply="Phase 3 complete: Mobile viewport verified, touch targets validated, and Section 3 committed. Passing lease to Ned.",
+        )
+        kai_stream.update("💻 Synced turn into Hermes Web Dashboard.")
 
-    release_swarmlock("kai", DOC_RESOURCE, kai_lease)
-    emit_prismatic_signal("kai", "section3_completed", "ui_handoff", {"next_agent": "ned"})
-    kai_stream.update("✅ *Phase 3 Complete*: SwarmLock released. Handing off to Ned.")
+        release_swarmlock("kai", DOC_RESOURCE, kai_lease)
+        emit_prismatic_signal("kai", "section3_completed", "ui_handoff", {"next_agent": "ned"})
+        kai_stream.update("✅ *Phase 3 Complete*: SwarmLock released. Handing off to Ned.")
     time.sleep(1.5)
 
     # -------------------------------------------------------------------------
     # PHASE 4: NED (Security & Proof)
     # -------------------------------------------------------------------------
     ned_cfg = AGENTS["ned"]
-    ned_stream = TelegramStreamer(ned_cfg["token"], TELEGRAM_CHAT_ID, f"{ned_cfg['color']} *Ned (Security Auditor & Verification Engineer)*")
-    ned_stream.start("🛡️ *Phase 4 Initiated*: Accepting handoff from Kai for Security & Attestation")
+    ned_stream = TelegramStreamer(
+        ned_cfg["token"],
+        TELEGRAM_CHAT_ID,
+        f"{ned_cfg['color']} *Ned (Security Auditor & Verification Engineer)*",
+        bot_id="ned",
+    )
+    with ned_stream:
+        ned_stream.start("🛡️ *Phase 4 Initiated*: Accepting handoff from Kai for Security & Attestation")
 
-    emit_prismatic_signal("ned", "security_audit_started", "security_containment", {"scope": "credentials_and_fencing"})
-    ned_stream.update("📡 Telemetry signal emitted to Prismatic Hub.")
+        emit_prismatic_signal("ned", "security_audit_started", "security_containment", {"scope": "credentials_and_fencing"})
+        ned_stream.update("📡 Telemetry signal emitted to Prismatic Hub.")
 
-    ned_lease = acquire_swarmlock("ned", DOC_RESOURCE)
-    ned_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
+        ned_lease = acquire_swarmlock("ned", DOC_RESOURCE)
+        ned_stream.update(f"🔒 SwarmLock lease acquired on `{DOC_RESOURCE}`.")
 
-    ned_stream.update("🔍 Auditing VLLM API key scoping, plugin directory isolation, and fail-closed clarify guards...")
-    time.sleep(1.0)
+        ned_stream.update("🔍 Auditing VLLM API key scoping, plugin directory isolation, and fail-closed clarify guards...")
+        time.sleep(1.0)
 
-    doc_hash = hashlib.sha256(AUDIT_DOC.read_bytes()).hexdigest()
+        doc_hash = hashlib.sha256(AUDIT_DOC.read_bytes()).hexdigest()
 
-    sec4_content = f"""---
+        sec4_content = f"""---
 
 ## Section 4: Security Containment & Multi-Agent Attestation Certification
 *Lead Author: Ned (Security Auditor & Verification Engineer)*
@@ -398,27 +373,27 @@ The Prismatic Engine architecture synchronizes swarm operations across four conc
 **Document SHA-256 Hash**: `{doc_hash}`  
 **Attestation Seal**: **CERTIFIED VERIFIED (PASS)**  
 """
-    with open(AUDIT_DOC, "a", encoding="utf-8") as f:
-        f.write(sec4_content)
-    ned_stream.update("📝 Section 4 authored with cryptographic attestation.")
+        with open(AUDIT_DOC, "a", encoding="utf-8") as f:
+            f.write(sec4_content)
+        ned_stream.update("📝 Section 4 authored with cryptographic attestation.")
 
-    record_hermes_dashboard_session(
-        profile=ned_cfg["profile"],
-        user_prompt="Ned, execute final security fencing audit and cryptographically attest the swarm report.",
-        assistant_reply=f"Phase 4 complete: Security boundaries verified, 4-agent peer table sealed. Hash: {doc_hash[:16]}... Full pass certified.",
-    )
-    ned_stream.update("💻 Synced turn into Hermes Web Dashboard.")
+        record_hermes_dashboard_session(
+            profile=ned_cfg["profile"],
+            user_prompt="Ned, execute final security fencing audit and cryptographically attest the swarm report.",
+            assistant_reply=f"Phase 4 complete: Security boundaries verified, 4-agent peer table sealed. Hash: {doc_hash[:16]}... Full pass certified.",
+        )
+        ned_stream.update("💻 Synced turn into Hermes Web Dashboard.")
 
-    final_hash = hashlib.sha256(AUDIT_DOC.read_bytes()).hexdigest()
-    release_swarmlock("ned", DOC_RESOURCE, ned_lease)
+        final_hash = hashlib.sha256(AUDIT_DOC.read_bytes()).hexdigest()
+        release_swarmlock("ned", DOC_RESOURCE, ned_lease)
 
-    emit_prismatic_signal("ned", "audit_complete", "audit_complete", {
-        "final_hash": final_hash,
-        "status": "PASS_CERTIFIED",
-        "surfaces_streamed": ["telegram", "prismatic_signals", "swarmlock", "hermes_dashboard"],
-    })
+        emit_prismatic_signal("ned", "audit_complete", "audit_complete", {
+            "final_hash": final_hash,
+            "status": "PASS_CERTIFIED",
+            "surfaces_streamed": ["telegram", "prismatic_signals", "swarmlock", "hermes_dashboard"],
+        })
 
-    ned_stream.update(f"🔏 *Audit Sealed & Certified*: All 4 surfaces streamed. Final Hash: `{final_hash[:16]}...`")
+        ned_stream.update(f"🔏 *Audit Sealed & Certified*: All 4 surfaces streamed. Final Hash: `{final_hash[:16]}...`")
 
     print("=========================================================================")
     print(f"UNIFIED MULTI-AGENT STREAMING AUDIT COMPLETED! Final Hash: {final_hash}")

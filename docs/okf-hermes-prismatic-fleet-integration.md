@@ -19,6 +19,7 @@ Objective → Key Result → Function → Evidence
 | **Zero-Collision Concurrent File Mutation** | Multiple autonomous agents (Fred, George, Kai, Ned) mutate shared workspace documents without clobbering, race conditions, or unhandled file corruption. | Distributed mutex leases via `/api/gateway/swarmlock/acquire` and `/release` with explicit TTL, intention tagging, and collision deflection tracking. | Gateway in-memory lease ledger, collision deflection logs, and Playwright live lease visualizer screenshots. |
 | **SQLite Multi-Agent Concurrency & WAL Hardening** | Concurrent agent turns (Fred, George, Kai, Ned) write simultaneously to SQLite stores without transient lock contention or unhandled `database is locked` errors. | Mandatory connection PRAGMAs (`WAL`, `busy_timeout=5000`, `synchronous=NORMAL`, `foreign_keys=ON`) and exponential backoff retry loop (`execute_with_retry`). | [`prismatic/fleet/db.py`](https://prismatic.growthwebdev.com/workspaces?file=prismatic/fleet/db.py), [`tests/test_sqlite_wal_concurrency.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_sqlite_wal_concurrency.py) (6/6 PASSED), and fleet-wide WAL migration hook. |
 | **Filesystem Write Fencing (`prismatic exec`)** | Arbitrary scripts, test runs, or subagent tasks execute enclosed in an unconditional SwarmLock lease envelope with fail-closed deflection (423), SIGINT/SIGTERM trapping, and pre-commit Python AST syntax checks. | Supervisor CLI `prismatic exec` lifecycle: acquire SwarmLock → emit `fenced_exec_started` → run subprocess → AST compile check → guaranteed `finally:` release and `fenced_exec_finished`. | [`prismatic/client/exec.py`](https://prismatic.growthwebdev.com/workspaces?file=prismatic/client/exec.py), [`tests/test_prismatic_exec.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_prismatic_exec.py) (9/9 PASSED), and gateway `/api/gateway/swarmlock/status`. |
+| **Telegram Multi-Bot Rate Limiting & Daemon Collision Prevention** | Multi-bot swarm streams progressively to single operator chat (`8190664947`) and launches interactive CLI sessions without triggering Telegram HTTP 429 flood limits or HTTP 409 Conflict daemon crash loops. | `DynamicTelegramThrottler` (0.8s $\rightarrow$ 1.6s $\rightarrow$ 2.5s), HTTP 429 flood recovery (`parameters.retry_after + 0.5s`), and `daemon_collision_guard` auto-pausing/restoring `hermes-gateway@<profile>.service`. | [`prismatic/fleet/telegram.py`](https://prismatic.growthwebdev.com/workspaces?file=prismatic/fleet/telegram.py), [`tests/test_telegram_streaming_throttler.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_telegram_streaming_throttler.py) (16/16 PASSED), and gateway throttler endpoints. |
 | **Fail-Closed Context & Token Hygiene** | Background autonomous runs never exceed model context windows or trigger degenerate token loops (`Le 0LEASE 0...`). | Dynamic 75% `/compress` threshold enforcement (`int(context_window * 0.75)` with 25% reasoning headroom and vLLM runtime discovery), active session rotation, and authenticated VLLM API key scoping. | `prismatic fleet sync --dynamic`, `tests/test_fleet_manager.py` (6/6 passed), and SQLite `state.db` session token counters. |
 | **Unified Multi-Surface Real-Time Streaming** | Swarm activities stream continuously and simultaneously to operator mobile chats, web dashboards, and desktop portals. | Progressive Telegram message editing (0.8s cadence), SSE telemetry stream (`/api/gateway/signals/stream`), and SQLite session synchronization into Hermes Desktop Portal (port 9119). | Telegram message edit receipts (chat `8190664947`), SSE signal packets, and Playwright desktop/mobile snapshots. |
 | **Standardized Single-Command Fleet Lifecycle** | Operator onboards, updates, resets, and monitors the entire multi-profile agent fleet using single canonical commands rather than brittle manual configurations. | Systemd template service (`hermes-gateway@.service`), CLI commands (`prismatic fleet status/sync/reset`), and automated profile config migration. | `systemctl status hermes-gateway@<profile>`, CLI outputs, and centralized fleet JSON reports. |
@@ -93,6 +94,10 @@ Objective → Key Result → Function → Evidence
 6. **SQLite Multi-Agent Concurrency & WAL Hardening Fence**:
    - **Invariant**: All database connection initializations across the fleet MUST enforce WAL mode (`PRAGMA journal_mode = WAL;`), a 5000ms busy retry timeout (`PRAGMA busy_timeout = 5000;`), synchronous normal (`PRAGMA synchronous = NORMAL;`), and foreign keys enabled (`PRAGMA foreign_keys = ON;`). Multi-database dual writes must execute inside `execute_with_retry` with exponential backoff to eliminate `database is locked` errors during multi-agent concurrency bursts.
    - **Fleet Migration Hook**: `prismatic fleet sync` scans and checkpoints all existing databases (`~/.hermes/state.db` and all profile databases) via `PRAGMA wal_checkpoint(TRUNCATE);` to ensure zero stale lock files or un-migrated rollback journals.
+7. **Telegram Multi-Bot Rate Limiting & Daemon Collision Prevention Fence**:
+   - **Dynamic Cadence Invariant**: Multiple bots streaming progressive updates to chat `8190664947` coordinate edit pacing via `DynamicTelegramThrottler`. Cadence dynamically scales based on concurrent streamer count: `0.8s` for $\le 1$ active bot, `1.6s` for 2 active bots, and `2.5s` for 3+ active bots. This ensures total per-chat edit rate never exceeds Telegram flood limits (~20–30 req/min).
+   - **HTTP 429 Flood Recovery**: `TelegramStreamer.edit_message` catches `httpx.HTTPStatusError` (and HTTP 429 status codes), extracts `parameters.retry_after` (default 3.0s), backs off for `retry_after + 0.5s`, and retries without crashing the calling agent loop.
+   - **Daemon Collision Prevention (HTTP 409)**: Before launching interactive terminal sessions, `prismatic chat --profile <profile>` checks whether `systemctl is-active hermes-gateway@<profile>.service` returns 0. If active, `daemon_collision_guard` auto-pauses the service, executes the interactive session, and restores the systemd unit in a `finally:` block, preventing Telegram polling conflicts.
 
 ---
 
@@ -121,13 +126,21 @@ python3 -m prismatic.cli exec \
 ```
 Safely acquires a mutex lease, streams process output, traps signals, verifies python syntax, and guarantees lease release.
 
-### 4. Run Unified Multi-Surface Streaming Audit
+### 4. Interactive Chat Session with Daemon Collision Guard
+```bash
+python3 -m prismatic.cli chat --profile george -- -q "Status report"
+# or
+python3 -m prismatic.cli fleet chat --profile kai
+```
+Checks for running `hermes-gateway@<profile>.service`, auto-pauses the daemon to prevent HTTP 409 Conflict polling errors, executes the interactive chat session, and restores the systemd service upon exit.
+
+### 5. Run Unified Multi-Surface Streaming Audit
 ```bash
 python3 scripts/run_unified_streaming_swarm_audit.py
 ```
-Executes the four-agent sequential audit (Fred → George → Kai → Ned) across Telegram, Prismatic Hub Signals, SwarmLock, and Hermes Dashboard.
+Executes the four-agent sequential audit (Fred → George → Kai → Ned) across Telegram, Prismatic Hub Signals, SwarmLock, and Hermes Dashboard with `DynamicTelegramThrottler` pacing.
 
-### 5. Capture Visual Audit Evidence (Playwright)
+### 6. Capture Visual Audit Evidence (Playwright)
 ```bash
 NODE_PATH=/home/ubuntu/work/prismatic-engine/node_modules node /home/ubuntu/.gemini/antigravity-cli/brain/9762816f-cd24-4d2d-b3d2-b5455aaeb213/scratch/capture_unified_streaming_evidence.js
 ```
@@ -137,6 +150,7 @@ Captures 1440x900 desktop and 375x812 mobile screenshots across the Signals cons
 
 ## 📊 Verification Receipts
 
+- **Telegram Multi-Bot Rate Limiting & Daemon Collision Prevention**: [`tests/test_telegram_streaming_throttler.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_telegram_streaming_throttler.py) (16/16 PASSED)
 - **SQLite Concurrency & WAL Hardening**: [`tests/test_sqlite_wal_concurrency.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_sqlite_wal_concurrency.py) (6/6 PASSED)
 - **Fenced Execution Supervisor**: [`tests/test_prismatic_exec.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_prismatic_exec.py) (9/9 PASSED)
 - **Unit Tests**: [`tests/test_fleet_manager.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_fleet_manager.py) (6/6 PASSED)
