@@ -97,6 +97,7 @@ Objective → Key Result → Function → Evidence
 7. **Telegram Multi-Bot Rate Limiting & Daemon Collision Prevention Fence**:
    - **Dynamic Cadence Invariant**: Multiple bots streaming progressive updates to chat `8190664947` coordinate edit pacing via `DynamicTelegramThrottler`. Cadence dynamically scales based on concurrent streamer count: `0.8s` for $\le 1$ active bot, `1.6s` for 2 active bots, and `2.5s` for 3+ active bots. This ensures total per-chat edit rate never exceeds Telegram flood limits (~20–30 req/min).
    - **HTTP 429 Flood Recovery**: `TelegramStreamer.edit_message` catches `httpx.HTTPStatusError` (and HTTP 429 status codes), extracts `parameters.retry_after` (default 3.0s), backs off for `retry_after + 0.5s`, and retries without crashing the calling agent loop.
+   - **Unclosed Markdown Delimiter Resilience (HTTP 400 Fallback)**: Mid-stream progressive edits often emit unclosed code blocks (e.g. ```` ```python\n ... ````) or dangling emphasis symbols (`*`, `_`) that trigger Telegram's `400 Bad Request: can't parse entities`. `TelegramStreamer.edit_message` and `TelegramStreamer.start` detect HTTP 400 and immediately retry without `parse_mode`, delivering the turn cleanly as plain text without crashing or halting the agent turn.
    - **Daemon Collision Prevention (HTTP 409)**: Before launching interactive terminal sessions, `prismatic chat --profile <profile>` checks whether `systemctl is-active hermes-gateway@<profile>.service` returns 0. If active, `daemon_collision_guard` auto-pauses the service, executes the interactive session, and restores the systemd unit in a `finally:` block, preventing Telegram polling conflicts.
 
 ---
@@ -150,7 +151,7 @@ Captures 1440x900 desktop and 375x812 mobile screenshots across the Signals cons
 
 ## 📊 Verification Receipts
 
-- **Telegram Multi-Bot Rate Limiting & Daemon Collision Prevention**: [`tests/test_telegram_streaming_throttler.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_telegram_streaming_throttler.py) (16/16 PASSED)
+- **Telegram Multi-Bot Rate Limiting & Daemon Collision Prevention**: [`tests/test_telegram_streaming_throttler.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_telegram_streaming_throttler.py) (19/19 PASSED)
 - **SQLite Concurrency & WAL Hardening**: [`tests/test_sqlite_wal_concurrency.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_sqlite_wal_concurrency.py) (6/6 PASSED)
 - **Fenced Execution Supervisor**: [`tests/test_prismatic_exec.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_prismatic_exec.py) (9/9 PASSED)
 - **Unit Tests**: [`tests/test_fleet_manager.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_fleet_manager.py) (6/6 PASSED)

@@ -190,6 +190,19 @@ class TelegramStreamer:
                 data = resp.json()
                 self.message_id = data.get("result", {}).get("message_id")
                 return self.message_id
+            elif resp.status_code == 400:
+                logger.warning(
+                    "[Telegram] HTTP 400 on start stream for %s (possible unclosed markdown delimiter); falling back to plain text",
+                    self.prefix,
+                )
+                fallback_resp = client.post(
+                    url,
+                    json={"chat_id": self.chat_id, "text": text},
+                )
+                if fallback_resp.status_code == 200:
+                    data = fallback_resp.json()
+                    self.message_id = data.get("result", {}).get("message_id")
+                    return self.message_id
             else:
                 logger.warning(
                     "[Telegram] Failed to start stream for %s: HTTP %s",
@@ -203,7 +216,7 @@ class TelegramStreamer:
     def edit_message(
         self, text: Optional[str] = None, max_retries: int = 2
     ) -> Optional[Dict[str, Any]]:
-        """Edit the streaming message with HTTP 429 backoff and recovery."""
+        """Edit the streaming message with HTTP 429 backoff and 400 markdown fallback."""
         if not self.message_id:
             return None
 
@@ -241,6 +254,26 @@ class TelegramStreamer:
                     self._sleep_fn(backoff)
                     continue
 
+                if resp.status_code == 400 and "parse_mode" in payload:
+                    logger.warning(
+                        "[Telegram] HTTP 400 Bad Request (unclosed markdown entity) for %s; falling back to plain text",
+                        self.prefix,
+                    )
+                    payload_plain = {k: v for k, v in payload.items() if k != "parse_mode"}
+                    fallback_resp = client.post(url, json=payload_plain)
+                    if fallback_resp.status_code == 200:
+                        self._last_edit_time = time.time()
+                        try:
+                            return fallback_resp.json()
+                        except Exception:
+                            return {"ok": True}
+                    else:
+                        logger.warning(
+                            "[Telegram] Plain-text fallback edit failed for %s: HTTP %s",
+                            self.prefix,
+                            fallback_resp.status_code,
+                        )
+
                 resp.raise_for_status()
                 self._last_edit_time = time.time()
                 try:
@@ -267,6 +300,27 @@ class TelegramStreamer:
                     )
                     self._sleep_fn(backoff)
                     continue
+
+                if exc.response is not None and exc.response.status_code == 400 and "parse_mode" in payload:
+                    logger.warning(
+                        "[Telegram] HTTP 400 StatusError (unclosed markdown entity) for %s; falling back to plain text",
+                        self.prefix,
+                    )
+                    payload_plain = {k: v for k, v in payload.items() if k != "parse_mode"}
+                    try:
+                        fallback_resp = client.post(url, json=payload_plain)
+                        if fallback_resp.status_code == 200:
+                            self._last_edit_time = time.time()
+                            try:
+                                return fallback_resp.json()
+                            except Exception:
+                                return {"ok": True}
+                    except Exception as fb_err:
+                        logger.warning(
+                            "[Telegram] Plain-text fallback edit failed for %s: %s",
+                            self.prefix,
+                            fb_err,
+                        )
 
                 logger.error("[Telegram] HTTPStatusError editing message for %s: %s", self.prefix, exc)
                 return None

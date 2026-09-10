@@ -448,3 +448,113 @@ def test_gateway_telegram_throttler_api():
     resp = client.post("/api/gateway/telegram/throttler/register", json={})
     assert resp.status_code == 400
 
+
+# ---------------------------------------------------------------------------
+# 4. UNCLOSED MARKDOWN DELIMITER RESILIENCE TESTS (HTTP 400 FALLBACK)
+# ---------------------------------------------------------------------------
+
+
+def test_streamer_edit_message_unclosed_markdown_fallback_to_plain_text():
+    """Asserts that HTTP 400 Bad Request on unclosed markdown entities falls back to plain text."""
+    mock_client = MagicMock(spec=httpx.Client)
+
+    # First call: 400 Bad Request from Telegram entity parser
+    resp_400 = MagicMock(spec=httpx.Response)
+    resp_400.status_code = 400
+    resp_400.json.return_value = {
+        "ok": False,
+        "error_code": 400,
+        "description": "Bad Request: can't parse entities: Can't find end of the entity starting at byte offset 24",
+    }
+
+    # Second call (plain-text fallback without parse_mode): 200 OK
+    resp_200 = MagicMock(spec=httpx.Response)
+    resp_200.status_code = 200
+    resp_200.json.return_value = {"ok": True, "result": {"message_id": 555}}
+
+    mock_client.post.side_effect = [resp_400, resp_200]
+
+    streamer = TelegramStreamer(
+        token="123456:FAKE_TOKEN",
+        chat_id="8190664947",
+        prefix="[TEST]",
+        client=mock_client,
+    )
+    streamer.message_id = 555
+
+    # Text containing unclosed code block: ```python\ndef hello():
+    unclosed_code_snippet = "```python\ndef hello():\n    return 'world'"
+    res = streamer.edit_message(unclosed_code_snippet)
+
+    assert res == {"ok": True, "result": {"message_id": 555}}
+    assert mock_client.post.call_count == 2
+
+    # Verify first call had parse_mode="Markdown"
+    first_call_json = mock_client.post.call_args_list[0].kwargs["json"]
+    assert first_call_json.get("parse_mode") == "Markdown"
+
+    # Verify fallback call stripped parse_mode to preserve delivery as plain text
+    fallback_call_json = mock_client.post.call_args_list[1].kwargs["json"]
+    assert "parse_mode" not in fallback_call_json
+    assert fallback_call_json["text"] == unclosed_code_snippet
+
+
+def test_streamer_edit_message_400_httpx_status_error_fallback():
+    """Asserts that httpx.HTTPStatusError with 400 also triggers plain-text fallback."""
+    mock_client = MagicMock(spec=httpx.Client)
+
+    resp_400 = MagicMock(spec=httpx.Response)
+    resp_400.status_code = 400
+    resp_400.json.return_value = {"error_code": 400, "description": "can't parse entities"}
+    err_400 = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=resp_400)
+
+    resp_200 = MagicMock(spec=httpx.Response)
+    resp_200.status_code = 200
+    resp_200.json.return_value = {"ok": True, "result": {"message_id": 555}}
+
+    mock_client.post.side_effect = [err_400, resp_200]
+
+    streamer = TelegramStreamer(
+        token="123456:FAKE_TOKEN",
+        chat_id="8190664947",
+        prefix="[TEST]",
+        client=mock_client,
+    )
+    streamer.message_id = 555
+
+    res = streamer.edit_message("*unclosed bold entity")
+    assert res == {"ok": True, "result": {"message_id": 555}}
+    assert mock_client.post.call_count == 2
+
+    fallback_call_json = mock_client.post.call_args_list[1].kwargs["json"]
+    assert "parse_mode" not in fallback_call_json
+
+
+def test_streamer_start_unclosed_markdown_fallback():
+    """Asserts that start() also falls back to plain text if initial text has entity errors."""
+    mock_client = MagicMock(spec=httpx.Client)
+
+    resp_400 = MagicMock(spec=httpx.Response)
+    resp_400.status_code = 400
+    resp_400.json.return_value = {"error_code": 400, "description": "can't parse entities"}
+
+    resp_200 = MagicMock(spec=httpx.Response)
+    resp_200.status_code = 200
+    resp_200.json.return_value = {"ok": True, "result": {"message_id": 666}}
+
+    mock_client.post.side_effect = [resp_400, resp_200]
+
+    streamer = TelegramStreamer(
+        token="123456:FAKE_TOKEN",
+        chat_id="8190664947",
+        prefix="[TEST]",
+        client=mock_client,
+    )
+
+    msg_id = streamer.start("Initial text with unclosed `code block")
+    assert msg_id == 666
+    assert streamer.message_id == 666
+    assert mock_client.post.call_count == 2
+
+    fallback_call_json = mock_client.post.call_args_list[1].kwargs["json"]
+    assert "parse_mode" not in fallback_call_json
