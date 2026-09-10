@@ -25,6 +25,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import yaml
 
+from prismatic.fleet.db import (
+    checkpoint_sqlite_database,
+    execute_with_retry,
+    init_sqlite_connection,
+)
+
 logger = logging.getLogger("prismatic.fleet")
 
 
@@ -357,7 +363,7 @@ class PrismaticFleetManager:
         )
 
         try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn = init_sqlite_connection(f"file:{db_path}?mode=ro", uri=True, read_only=True)
             cursor = conn.cursor()
 
             # Query gateway routing table
@@ -622,7 +628,7 @@ class PrismaticFleetManager:
         resets_performed = []
 
         try:
-            conn = sqlite3.connect(str(db_path), timeout=10.0)
+            conn = init_sqlite_connection(str(db_path), timeout_seconds=10.0)
             cursor = conn.cursor()
 
             # Find matching routing rows
@@ -644,21 +650,7 @@ class PrismaticFleetManager:
                 old_session_id = entry.get("session_id")
                 new_session_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
-                # 1. Archive old session in sessions table
-                if old_session_id:
-                    cursor.execute(
-                        "UPDATE sessions SET ended_at = ?, end_reason = ?, archived = 1 WHERE id = ?;",
-                        (now_ts, reason, old_session_id),
-                    )
-
-                # 2. Insert new session record
-                source_val = entry.get("platform") or "gateway"
-                cursor.execute(
-                    "INSERT INTO sessions (id, source, session_key, started_at, archived) VALUES (?, ?, ?, ?, 0);",
-                    (new_session_id, source_val, skey, now_ts),
-                )
-
-                # 3. Update entry_json
+                # Update entry_json
                 entry["prev_session_id"] = old_session_id
                 entry["session_id"] = new_session_id
                 entry["created_at"] = now_iso
@@ -677,23 +669,33 @@ class PrismaticFleetManager:
                 entry["last_prompt_tokens"] = 0
 
                 new_entry_json = json.dumps(entry)
+                source_val = entry.get("platform") or "gateway"
 
-                cursor.execute(
-                    "UPDATE gateway_routing SET entry_json = ?, updated_at = ? WHERE session_key = ?;",
-                    (new_entry_json, now_ts, skey),
-                )
+                def _apply_reset(c: sqlite3.Connection) -> None:
+                    cur = c.cursor()
+                    if old_session_id:
+                        cur.execute(
+                            "UPDATE sessions SET ended_at = ?, end_reason = ?, archived = 1 WHERE id = ?;",
+                            (now_ts, reason, old_session_id),
+                        )
+                    cur.execute(
+                        "INSERT INTO sessions (id, source, session_key, started_at, archived) VALUES (?, ?, ?, ?, 0);",
+                        (new_session_id, source_val, skey, now_ts),
+                    )
+                    cur.execute(
+                        "UPDATE gateway_routing SET entry_json = ?, updated_at = ? WHERE session_key = ?;",
+                        (new_entry_json, now_ts, skey),
+                    )
+                    try:
+                        cur.execute("DELETE FROM session_turn_leases WHERE session_key = ?;", (skey,))
+                    except Exception:
+                        pass
+                    try:
+                        cur.execute("DELETE FROM gateway_hygiene_state WHERE session_key = ?;", (skey,))
+                    except Exception:
+                        pass
 
-                # 4. Clear any stale turn leases
-                try:
-                    cursor.execute("DELETE FROM session_turn_leases WHERE session_key = ?;", (skey,))
-                except Exception:
-                    pass
-
-                # 5. Clear gateway hygiene state
-                try:
-                    cursor.execute("DELETE FROM gateway_hygiene_state WHERE session_key = ?;", (skey,))
-                except Exception:
-                    pass
+                execute_with_retry(conn, _apply_reset)
 
                 resets_performed.append({
                     "session_key": skey,
@@ -701,7 +703,6 @@ class PrismaticFleetManager:
                     "new_session_id": new_session_id,
                 })
 
-            conn.commit()
             conn.close()
 
             # Restart gateway service if requested to flush in-memory state
@@ -850,6 +851,70 @@ WantedBy=multi-user.target
             "dry_run": dry_run,
         }
 
+    def migrate_databases_to_wal(self) -> Dict[str, Any]:
+        """Fleet migration hook: enforce WAL mode and checkpoint across all fleet databases.
+
+        Scans ~/.hermes/state.db and all profile state.db files, executing:
+        - PRAGMA journal_mode = WAL;
+        - PRAGMA busy_timeout = 5000;
+        - PRAGMA synchronous = NORMAL;
+        - PRAGMA foreign_keys = ON;
+        - PRAGMA wal_checkpoint(TRUNCATE);
+        """
+        migrated: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        candidate_paths: set[Path] = set()
+
+        root_db = self.hermes_root / "state.db"
+        if root_db.exists():
+            candidate_paths.add(root_db)
+
+        profiles_dir = self.hermes_root / "profiles"
+        if profiles_dir.exists():
+            for p_dir in profiles_dir.iterdir():
+                if p_dir.is_dir():
+                    pdb = p_dir / "state.db"
+                    if pdb.exists():
+                        candidate_paths.add(pdb)
+
+        for sub_db in self.hermes_root.glob("**/state.db"):
+            if sub_db.is_file():
+                candidate_paths.add(sub_db)
+
+        for db_file in sorted(candidate_paths):
+            try:
+                conn = init_sqlite_connection(db_file, timeout_seconds=10.0)
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA journal_mode = WAL;")
+                journal_mode = cursor.fetchone()[0]
+                cursor.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                checkpoint_res = cursor.fetchone()
+                cursor.close()
+                conn.close()
+
+                migrated.append({
+                    "path": str(db_file),
+                    "journal_mode": str(journal_mode).lower(),
+                    "checkpoint": list(checkpoint_res) if checkpoint_res else None,
+                    "status": "OK",
+                })
+            except Exception as exc:
+                logger.warning("Failed WAL migration on %s: %s", db_file, exc)
+                errors.append({
+                    "path": str(db_file),
+                    "error": str(exc),
+                    "status": "ERROR",
+                })
+
+        return {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "total_scanned": len(candidate_paths),
+            "migrated_count": len(migrated),
+            "errors_count": len(errors),
+            "migrated": migrated,
+            "errors": errors,
+        }
+
     def sync_fleet(
         self,
         threshold_tokens: Optional[int] = None,
@@ -863,6 +928,7 @@ WantedBy=multi-user.target
         results: Dict[str, Any] = {
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "global_plugins": self.ensure_global_plugins(),
+            "database_wal_migration": self.migrate_databases_to_wal(),
         }
 
         if install_service:

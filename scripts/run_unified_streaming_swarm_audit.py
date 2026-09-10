@@ -16,6 +16,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from prismatic.fleet.db import execute_with_retry, init_sqlite_connection
+
 GATEWAY_URL = "http://127.0.0.1:9000"
 DASHBOARD_URL = "http://127.0.0.1:9119"
 TELEGRAM_CHAT_ID = "8190664947"
@@ -176,40 +178,36 @@ def record_hermes_dashboard_session(profile: str, user_prompt: str, assistant_re
         if not db_path.exists():
             continue
         try:
-            conn = sqlite3.connect(str(db_path), timeout=5.0)
-            c = conn.cursor()
+            conn = init_sqlite_connection(str(db_path), timeout_seconds=5.0)
 
-            # Ensure session row exists with profile_name and last_activity_at
-            c.execute("""
-                INSERT OR REPLACE INTO sessions (
-                    id, source, started_at, message_count, title, archived,
-                    profile_name, last_activity_at, model, cwd
-                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?);
-            """, (
-                sid,
-                "telegram",
-                now_ts - 2.0,
-                2,
-                f"Multi-Agent Audit: {profile.upper()} Streaming Verification",
-                profile,
-                now_ts,
-                "local-qwen-27b-q8-fred",
-                "/home/ubuntu/work/prismatic-engine",
-            ))
+            def _insert_turn(c: sqlite3.Connection) -> None:
+                cur = c.cursor()
+                cur.execute("""
+                    INSERT OR REPLACE INTO sessions (
+                        id, source, started_at, message_count, title, archived,
+                        profile_name, last_activity_at, model, cwd
+                    ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?);
+                """, (
+                    sid,
+                    "telegram",
+                    now_ts - 2.0,
+                    2,
+                    f"Multi-Agent Audit: {profile.upper()} Streaming Verification",
+                    profile,
+                    now_ts,
+                    "local-qwen-27b-q8-fred",
+                    "/home/ubuntu/work/prismatic-engine",
+                ))
+                cur.execute("""
+                    INSERT INTO messages (session_id, role, content, timestamp, active)
+                    VALUES (?, 'user', ?, ?, 1);
+                """, (sid, user_prompt, now_ts - 1.0))
+                cur.execute("""
+                    INSERT INTO messages (session_id, role, content, timestamp, active)
+                    VALUES (?, 'assistant', ?, ?, 1);
+                """, (sid, assistant_reply, now_ts))
 
-            # Insert user message
-            c.execute("""
-                INSERT INTO messages (session_id, role, content, timestamp, active)
-                VALUES (?, 'user', ?, ?, 1);
-            """, (sid, user_prompt, now_ts - 1.0))
-
-            # Insert assistant reply
-            c.execute("""
-                INSERT INTO messages (session_id, role, content, timestamp, active)
-                VALUES (?, 'assistant', ?, ?, 1);
-            """, (sid, assistant_reply, now_ts))
-
-            conn.commit()
+            execute_with_retry(conn, _insert_turn)
             conn.close()
             print(f"[{profile.upper()}] Session synced to Hermes Dashboard db ({db_path.name} -> {sid})")
         except Exception as e:

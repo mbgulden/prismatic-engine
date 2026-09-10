@@ -553,6 +553,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             print(f"Global Plugins:     {res['global_plugins']['status']}")
             if 'systemd_template' in res:
                 print(f"Systemd Template:   {res['systemd_template']['status']} ({res['systemd_template'].get('template_path', '')})")
+            if 'database_wal_migration' in res:
+                wal_info = res['database_wal_migration']
+                print(f"WAL DBs Migrated:   {wal_info.get('migrated_count', 0)} ({wal_info.get('errors_count', 0)} errors)")
             print(f"Profiles Synced:    {len(res['config_sync'])}")
             if 'hygiene_actions' in res:
                 actions = res['hygiene_actions']['actions_taken']

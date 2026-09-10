@@ -17,6 +17,7 @@ Objective → Key Result → Function → Evidence
 | Objective | Key Result | Function / Workflow | System of Record & Evidence |
 |---|---|---|---|
 | **Zero-Collision Concurrent File Mutation** | Multiple autonomous agents (Fred, George, Kai, Ned) mutate shared workspace documents without clobbering, race conditions, or unhandled file corruption. | Distributed mutex leases via `/api/gateway/swarmlock/acquire` and `/release` with explicit TTL, intention tagging, and collision deflection tracking. | Gateway in-memory lease ledger, collision deflection logs, and Playwright live lease visualizer screenshots. |
+| **SQLite Multi-Agent Concurrency & WAL Hardening** | Concurrent agent turns (Fred, George, Kai, Ned) write simultaneously to SQLite stores without transient lock contention or unhandled `database is locked` errors. | Mandatory connection PRAGMAs (`WAL`, `busy_timeout=5000`, `synchronous=NORMAL`, `foreign_keys=ON`) and exponential backoff retry loop (`execute_with_retry`). | [`prismatic/fleet/db.py`](https://prismatic.growthwebdev.com/workspaces?file=prismatic/fleet/db.py), [`tests/test_sqlite_wal_concurrency.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_sqlite_wal_concurrency.py) (6/6 PASSED), and fleet-wide WAL migration hook. |
 | **Filesystem Write Fencing (`prismatic exec`)** | Arbitrary scripts, test runs, or subagent tasks execute enclosed in an unconditional SwarmLock lease envelope with fail-closed deflection (423), SIGINT/SIGTERM trapping, and pre-commit Python AST syntax checks. | Supervisor CLI `prismatic exec` lifecycle: acquire SwarmLock → emit `fenced_exec_started` → run subprocess → AST compile check → guaranteed `finally:` release and `fenced_exec_finished`. | [`prismatic/client/exec.py`](https://prismatic.growthwebdev.com/workspaces?file=prismatic/client/exec.py), [`tests/test_prismatic_exec.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_prismatic_exec.py) (9/9 PASSED), and gateway `/api/gateway/swarmlock/status`. |
 | **Fail-Closed Context & Token Hygiene** | Background autonomous runs never exceed model context windows or trigger degenerate token loops (`Le 0LEASE 0...`). | Dynamic 75% `/compress` threshold enforcement (`int(context_window * 0.75)` with 25% reasoning headroom and vLLM runtime discovery), active session rotation, and authenticated VLLM API key scoping. | `prismatic fleet sync --dynamic`, `tests/test_fleet_manager.py` (6/6 passed), and SQLite `state.db` session token counters. |
 | **Unified Multi-Surface Real-Time Streaming** | Swarm activities stream continuously and simultaneously to operator mobile chats, web dashboards, and desktop portals. | Progressive Telegram message editing (0.8s cadence), SSE telemetry stream (`/api/gateway/signals/stream`), and SQLite session synchronization into Hermes Desktop Portal (port 9119). | Telegram message edit receipts (chat `8190664947`), SSE signal packets, and Playwright desktop/mobile snapshots. |
@@ -89,6 +90,9 @@ Objective → Key Result → Function → Evidence
 5. **Filesystem Write Fencing & Process Supervisor Fence (`prismatic exec`)**:
    - **Invariant**: Subagents, scripts, and build tasks mutating workspace files must execute enclosed within `prismatic exec`. Commands are strictly fail-closed: if the target resource is already locked by another agent, the supervisor deflects immediately with `423 Locked` without executing the child process. Upon normal termination, non-zero failure, unhandled crash, or `SIGINT`/`SIGTERM` cancellation, the SwarmLock lease is unconditionally released in a `finally:` block with `fenced_exec_finished` telemetry signal emitted, guaranteeing 0 dangling leases.
    - **Pre-Commit Syntax Validation**: For `.py` resources, the supervisor validates AST integrity via `py_compile.compile(resource, doraise=True)`. If invalid syntax is detected, it emits a `CRITICAL` `pre_commit_syntax_failure` telemetry signal to Prismatic Hub and exits with status 1 before releasing the lease.
+6. **SQLite Multi-Agent Concurrency & WAL Hardening Fence**:
+   - **Invariant**: All database connection initializations across the fleet MUST enforce WAL mode (`PRAGMA journal_mode = WAL;`), a 5000ms busy retry timeout (`PRAGMA busy_timeout = 5000;`), synchronous normal (`PRAGMA synchronous = NORMAL;`), and foreign keys enabled (`PRAGMA foreign_keys = ON;`). Multi-database dual writes must execute inside `execute_with_retry` with exponential backoff to eliminate `database is locked` errors during multi-agent concurrency bursts.
+   - **Fleet Migration Hook**: `prismatic fleet sync` scans and checkpoints all existing databases (`~/.hermes/state.db` and all profile databases) via `PRAGMA wal_checkpoint(TRUNCATE);` to ensure zero stale lock files or un-migrated rollback journals.
 
 ---
 
@@ -100,11 +104,11 @@ python3 -m prismatic.cli fleet status --dynamic
 ```
 Returns profile name, active session ID, context window, 75% threshold, headroom, token count, utilization %, and systemd service status.
 
-### 2. Synchronize Fleet Hygiene with Dynamic vLLM Discovery
+### 2. Synchronize Fleet Hygiene & Migrate Databases to WAL
 ```bash
 python3 -m prismatic.cli fleet sync --dynamic
 ```
-Iterates across all registered profiles, discovers actual model context length from upstream vLLM `/v1/models` and config metadata, dynamically calculates the 75% threshold with 25% headroom, and updates `config.yaml`.
+Iterates across all registered profiles, discovers actual model context length from upstream vLLM `/v1/models`, calculates 75% threshold with 25% headroom, updates `config.yaml`, and automatically runs the WAL migration and truncation checkpoint across all 25+ SQLite `state.db` files.
 
 ### 3. Run Fenced Subprocess Under SwarmLock Mutex (`prismatic exec`)
 ```bash
@@ -133,6 +137,7 @@ Captures 1440x900 desktop and 375x812 mobile screenshots across the Signals cons
 
 ## 📊 Verification Receipts
 
+- **SQLite Concurrency & WAL Hardening**: [`tests/test_sqlite_wal_concurrency.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_sqlite_wal_concurrency.py) (6/6 PASSED)
 - **Fenced Execution Supervisor**: [`tests/test_prismatic_exec.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_prismatic_exec.py) (9/9 PASSED)
 - **Unit Tests**: [`tests/test_fleet_manager.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_fleet_manager.py) (6/6 PASSED)
 - **Concurrency Barrage**: [`tests/test_multi_agent_concurrency_barrage.py`](https://prismatic.growthwebdev.com/workspaces?file=tests/test_multi_agent_concurrency_barrage.py) (5/5 PASSED)

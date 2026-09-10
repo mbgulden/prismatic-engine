@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+from prismatic.fleet.db import init_sqlite_connection
+
 import uvicorn
 from fastapi import (
     FastAPI,
@@ -3714,7 +3716,7 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
             "note": "bus db not yet created",
         }
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = init_sqlite_connection(db_path, timeout_seconds=5.0)
         try:
             cur = conn.execute(
                 "SELECT rowid, topic, payload_json, ts, processed "
@@ -5254,7 +5256,7 @@ async def events_bus_stats() -> dict[str, Any]:
     if not os.path.exists(db_path):
         return {"exists": False}
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = init_sqlite_connection(db_path, timeout_seconds=5.0)
         try:
             total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
             processed = conn.execute(
@@ -5320,7 +5322,7 @@ async def curator_health() -> dict[str, Any]:
             pass
 
     try:
-        conn = sqlite3.connect(curator_db, timeout=5)
+        conn = init_sqlite_connection(curator_db, timeout_seconds=5.0)
         try:
             # Tag distribution
             cur = conn.execute("SELECT tag, COUNT(*) FROM tagged_events GROUP BY tag")
@@ -6477,8 +6479,7 @@ async def gateway_swarmproof_status() -> dict[str, Any]:
     runs_db = os.path.expanduser("~/.prismatic/runs.db")
     if os.path.exists(runs_db):
         try:
-            import sqlite3
-            with sqlite3.connect(runs_db) as conn:
+            with init_sqlite_connection(runs_db, timeout_seconds=5.0) as conn:
                 cur = conn.execute("SELECT COUNT(*) FROM runs")
                 total_receipts = cur.fetchone()[0]
                 cur = conn.execute("SELECT COUNT(*) FROM runs WHERE status IN ('completed', 'success')")
@@ -6511,8 +6512,7 @@ async def gateway_swarmproof_receipts(limit: int = 50) -> dict[str, Any]:
     runs_db = os.path.expanduser("~/.prismatic/runs.db")
     if os.path.exists(runs_db):
         try:
-            import sqlite3
-            with sqlite3.connect(runs_db) as conn:
+            with init_sqlite_connection(runs_db, timeout_seconds=5.0) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.execute(
                     "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?",
