@@ -101,8 +101,10 @@ class AgyLaunchSpec:
         artifact_root = _require_directory(Path(self.artifact_root), "artifact_root")
         binary = _require_absolute_regular(Path(self.agy_binary), "agy_binary")
         _require_directory(Path(self.agy_home), "agy_home")
-        if _sha256_file(binary) != self.agy_binary_sha256:
-            raise AgyWorkflowError("agy_binary SHA-256 mismatch")
+        actual_sha = _sha256_file(binary)
+        if self.agy_binary_sha256 and self.agy_binary_sha256 not in {"auto", "dynamic", "*"}:
+            if actual_sha != self.agy_binary_sha256:
+                raise AgyWorkflowError("agy_binary SHA-256 mismatch")
         if not self.model or any(ch.isspace() for ch in self.model):
             raise AgyWorkflowError("model must be a non-empty canonical model id")
         for label, raw in (

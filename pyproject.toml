@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Prismatic Engine — agent orchestration hub powered by Linear labels"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "AGPL-3.0-only"
+license = { text = "AGPL-3.0-only" }
 keywords = ["linear", "agent", "orchestration", "pipeline", "automation"]
 
 authors = [
@@ -32,10 +32,10 @@ dependencies = [
     "packaging>=23.0",
     "pytest>=8.0",
     "pyyaml>=6.0",
-    "swarmcron>=0.3.0",
-    "swarmcurator>=0.3.0",
-    "swarmlock>=0.2.0",
-    "swarmrouter>=0.1.0",
+    "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@main",
+    "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@main",
+    "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@main",
+    "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@main",
     "tomli>=2.0; python_version < '3.11'",
 ]
 

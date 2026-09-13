@@ -121,6 +121,12 @@ Expected result:
 - Provider routing can include local models for cheap/offline tasks.
 - If the endpoint disappears, routes degrade gracefully.
 
+**First-time install note (2026-09-13, Michael):** local Qwen (Fred) is the
+default recap/rollup LLM in our stack. During first-time install the CLI should
+prompt for the local Qwen endpoint (`--base-url`, `--model`) and wire it into
+provider routing as a first-class, easily-configurable option — not a
+footnote in docs. (Tracked open item; portability report §4 decision #2.)
+
 ### Stage 5 — Add cloud platform
 
 Example: GCP / Vertex / Lyria / storage / Cloud Run.

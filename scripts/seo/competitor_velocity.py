@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Active Oahu Tours — Competitor Content Velocity Monitor
+Managed Site — Competitor Content Velocity Monitor
 Runs weekly. Checks competitor top pages for new content.
 Flags new pages entering our territory, traffic surges, and ranking shifts.
 """
@@ -22,11 +22,13 @@ TOKEN = open(TOKEN_FILE).read().strip()
 URL = "https://ubersuggest-mcp.neilpatelapi.com/mcp"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
-TARGET_TERRITORIES = [
-    "chinaman", "mokolii", "kualoa", "kaneohe", "sandbar",
-    "sharks cove", "pupukea", "electric beach", "north shore",
-    "kahana", "windward", "lanikai"
-]
+# Load territories from environment variable (comma-separated) or fallback to generic keywords
+_env_territories = os.environ.get("PRISMATIC_SEO_TERRITORIES", "")
+TARGET_TERRITORIES = (
+    [t.strip() for t in _env_territories.split(",") if t.strip()]
+    if _env_territories
+    else ["agent", "hypervisor", "concurrency", "orchestration", "swarmlock", "verification"]
+)
 
 async def call_mcp(tool, args):
     try:

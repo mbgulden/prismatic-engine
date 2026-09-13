@@ -32,6 +32,7 @@ The validator requires this table to contain every machine-readable objective ID
 | `sustainable-maintainability` | versioned quality, incident, rollback, and evidence metrics |
 | `canonical-agy-execution` | canonical AGY manifest + launch/process receipts + exact task and executable digests |
 | `authoritative-operator-view` | plugin/job/artifact/audit and orchestration stores |
+| `hermes-fleet-prismatic-integration` | SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts |
 <!-- OKF_REGISTRY_PARITY_END -->
 
 ## Documentation rule
@@ -64,6 +65,12 @@ If a workflow exists in PE Core, it should have:
 | Long AGY work remains observable without arbitrary termination | No wall-clock deadline; exact process-tree CPU/I/O/log/artifact activity is classified as working/quiet/suspect without auto-kill | `prismatic.agy_activity` + `/api/gateway/agy/activity` | activity receipts, API tests, dashboard source/generated markers | canonical AGY activity receipts | Dashboard AGY Exact-Run Activity panel |
 | AGY failure is contained and attributable | Explicit cancellation and terminal cleanup use child-subreaper adoption and exact PID/start-tick verification for the full descendant tree before session teardown or slot release; stdout/stderr/diagnostics remain separate; drift fails closed | `launch_tmux()` / `wait_tmux()` / `AGYCLIHarness.cancel()` | normal-exit and cancellation tests with detached SIGTERM-ignoring `setsid()` descendants plus retained receipts | launch/process/cancel receipt store | CLI/harness/dashboard |
 | Producer completion does not authorize acceptance | Every result remains pending independent exact-artifact verification | canonical result marker + downstream verifier/merge judge | result digest, reviewed commit/tree, independent receipt | result artifact + verification receipt + Git identity | contract; event binding pending |
+
+## Hermes Multi-Agent Fleet Integration OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Multi-agent fleet executes concurrently without collisions | Zero concurrent write collisions; token growth capped at 48k tokens (75% of 65k context); multi-surface telemetry synced | Distributed SwarmLock leases, automated fleet hygiene (`prismatic fleet sync`), and Telegram edit-streaming | `docs/okf-hermes-prismatic-fleet-integration.md`, `docs/UNIFIED_STREAMING_SWARM_AUDIT.md`, `tests/test_fleet_manager.py`, `tests/test_multi_agent_concurrency_barrage.py` | SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts | Telegram/Signals SSE/Hermes Desktop (9119)/SwarmLock API |
 
 ## Public-launch OKF map
 

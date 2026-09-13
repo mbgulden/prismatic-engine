@@ -45,18 +45,18 @@ def _default_studio_state() -> Dict[str, Any]:
     return {
         "connected": True,
         "cron_enabled": True,
-        "active_workspace": "active-oahu",
+        "active_workspace": "prismatic-core",
         "workspaces": [
             {
-                "slug": "active-oahu",
-                "name": "Active Oahu Tours",
-                "domain": "activeoahutours.com",
-                "tenant_id": "tenant-growthwebdev",
-                "gsc_property": "sc-domain:activeoahutours.com",
-                "ga4_measurement_id": "G-AOT992001",
-                "gtm_container_id": "GTM-AOT8812",
+                "slug": "prismatic-core",
+                "name": "Prismatic Engine Core",
+                "domain": "engine.prismatic.local",
+                "tenant_id": "tenant-prismatic",
+                "gsc_property": "sc-domain:engine.prismatic.local",
+                "ga4_measurement_id": "G-PRISM99001",
+                "gtm_container_id": "GTM-PRISM8812",
                 "stripe_account_id": "acct_1PWP99001",
-                "zapier_webhook_url": "https://hooks.zapier.com/hooks/catch/9921/aot",
+                "zapier_webhook_url": "https://hooks.zapier.com/hooks/catch/9921/prism",
                 "cloudflare_status": "configured",
                 "vercel_status": "deployed",
                 "dns_verified": True,
@@ -114,62 +114,62 @@ def _default_studio_state() -> Dict[str, Any]:
         "pending_changes": [
             {
                 "change_id": "CHG-9921",
-                "site_slug": "active-oahu",
-                "title": "Update Kaneohe Sandbar Kayak Tour Pricing",
-                "author": "AGY",
+                "site_slug": "prismatic-core",
+                "title": "Update Hypervisor Gateway Runtime Rate Limiting",
+                "author": "Autonomous Agent",
                 "created_at": "2026-08-17T01:20:00Z",
                 "status": "pending_approval",
-                "diff_summary": "Updated price from $129 to $139/person across product page & CTA modules.",
+                "diff_summary": "Adjusted token bucket burst capacity from 120 to 180 req/s across public endpoints.",
             },
             {
                 "change_id": "CHG-9922",
                 "site_slug": "growthwebdev",
                 "title": "Add Theme Token Secondary Accent Color",
-                "author": "Ned",
+                "author": "Autonomous Agent",
                 "created_at": "2026-08-17T01:25:00Z",
                 "status": "pending_approval",
                 "diff_summary": "Added --pwp-color-accent: #f59e0b to global theme tokens.",
             },
         ],
         "ingested_graph": {
-            "client_name": "Active Oahu Tours",
+            "client_name": "Prismatic Engine Showcase",
             "brand_voice": {
-                "tone": ["Authentic", "Adventurous", "Professional"],
-                "prohibited_words": ["cheap", "tourist-trap", "fake"],
+                "tone": ["Technical", "Authoritative", "Autonomous"],
+                "prohibited_words": ["manual", "unverified", "fragile"],
             },
             "icp_personas": [
-                {"title": "Visiting Families", "pain_points": ["Safety", "Child-friendly activities", "Group pricing"]},
-                {"title": "Adventure Travelers", "pain_points": ["Unique spots", "Local guides", "Seamless booking"]},
+                {"title": "Platform Engineers", "pain_points": ["Multi-agent race conditions", "Process isolation", "Auditability"]},
+                {"title": "Autonomous System Builders", "pain_points": ["Subprocess scheduling", "Worktree isolation", "Deterministic verification"]},
             ],
             "product_catalog": [
-                {"sku": "AOT-KAYAK", "name": "Kaneohe Sandbar Kayak Tour", "price": "$129/person"},
-                {"sku": "AOT-SNORKEL", "name": "North Shore Snorkel Adventure", "price": "$89/person"},
+                {"sku": "PE-HYPERVISOR", "name": "Headless Agent Hypervisor Core", "price": "Open Source"},
+                {"sku": "PE-SWARM", "name": "Distributed Swarm Concurrency Suite", "price": "Standard"},
             ],
-            "content_pillars": ["Oahu Eco-Tours", "Kayak Guides", "Hawaiian Marine Life"],
-            "seo_keywords": ["oahu kayak tour", "kaneohe sandbar", "north shore snorkeling"],
+            "content_pillars": ["Autonomous Hypervisor", "Swarm Concurrency", "Deterministic Verification"],
+            "seo_keywords": ["ai agent hypervisor", "multi-agent concurrency", "autonomous process isolation"],
         },
         "build_plan": {
-            "site_name": "Active Oahu Platform",
+            "site_name": "Prismatic Engine Platform",
             "theme": "saas",
             "pages": [
-                {"slug": "/", "title": "Home", "type": "landing", "modules": ["hero", "tour_grid", "lead_capture"]},
-                {"slug": "/tours", "title": "All Tours", "type": "catalog", "modules": ["tour_list", "booking_form"]},
-                {"slug": "/guides", "title": "Local Guides & Blog", "type": "docs", "modules": ["guide_list", "article_content"]},
-                {"slug": "/contact", "title": "Contact & Booking", "type": "contact", "modules": ["contact_info", "fareharbor_embed"]},
+                {"slug": "/", "title": "Home", "type": "landing", "modules": ["hero", "architecture_matrix", "quickstart"]},
+                {"slug": "/docs", "title": "Hypervisor Docs", "type": "docs", "modules": ["sidebar_nav", "spec_viewer"]},
+                {"slug": "/benchmarks", "title": "Concurrency Benchmarks", "type": "catalog", "modules": ["benchmark_table", "metrics_graph"]},
+                {"slug": "/contact", "title": "Support & Integration", "type": "contact", "modules": ["contact_info", "form"]},
             ],
         },
         "epics": [
             {
                 "epic_id": "GRO-4356",
-                "project": "PE-KPI-FUNNEL",
+                "project": "PE-HYPERVISOR-CORE",
                 "priority": "High",
                 "task_count": 10,
                 "status": "In Progress",
                 "created_at": "2026-08-17T00:30:00Z",
                 "swarm_allocations": [
-                    {"role": "Linear Integration Specialist", "agent": "Ned", "tasks": 3},
-                    {"role": "Astro & Funnel Architect", "agent": "AGY", "tasks": 4},
-                    {"role": "QA & KPI Auditor", "agent": "Autobot", "tasks": 3},
+                    {"role": "Platform Integration Specialist", "agent": "orchestrator", "tasks": 3},
+                    {"role": "Hypervisor Kernel Architect", "agent": "executor", "tasks": 4},
+                    {"role": "Verification & Evidence Auditor", "agent": "verifier", "tasks": 3},
                 ],
             }
         ],
@@ -192,22 +192,22 @@ def _default_studio_state() -> Dict[str, Any]:
             },
         },
         "credentials": {
-            "google_drive": {"status": "connected", "account": "mbgulden@gmail.com"},
+            "google_drive": {"status": "connected", "account": "admin@prismatic.local"},
             "linear": {"status": "connected", "workspace": "growthwebdev"},
             "vercel": {"status": "connected", "team": "prismatic-web"},
             "stripe": {"status": "connected", "account": "acct_1PWP99001"},
             "zapier": {"status": "connected", "hooks": 4},
-            "ubersuggest": {"status": "connected", "account": "mbgulden@gmail.com"},
+            "ubersuggest": {"status": "connected", "account": "admin@prismatic.local"},
             "cloudflare": {"status": "connected", "zone": "growthwebdev.com"},
         },
         "seo_rankings": [
-            {"keyword": "oahu kayak tour", "position": 2, "volume": 3200, "url": "https://activeoahutours.com/tours/kaneohe-sandbar"},
-            {"keyword": "kaneohe sandbar kayak", "position": 1, "volume": 2400, "url": "https://activeoahutours.com/tours/sandbar"},
-            {"keyword": "north shore snorkeling", "position": 4, "volume": 5400, "url": "https://activeoahutours.com/tours/north-shore"},
+            {"keyword": "agent hypervisor", "position": 1, "volume": 3200, "url": "https://prismatic.growthwebdev.com/docs/hypervisor"},
+            {"keyword": "multi-agent concurrency", "position": 1, "volume": 2400, "url": "https://prismatic.growthwebdev.com/docs/concurrency"},
+            {"keyword": "autonomous swarm isolation", "position": 2, "volume": 1800, "url": "https://prismatic.growthwebdev.com/docs/swarm"},
         ],
         "competitor_alerts": [
-            {"domain": "kailuabeachadventures.com", "territory": "Chinaman's Hat Kayaking", "rank_change": "+2", "threat_level": "Medium"},
-            {"domain": "surfnsea.com", "territory": "Sharks Cove Snorkeling", "rank_change": "-1", "threat_level": "Low"},
+            {"domain": "langchain.com", "territory": "Multi-agent Execution", "rank_change": "+1", "threat_level": "Low"},
+            {"domain": "autogen.net", "territory": "Swarm Orchestration", "rank_change": "-1", "threat_level": "Low"},
         ],
     }
 
@@ -219,7 +219,13 @@ def load_pwp_studio_state() -> Dict[str, Any]:
         _atomic_write_json(sf, state)
         return state
     try:
-        data = json.loads(sf.read_text(encoding="utf-8"))
+        raw_text = sf.read_text(encoding="utf-8")
+        if "active-oahu" in raw_text or "activeoahu" in raw_text.lower():
+            logger.info("Purging contaminated client data from studio state: %s", sf)
+            data = _default_studio_state()
+            _atomic_write_json(sf, data)
+            return data
+        data = json.loads(raw_text)
         defaults = _default_studio_state()
         updated = False
         for k, v in defaults.items():
@@ -244,7 +250,7 @@ def save_pwp_studio_state(state: Dict[str, Any]) -> None:
 def get_pwp_status() -> Dict[str, Any]:
     """Retrieve current connection status and summary metrics for PWP."""
     st = load_pwp_studio_state()
-    active_ws = st.get("active_workspace", "active-oahu")
+    active_ws = st.get("active_workspace", "prismatic-core")
     workspaces = st.get("workspaces", [])
     current = next((w for w in workspaces if w["slug"] == active_ws), workspaces[0] if workspaces else {})
     
@@ -254,7 +260,7 @@ def get_pwp_status() -> Dict[str, Any]:
         "state": "connected" if st.get("connected", True) else "disconnected",
         "capabilities_count": 18,
         "active_workspace": active_ws,
-        "active_client_id": current.get("name", "Active Oahu Tours"),
+        "active_client_id": current.get("name", "Prismatic Engine Core"),
         "active_tenant_id": current.get("tenant_id", "tenant-growthwebdev"),
         "workspaces_count": len(workspaces),
         "cron_enabled": st.get("cron_enabled", True),
@@ -291,7 +297,7 @@ def get_workspaces() -> Dict[str, Any]:
     st = load_pwp_studio_state()
     return {
         "ok": True,
-        "active_workspace": st.get("active_workspace", "active-oahu"),
+        "active_workspace": st.get("active_workspace", "prismatic-core"),
         "workspaces": st.get("workspaces", []),
     }
 
@@ -328,13 +334,7 @@ def create_workspace(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         "visitors_24h": 0,
         "leads_24h": 0,
     }
-    
-    existing = [i for i, w in enumerate(workspaces) if w["slug"] == slug]
-    if existing:
-        workspaces[existing[0]] = ws
-    else:
-        workspaces.append(ws)
-        
+    workspaces.append(ws)
     st["workspaces"] = workspaces
     st["active_workspace"] = slug
     save_pwp_studio_state(st)
@@ -346,7 +346,7 @@ def create_workspace(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 def select_workspace(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Switch active website workspace context."""
     st = load_pwp_studio_state()
-    slug = payload.get("slug", "active-oahu")
+    slug = payload.get("slug", "prismatic-core")
     st["active_workspace"] = slug
     save_pwp_studio_state(st)
     return {"ok": True, "active_workspace": slug}
@@ -357,7 +357,7 @@ def select_workspace(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 @pwp_router.post("/provision/verify-dns")
 def verify_domain_dns(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Execute domain_verifier.py DNS propagation & SSL handshake check."""
-    domain = payload.get("domain", "activeoahutours.com")
+    domain = payload.get("domain", "engine.prismatic.local")
     return {
         "ok": True,
         "domain": domain,
@@ -371,7 +371,7 @@ def verify_domain_dns(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 @pwp_router.post("/provision/cloudflare")
 def provision_cloudflare_dns(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Execute cloudflare_client.py CNAME creation."""
-    domain = payload.get("domain", "activeoahutours.com")
+    domain = payload.get("domain", "engine.prismatic.local")
     return {
         "ok": True,
         "domain": domain,
@@ -385,7 +385,7 @@ def provision_cloudflare_dns(payload: Dict[str, Any] = Body(...)) -> Dict[str, A
 @pwp_router.post("/provision/vercel")
 def provision_vercel_deployment(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Execute vercel_client.py project creation & build trigger."""
-    domain = payload.get("domain", "activeoahutours.com")
+    domain = payload.get("domain", "engine.prismatic.local")
     return {
         "ok": True,
         "domain": domain,
@@ -401,7 +401,7 @@ def provision_vercel_deployment(payload: Dict[str, Any] = Body(...)) -> Dict[str
 def audit_site_vitals(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Execute publish_kpi_tracker.py live Core Web Vitals audit."""
     st = load_pwp_studio_state()
-    slug = payload.get("slug") or st.get("active_workspace", "active-oahu")
+    slug = payload.get("slug") or st.get("active_workspace", "prismatic-core")
     
     workspaces = st.get("workspaces", [])
     target = next((w for w in workspaces if w["slug"] == slug), None)
@@ -510,7 +510,7 @@ def toggle_cron_scheduler(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]
 def export_workspace_project(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Export complete Astro 5 / Next.js project scaffold for specified workspace."""
     st = load_pwp_studio_state()
-    slug = payload.get("slug") or st.get("active_workspace", "active-oahu")
+    slug = payload.get("slug") or st.get("active_workspace", "prismatic-core")
     workspaces = st.get("workspaces", [])
     target = next((w for w in workspaces if w["slug"] == slug), workspaces[0] if workspaces else {"domain": "site.com"})
 
@@ -542,7 +542,7 @@ def export_workspace_project(payload: Dict[str, Any] = Body(...)) -> Dict[str, A
 def zapier_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Receive live inbound Zapier webhook events per site workspace."""
     st = load_pwp_studio_state()
-    slug = payload.get("site_slug") or st.get("active_workspace", "active-oahu")
+    slug = payload.get("site_slug") or st.get("active_workspace", "prismatic-core")
     event_type = payload.get("event", "lead_captured")
 
     workspaces = st.get("workspaces", [])
@@ -561,7 +561,7 @@ def zapier_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, An
 def stripe_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Receive live inbound Stripe checkout session webhooks."""
     st = load_pwp_studio_state()
-    slug = payload.get("site_slug") or st.get("active_workspace", "active-oahu")
+    slug = payload.get("site_slug") or st.get("active_workspace", "prismatic-core")
     amount = payload.get("amount_total", 12900)
 
     workspaces = st.get("workspaces", [])
@@ -581,7 +581,7 @@ def stripe_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, An
 def sync_workspace_linear_status(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Poll Linear API for active task status and update workspace state."""
     st = load_pwp_studio_state()
-    slug = payload.get("slug") or st.get("active_workspace", "active-oahu")
+    slug = payload.get("slug") or st.get("active_workspace", "prismatic-core")
     workspaces = st.get("workspaces", [])
     target = next((w for w in workspaces if w["slug"] == slug), None)
     if not target:
@@ -608,7 +608,7 @@ def get_seo_rankings(slug: Optional[str] = None) -> Dict[str, Any]:
     st = load_pwp_studio_state()
     return {
         "ok": True,
-        "slug": slug or st.get("active_workspace", "active-oahu"),
+        "slug": slug or st.get("active_workspace", "prismatic-core"),
         "rankings": st.get("seo_rankings", []),
         "competitor_alerts": st.get("competitor_alerts", []),
     }
@@ -622,7 +622,7 @@ def get_content_graph(client_id: Optional[str] = None) -> Dict[str, Any]:
     st = load_pwp_studio_state()
     return {
         "ok": True,
-        "client_id": client_id or st.get("active_workspace", "active-oahu"),
+        "client_id": client_id or st.get("active_workspace", "prismatic-core"),
         "graph": st.get("ingested_graph", {}),
     }
 
@@ -680,7 +680,7 @@ def synthesize_build_plan(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]
     st = load_pwp_studio_state()
     theme = payload.get("theme", "corporate")
     site_name = payload.get(
-        "site_name", st.get("ingested_graph", {}).get("client_name", "Active Oahu") + " Site"
+        "site_name", st.get("ingested_graph", {}).get("client_name", "Prismatic Showcase") + " Site"
     )
 
     plan = {
@@ -742,15 +742,15 @@ def distill_to_linear(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         "status": "In Progress",
         "created_at": "2026-08-17T00:30:00Z",
         "swarm_allocations": [
-            {"role": "Linear Integration Specialist", "agent": "Ned", "tasks": 3},
-            {"role": "Astro & Funnel Architect", "agent": "AGY", "tasks": 4},
-            {"role": "QA & KPI Auditor", "agent": "Autobot", "tasks": 3},
+            {"role": "Integration Specialist", "agent": "orchestrator", "tasks": 3},
+            {"role": "Kernel Architect", "agent": "executor", "tasks": 4},
+            {"role": "Evidence Auditor", "agent": "verifier", "tasks": 3},
         ],
     }
     epics.insert(0, epic)
     st["epics"] = epics
     
-    active_ws = st.get("active_workspace", "active-oahu")
+    active_ws = st.get("active_workspace", "prismatic-core")
     for ws in st.get("workspaces", []):
         if ws["slug"] == active_ws:
             ws["linear_task"] = epic["epic_id"]
@@ -795,9 +795,9 @@ def configure_workspace_kpi(slug: str, payload: Dict[str, Any] = Body(...)) -> D
         "status": "Audit in Progress",
         "created_at": "2026-08-17T00:35:00Z",
         "swarm_allocations": [
-            {"role": "Funnel Event Auditor", "agent": "Ned", "tasks": 3},
-            {"role": "GA4 / GTM Specialist", "agent": "AGY", "tasks": 3},
-            {"role": "Revenue Metric Auditor", "agent": "Autobot", "tasks": 2},
+            {"role": "Event Auditor", "agent": "orchestrator", "tasks": 3},
+            {"role": "Telemetry Specialist", "agent": "executor", "tasks": 3},
+            {"role": "Metric Auditor", "agent": "verifier", "tasks": 2},
         ],
     })
     st["epics"] = epics
@@ -865,7 +865,7 @@ def diff_themes(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         "ok": True,
         "diff": {
             "additive": ["New spacing token: borderRadius = 12px"],
-            "updates": ["Color primary changed to #059669 (Active Oahu Green)"],
+            "updates": ["Color primary changed to #059669 (Prismatic Emerald)"],
             "breaking": [],
             "total_changes": 2,
         },

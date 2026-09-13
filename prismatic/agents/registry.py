@@ -56,100 +56,7 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-# Baseline canonical swarm fleet definition
-CORE_FLEET = [
-    {
-        "agent_id": "fred",
-        "name": "Fred (Orchestrator)",
-        "alias": ["fred-orchestrator", "orchestrator"],
-        "host": "webtop-hermes (Ubuntu VM 800)",
-        "type": "orchestrator",
-        "executable": "hermes",
-        "active_model": "local-qwen-27b-q8-fred",
-        "model_provider": "qwen27b-fred-local (192.168.1.230:8000)",
-        "capabilities": ["topological_dispatch", "lane_governance", "multi_agent_coordination", "goal_delegation"],
-        "icon": "👑",
-        "source": "Hermes Orchestrator Profile",
-    },
-    {
-        "agent_id": "agy",
-        "name": "Lightbringer Antigravity",
-        "alias": ["lightbringer-agy", "antigravity", "lightbringer-antigravity"],
-        "host": "Lightbringer (Windows Host)",
-        "type": "lead_assistant",
-        "executable": "antigravity",
-        "active_model": "gemini-2.5-pro",
-        "model_provider": "Google DeepMind",
-        "capabilities": ["hypervisor_client", "code_authoring", "ast_refactor", "tool_calling"],
-        "icon": "⚡",
-        "source": "Primary Developer Host (Lightbringer)",
-    },
-    {
-        "agent_id": "kai",
-        "name": "Kai (UI Specialist)",
-        "alias": ["kai-ui", "kai-frontend"],
-        "host": "webtop-hermes",
-        "type": "ui_developer",
-        "executable": "kai",
-        "active_model": "qwen3.8-27b",
-        "model_provider": "qwen27b-kai-local (192.168.1.232:8080)",
-        "capabilities": ["dashboard_design", "tailwind_css", "visual_auditing", "accessibility"],
-        "icon": "🎨",
-        "source": "Hermes Profile (kai)",
-    },
-    {
-        "agent_id": "george",
-        "name": "George (Peer Reviewer)",
-        "alias": ["george-review"],
-        "host": "webtop-hermes",
-        "type": "peer_reviewer",
-        "executable": "george",
-        "active_model": "qwen3.8-27b",
-        "model_provider": "qwen27b-kai-local (192.168.1.232:8080)",
-        "capabilities": ["invariant_audit", "pr_handoff", "exact_head_verification"],
-        "icon": "🛡️",
-        "source": "Hermes Profile (george)",
-    },
-    {
-        "agent_id": "ned",
-        "name": "Ned (Backend Specialist)",
-        "alias": ["ned-backend"],
-        "host": "webtop-hermes",
-        "type": "backend_developer",
-        "executable": "ned",
-        "active_model": "Qwen3.8-27B-UD-Q5",
-        "model_provider": "qwen27b-ned-local (192.168.1.230:8003)",
-        "capabilities": ["database_migrations", "api_design", "backend_infrastructure"],
-        "icon": "⚙️",
-        "source": "Hermes Profile (ned)",
-    },
-    {
-        "agent_id": "autobot",
-        "name": "Autobot (CI Worker)",
-        "alias": ["autobot-ci"],
-        "host": "webtop-hermes",
-        "type": "ci_worker",
-        "executable": "autobot",
-        "active_model": "MiniMax-M2.7-highspeed",
-        "model_provider": "MiniMax",
-        "capabilities": ["wheel_packaging", "isolated_venv", "clean_room_testing"],
-        "icon": "🤖",
-        "source": "Hermes Profile (autobot)",
-    },
-    {
-        "agent_id": "swarmproof",
-        "name": "SwarmProof Verifier",
-        "alias": ["swarmproof-oracle"],
-        "host": "webtop-hermes",
-        "type": "truth_oracle",
-        "executable": "swarmproof",
-        "active_model": "rule-oracle-v0.3.0",
-        "model_provider": "Prismatic Core",
-        "capabilities": ["ast_analysis", "anti_deception", "manifest_verify"],
-        "icon": "⚖️",
-        "source": "SwarmProof Core v0.3.0",
-    }
-]
+from prismatic.agents.discovery import AgentDiscoveryService, AgentProfile
 
 
 class DynamicAgentRegistry:
@@ -157,52 +64,15 @@ class DynamicAgentRegistry:
 
     @classmethod
     def get_registered_agents(cls) -> list[dict[str, Any]]:
-        """Return base fleet plus any dynamically registered external machine agents and Hermes profiles."""
-        stored = _read_json(REGISTRY_DB_PATH).get("agents", {})
-        
-        fleet_map: dict[str, dict[str, Any]] = {}
-        for a in CORE_FLEET:
-            fleet_map[a["agent_id"]] = dict(a)
-
-        # Dynamically discover live profiles from ~/.hermes/profiles if present
-        hermes_profiles_dir = Path(os.path.expanduser("~/.hermes/profiles"))
-        if hermes_profiles_dir.exists() and hermes_profiles_dir.is_dir():
-            try:
-                import yaml
-                for p_dir in hermes_profiles_dir.iterdir():
-                    if p_dir.is_dir() and not p_dir.is_symlink():
-                        cfg_file = p_dir / "config.yaml"
-                        if cfg_file.exists():
-                            try:
-                                with open(cfg_file, "r", encoding="utf-8") as f:
-                                    cfg = yaml.safe_load(f) or {}
-                                    p_name = p_dir.name
-                                    model_obj = cfg.get("model") or cfg.get("active_model") or {}
-                                    model_name = model_obj.get("default") if isinstance(model_obj, dict) else str(model_obj)
-                                    provider_name = model_obj.get("provider") if isinstance(model_obj, dict) else ""
-                                    
-                                    # Update existing core agent or add new profile
-                                    target_key = "fred" if p_name == "orchestrator" else p_name
-                                    if target_key in fleet_map:
-                                        if model_name:
-                                            fleet_map[target_key]["active_model"] = model_name
-                                        if provider_name:
-                                            fleet_map[target_key]["model_provider"] = provider_name
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-
-        # Merge dynamically registered agents from other nodes (ignoring test patterns)
-        for aid, item in stored.items():
-            if EPHEMERAL_TEST_AGENT_REGEX.match(aid):
-                continue
-            if aid not in fleet_map:
-                fleet_map[aid] = item
-            else:
-                fleet_map[aid].update(item)
-
-        return list(fleet_map.values())
+        """Return dynamically discovered agents across filesystem profiles, registry, and mesh."""
+        agents = AgentDiscoveryService.get_agents()
+        out: list[dict[str, Any]] = []
+        for a in agents:
+            d = a.to_dict()
+            d["type"] = d.get("role", "dynamic_node")
+            d["executable"] = d.get("agent_id", "agent")
+            out.append(d)
+        return out
 
     @classmethod
     def register_or_update_agent(
@@ -251,6 +121,7 @@ class DynamicAgentRegistry:
         agents_dict[clean_id] = record
         stored_doc["agents"] = agents_dict
         _write_json(REGISTRY_DB_PATH, stored_doc)
+        AgentDiscoveryService.invalidate_cache()
         return record
 
     @classmethod
@@ -263,6 +134,7 @@ class DynamicAgentRegistry:
             del agents_dict[clean_id]
             stored_doc["agents"] = agents_dict
             _write_json(REGISTRY_DB_PATH, stored_doc)
+            AgentDiscoveryService.invalidate_cache()
             return True
         return False
 

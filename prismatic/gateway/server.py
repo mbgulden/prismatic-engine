@@ -18,6 +18,7 @@ Integration:
 from __future__ import annotations
 
 import argparse
+import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import hmac as _hmac
@@ -25,12 +26,15 @@ import html
 import json
 import logging
 import os
+import socket
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+
+from prismatic.fleet.db import init_sqlite_connection
 
 import uvicorn
 from fastapi import (
@@ -43,7 +47,9 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+
+from prismatic.mesh.tailscale import TailscaleAuthMiddleware, get_tailscale_mesh_client
 
 from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
 from prismatic.agent_raw_output_queue import (
@@ -295,10 +301,90 @@ def _prune_terminal_linear_pending(
     return active, pruned, retained
 
 
+class GatewayUdsProxy:
+    """Proxies HTTP connections from a local Unix Domain Socket to the local TCP port."""
+
+    def __init__(self, socket_path: str = "/tmp/prismatic-gateway.sock", target_port: int = 9000) -> None:
+        self.socket_path = socket_path
+        self.target_port = target_port
+        self.server: asyncio.AbstractServer | None = None
+
+    async def start(self) -> None:
+        if os.name == "nt" or not hasattr(socket, "AF_UNIX"):
+            logger.debug("Unix domain sockets not supported on this platform; skipping Gateway UDS proxy")
+            return
+        try:
+            if os.path.exists(self.socket_path):
+                try:
+                    os.unlink(self.socket_path)
+                except OSError:
+                    pass
+            sock_dir = os.path.dirname(self.socket_path)
+            if sock_dir and not os.path.exists(sock_dir):
+                os.makedirs(sock_dir, exist_ok=True)
+            self.server = await asyncio.start_unix_server(self._handle_client, path=self.socket_path)
+            try:
+                os.chmod(self.socket_path, 0o666)
+            except OSError:
+                pass
+            logger.info("Gateway HTTP UDS proxy active on %s -> 127.0.0.1:%d", self.socket_path, self.target_port)
+        except Exception as exc:
+            logger.warning("Could not start Gateway UDS proxy on %s: %s", self.socket_path, exc)
+
+    async def _handle_client(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
+        try:
+            target_reader, target_writer = await asyncio.open_connection("127.0.0.1", self.target_port)
+            async def forward(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
+                try:
+                    while True:
+                        data = await src.read(65536)
+                        if not data:
+                            break
+                        dst.write(data)
+                        await dst.drain()
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        dst.close()
+                        await dst.wait_closed()
+                    except Exception:
+                        pass
+            await asyncio.gather(
+                forward(client_reader, target_writer),
+                forward(target_reader, client_writer),
+            )
+        except Exception:
+            pass
+        finally:
+            try:
+                client_writer.close()
+                await client_writer.wait_closed()
+            except Exception:
+                pass
+
+    async def stop(self) -> None:
+        if self.server:
+            self.server.close()
+            try:
+                await self.server.wait_closed()
+            except Exception:
+                pass
+            self.server = None
+            if os.path.exists(self.socket_path):
+                try:
+                    os.unlink(self.socket_path)
+                except OSError:
+                    pass
+
+
+_uds_proxy: GatewayUdsProxy | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for EventBus, IPC bridge, WebSocket broadcaster, and store."""
-    global _started_at, _run_store, _ipc_listener
+    global _started_at, _run_store, _ipc_listener, _uds_proxy
 
     _started_at = time.time()
 
@@ -308,6 +394,11 @@ async def lifespan(app: FastAPI):
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
     await _ipc_listener.start()
+
+    # Start Gateway HTTP Unix socket proxy
+    port = int(os.environ.get("PRISMATIC_PORT", "9000"))
+    _uds_proxy = GatewayUdsProxy(socket_path="/tmp/prismatic-gateway.sock", target_port=port)
+    await _uds_proxy.start()
 
     # Start WebSocket broadcaster (daemon thread with its own event loop)
     start_ws_broadcaster()
@@ -325,12 +416,17 @@ async def lifespan(app: FastAPI):
         _ipc_listener.socket_path,
     )
     yield
+    if _uds_proxy:
+        await _uds_proxy.stop()
+        _uds_proxy = None
+
     if _ipc_listener:
         await _ipc_listener.stop()
         _ipc_listener = None
 
     stop_ws_broadcaster()
     stop_verification_daemon()
+
 
 
 # ── FastAPI Application ──────────────────────────────────────────────
@@ -386,6 +482,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.add_middleware(TailscaleAuthMiddleware)
 
 # Auth check for observability endpoints (re-added 2026-06-30 after Phase D
 # cherry-pick conflict dropped it). Reuses the IP allowlist from
@@ -442,26 +539,12 @@ _ws_clients: set[WebSocket] = set()
 
 # ── Agent Dashboard API ─────────────────────────────────────────────
 
-_AGENT_DEFAULTS: dict[str, dict[str, str]] = {
-    "agy": {"name": "AGY", "role": "Vision & Research CLI"},
-    "jules": {"name": "Jules", "role": "Async Git & PR Agent"},
-    "fred": {"name": "Fred", "role": "Nudge/Staging Governor"},
-    "ned": {"name": "Ned", "role": "Research & Synthesis"},
-    "kai": {"name": "Kai", "role": "Tourism Orchestrator"},
-    "codex": {"name": "Codex", "role": "Coding Executor"},
-}
-
 
 def _agent_key(name: str | None) -> str:
     """Normalize agent/profile names for dashboard keys."""
-    key = (name or "unknown").strip().lower().replace("agent:", "")
-    aliases = {
-        "agy-cli": "agy",
-        "kai-content": "kai",
-        "kai-css": "kai",
-        "kai-js": "kai",
-    }
-    return aliases.get(key, key)
+    if not name:
+        return "unknown"
+    return name.strip().lower().replace("agent:", "").replace(" ", "-")
 
 
 def _read_agent_registry() -> dict[str, Any]:
@@ -540,23 +623,34 @@ async def gateway_agents_delete(agent_id: str) -> dict[str, Any]:
     return {"ok": deleted, "agent_id": agent_id}
 
 @app.get("/api/agents")
+@app.get("/api/gateway/agents")
 async def get_agents() -> dict[str, Any]:
-    """Return live agent status from registry plus recent run records."""
+    """Return live agent status dynamically discovered across profiles, registry, and mesh."""
+    from prismatic.agents.discovery import AgentDiscoveryService
+
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    agents: dict[str, dict[str, Any]] = {
-        key: {
-            "name": meta["name"],
-            "role": meta["role"],
-            "status": "Unknown",
-            "last_seen": None,
+    discovered = AgentDiscoveryService.get_agents()
+    agents: dict[str, dict[str, Any]] = {}
+    for prof in discovered:
+        agents[prof.agent_id] = {
+            "name": prof.name,
+            "role": prof.role,
+            "status": prof.status.title(),
+            "last_seen": prof.last_seen,
+            "host": prof.host,
+            "active_model": prof.active_model,
+            "model_provider": prof.model_provider,
+            "capabilities": prof.capabilities,
+            "icon": prof.icon,
+            "source": prof.source,
+            "current_issue": prof.current_issue,
+            "current_resource": prof.current_resource,
             "dispatched": 0,
             "duration": "—",
             "dedup": "—",
             "queue": [],
             "logs": [],
         }
-        for key, meta in _AGENT_DEFAULTS.items()
-    }
 
     registry = _read_agent_registry()
     for raw_name, info in registry.items():
@@ -1214,18 +1308,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WebSocket client disconnected (total=%d)", len(_ws_clients))
 
 
+_sse_clients: set[asyncio.Queue] = set()
+
+
 async def broadcast_ws_json(message: dict[str, Any]) -> None:
-    """Broadcast JSON payload to all connected FastAPI WebSocket clients."""
+    """Broadcast JSON payload to all connected FastAPI WebSocket and SSE clients concurrently."""
+    if _sse_clients:
+        for q in list(_sse_clients):
+            try:
+                q.put_nowait(message)
+            except Exception:
+                _sse_clients.discard(q)
+
     if not _ws_clients:
         return
-    dead = set()
-    for ws in list(_ws_clients):
+
+    async def _send_one(ws: WebSocket) -> None:
         try:
-            await ws.send_json(message)
+            await asyncio.wait_for(ws.send_json(message), timeout=0.5)
         except Exception:
-            dead.add(ws)
-    for ws in dead:
-        _ws_clients.discard(ws)
+            _ws_clients.discard(ws)
+
+    await asyncio.gather(*[_send_one(ws) for ws in list(_ws_clients)], return_exceptions=True)
+
+
 
 
 # ── Lock Management API ─────────────────────────────────────────────
@@ -3610,7 +3716,7 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
             "note": "bus db not yet created",
         }
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = init_sqlite_connection(db_path, timeout_seconds=5.0)
         try:
             cur = conn.execute(
                 "SELECT rowid, topic, payload_json, ts, processed "
@@ -3693,12 +3799,14 @@ async def gateway_agents_status() -> dict[str, Any]:
 
 @app.get("/api/gateway/agents/governance-status")
 async def gateway_agents_governance_status() -> dict[str, Any]:
-    """Return no-side-effect Kai/Fred governance status for the dashboard."""
+    """Return no-side-effect fleet governance status for the dashboard."""
     from prismatic.agent_governance_status import build_agent_governance_status
+    from prismatic.agents.discovery import AgentDiscoveryService
 
     inputs = _dashboard_agent_inputs()
+    discovered_ids = tuple(a.agent_id for a in AgentDiscoveryService.get_agents()[:6])
     return build_agent_governance_status(
-        agents=("kai", "fred"),
+        agents=discovered_ids or ("orchestrator", "architect"),
         run_records=inputs["run_records"],
         registry=inputs["registry"],
     )
@@ -3975,6 +4083,79 @@ async def gateway_agent_signals(
     return list_agent_signals(limit=limit, agent=agent, include_log_tails=True)
 
 
+@app.get("/api/signals/stream")
+@app.get("/api/gateway/signals/stream")
+@app.get("/events")
+@app.get("/stream")
+@app.get("/sse")
+async def gateway_agent_signals_stream(
+    request: Request,
+    limit: int = Query(10, ge=0, le=100),
+    agent: str | None = None,
+    once: bool = Query(False),
+) -> StreamingResponse:
+    """Continuous Server-Sent Events (SSE) telemetry stream for agents, CLI tools, and dashboards."""
+    from prismatic.agent_signal_stream import list_agent_signals
+
+    async def _event_generator():
+        q: asyncio.Queue = asyncio.Queue(maxsize=500)
+        _sse_clients.add(q)
+        try:
+            # 1. Connect handshake event
+            connect_event = {
+                "type": "connection.open",
+                "status": "connected",
+                "server": "prismatic-gateway",
+                "timestamp": time.time(),
+                "endpoints": [
+                    "/api/signals/stream",
+                    "/api/gateway/signals/stream",
+                    "/events",
+                    "/stream",
+                    "/sse",
+                    "/ws/events",
+                ],
+            }
+            yield f"event: connect\ndata: {json.dumps(connect_event)}\n\n"
+
+            # 2. Replay recent snapshot if requested
+            if limit > 0:
+                snapshot = list_agent_signals(limit=limit, agent=agent, include_log_tails=False)
+                snapshot_event = {
+                    "type": "signals.snapshot",
+                    "count": len(snapshot.get("items", [])),
+                    "signals": snapshot.get("items", []),
+                }
+                yield f"event: snapshot\ndata: {json.dumps(snapshot_event)}\n\n"
+
+            if once:
+                return
+
+            # 3. Stream real-time events as they occur
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15.0)
+                    evt_type = event.get("type", "signal.emitted")
+                    yield f"event: {evt_type}\ndata: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            _sse_clients.discard(q)
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+
 @app.get("/api/swarmlock/status")
 @app.get("/api/gateway/swarmlock/status")
 async def gateway_swarmlock_status() -> dict[str, Any]:
@@ -4013,13 +4194,21 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
     metadata["lease_id"] = lease_id
 
     mgr = _get_lock_manager()
+    timeout_s = float(body.get("timeout_s") or body.get("timeout") or 0.2)
     acquired_all = True
     for p in paths:
-        acq = mgr.acquire(p, agent_id, metadata=metadata)
+        acq = mgr.acquire(p, agent_id, timeout_s=timeout_s, metadata=metadata)
         if not acq:
             acquired_all = False
 
     enriched = mgr.get_enriched_status()
+
+    holder = agent_id
+    if not acquired_all:
+        for lk in enriched.get("locks", []):
+            if lk.get("resource") == resource:
+                holder = lk.get("holder", "unknown")
+                break
 
     # Record to Hypervisor Ledger
     try:
@@ -4027,8 +4216,8 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
         get_hypervisor_ledger().record_event(
             task_id=task_id,
             producer=agent_id,
-            action="SWARMLOCK_ACQUIRE",
-            payload={"resource": resource, "paths": paths, "ttl": ttl, "intention": intention, "lease_id": lease_id},
+            action="SWARMLOCK_ACQUIRE" if acquired_all else "SWARMLOCK_COLLISION_DEFLECTED",
+            payload={"resource": resource, "paths": paths, "ttl": ttl, "intention": intention, "lease_id": lease_id, "holder": holder},
         )
     except Exception as led_err:
         logger.debug("Failed recording acquire to hypervisor ledger: %s", led_err)
@@ -4038,16 +4227,30 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
         sig_item = record_agent_signal(
             agent=agent_id,
             severity="lease",
-            event_type="lock_acquired",
+            event_type="lock_acquired" if acquired_all else "collision_deflected",
+            status="acquired" if acquired_all else "deflected",
             issue_id=task_id,
-            message=f"{agent_id} acquired lease on {len(paths)} path(s): {', '.join(paths)} ({intention})"
+            message=(
+                f"{agent_id} acquired lease on {len(paths)} path(s): {', '.join(paths)} ({intention})"
+                if acquired_all
+                else f"{agent_id} collision deflected on {resource} (held by {holder})"
+            ),
         )
         await broadcast_ws_json({"type": "signal.emitted", "signal": sig_item})
     except Exception as sig_err:
         logger.debug("Failed emitting lock signal: %s", sig_err)
 
     await broadcast_ws_json({"type": "swarmlock_status", "payload": enriched})
-    return {"ok": acquired_all, "status": "ok", "lease_id": lease_id, "resource": resource, "paths": paths, "agent_id": agent_id, "enriched": enriched}
+    return {
+        "ok": acquired_all,
+        "status": "ok" if acquired_all else "deflected",
+        "holder": holder,
+        "lease_id": lease_id if acquired_all else None,
+        "resource": resource,
+        "paths": paths,
+        "agent_id": agent_id,
+        "enriched": enriched,
+    }
 
 
 @app.post("/api/swarmlock/heartbeat")
@@ -4166,7 +4369,7 @@ async def gateway_swarmlock_evict_all(body: dict[str, Any] | None = None) -> dic
     reason = body.get("reason", "operator_emergency_evict_all")
     mgr = _get_lock_manager()
     status = mgr.get_enriched_status()
-    active = status.get("active_leases", [])
+    active = status.get("locks", []) or status.get("active_leases", [])
     evicted_resources = []
 
     for item in active:
@@ -4284,14 +4487,18 @@ async def gateway_emit_signal(body: dict[str, Any]) -> dict[str, Any]:
     """Emit a durable signal event from CLI, agent harness, or webhook."""
     from prismatic.agent_signal_stream import record_agent_signal
 
+    raw_agent = str(body.get("agent") or body.get("agent_id") or "unknown").strip().lower()
+    if raw_agent == "orchestrator":
+        raw_agent = "fred"
+
     item = record_agent_signal(
-        agent=body.get("agent", "unknown"),
-        event_type=body.get("event_type", "custom"),
+        agent=raw_agent,
+        event_type=body.get("event_type") or body.get("stage") or "custom",
         issue_id=body.get("issue_id", ""),
-        status=body.get("status", "info"),
+        status=body.get("status") or body.get("stage") or "info",
         message=body.get("message", ""),
         run_id=body.get("run_id", ""),
-        source=body.get("source", "api"),
+        source=body.get("source") or ("hermes" if raw_agent in {"fred", "george", "kai", "ned"} else "api"),
         severity=body.get("severity", "info"),
         metadata=body.get("metadata"),
     )
@@ -4343,6 +4550,161 @@ async def gateway_nudge_agent(body: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
     return {"ok": True, "nudge": item}
+
+
+# ── Fleet Telegram Multi-Bot Streaming Throttler API ──────────────────────────
+
+
+@app.get("/api/telegram/throttler/status")
+@app.get("/api/gateway/telegram/throttler/status")
+async def gateway_telegram_throttler_status() -> dict[str, Any]:
+    """Inspect current active Telegram streamers and dynamic edit pacing."""
+    from prismatic.fleet.telegram import DynamicTelegramThrottler
+
+    return {
+        "ok": True,
+        "active_streamers": DynamicTelegramThrottler.get_active_streamers(),
+        "active_count": DynamicTelegramThrottler.get_active_count(),
+        "cadence_seconds": DynamicTelegramThrottler.get_cadence_seconds(),
+    }
+
+
+@app.post("/api/telegram/throttler/register")
+@app.post("/api/gateway/telegram/throttler/register")
+async def gateway_telegram_throttler_register(body: dict[str, Any]) -> dict[str, Any]:
+    """Register an active bot streamer with the centralized throttler."""
+    from prismatic.fleet.telegram import DynamicTelegramThrottler
+
+    bot_id = body.get("bot_id")
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="Missing 'bot_id' parameter")
+    await DynamicTelegramThrottler.register_active(str(bot_id))
+    return {
+        "ok": True,
+        "bot_id": str(bot_id),
+        "active_count": DynamicTelegramThrottler.get_active_count(),
+        "cadence_seconds": DynamicTelegramThrottler.get_cadence_seconds(),
+    }
+
+
+@app.post("/api/telegram/throttler/unregister")
+@app.post("/api/gateway/telegram/throttler/unregister")
+async def gateway_telegram_throttler_unregister(body: dict[str, Any]) -> dict[str, Any]:
+    """Unregister an active bot streamer from the centralized throttler."""
+    from prismatic.fleet.telegram import DynamicTelegramThrottler
+
+    bot_id = body.get("bot_id")
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="Missing 'bot_id' parameter")
+    await DynamicTelegramThrottler.unregister_active(str(bot_id))
+    return {
+        "ok": True,
+        "bot_id": str(bot_id),
+        "active_count": DynamicTelegramThrottler.get_active_count(),
+        "cadence_seconds": DynamicTelegramThrottler.get_cadence_seconds(),
+    }
+
+
+# ── Swarm 7-Step Loop & Deliverables API (Phase 4 / Sprint 3) ──────────────
+
+
+@app.post("/api/swarm/decompose")
+@app.post("/api/gateway/swarm/decompose")
+async def gateway_swarm_decompose(body: dict[str, Any]) -> dict[str, Any]:
+    """Step 1: Decompose a high-level vision into typed Archetype contracts."""
+    from prismatic.swarm.archetypes import Archetype, ArchetypeRegistry
+
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing 'prompt'")
+
+    arch_str = body.get("archetype")
+    arch = Archetype(arch_str) if arch_str in [a.value for a in Archetype] else None
+    task_id = body.get("task_id", "GRO-4854")
+
+    contracts = ArchetypeRegistry.decompose(prompt, archetype=arch, task_id=task_id, options=body.get("options"))
+    detected = arch or ArchetypeRegistry.detect_archetype(prompt)
+    return {
+        "ok": True,
+        "archetype": detected.value,
+        "contracts": [c.to_dict() for c in contracts],
+        "total_contracts": len(contracts),
+    }
+
+
+@app.post("/api/swarm/run")
+@app.post("/api/gateway/swarm/run")
+@app.post("/api/gateway/studio/manifest")
+async def gateway_swarm_run(body: dict[str, Any]) -> dict[str, Any]:
+    """Execute the full 7-step iterative loop autonomously to manifest a living deliverable."""
+    from prismatic.swarm.loop_runner import SwarmLoopRunner
+
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing 'prompt'")
+
+    task_id = body.get("task_id", "GRO-SWARM-01")
+    target_domain = body.get("target_domain")
+    voice = body.get("voice", "default")
+
+    runner = SwarmLoopRunner(task_id=task_id)
+    result = runner.run(
+        prompt=prompt,
+        target_domain=target_domain,
+        voice=voice,
+        options=body.get("options"),
+    )
+
+    # Broadcast completion to WebSocket
+    await broadcast_ws_json({
+        "type": "swarm.manifestation_completed",
+        "task_id": task_id,
+        "project_slug": (result.deliverable or {}).get("project_slug"),
+        "deliverable": result.deliverable,
+    })
+
+    return {"ok": True, "result": result.to_dict()}
+
+
+@app.get("/api/swarm/deliverables")
+@app.get("/api/gateway/swarm/deliverables")
+@app.get("/api/gateway/deliverables")
+async def gateway_list_deliverables() -> dict[str, Any]:
+    """Return all manifested tangible project deliverables."""
+    from prismatic.swarm.loop_runner import load_all_deliverables
+
+    items = load_all_deliverables()
+    return {"ok": True, "total": len(items), "deliverables": items}
+
+
+@app.get("/api/deliverables/{project_slug}")
+@app.get("/api/gateway/deliverables/{project_slug}")
+async def gateway_get_deliverable(project_slug: str) -> dict[str, Any]:
+    """Return metadata and artifacts for a single manifested project."""
+    from prismatic.swarm.loop_runner import get_deliverable_by_slug
+
+    deliv = get_deliverable_by_slug(project_slug)
+    if not deliv:
+        raise HTTPException(status_code=404, detail=f"Deliverable '{project_slug}' not found")
+    return {"ok": True, "deliverable": deliv}
+
+
+@app.get("/api/deliverables/{project_slug}/preview", response_class=HTMLResponse)
+@app.get("/api/gateway/deliverables/{project_slug}/preview", response_class=HTMLResponse)
+async def gateway_preview_deliverable(project_slug: str) -> HTMLResponse:
+    """Serve the live compiled HTML bundle for an asset preview iframe."""
+    from prismatic.swarm.loop_runner import get_deliverable_by_slug
+
+    deliv = get_deliverable_by_slug(project_slug)
+    if not deliv:
+        raise HTTPException(status_code=404, detail=f"Deliverable '{project_slug}' not found")
+
+    artifacts = deliv.get("artifacts") or {}
+    html = artifacts.get("rendered_html") or artifacts.get("html_bundle")
+    if not html:
+        raise HTTPException(status_code=404, detail=f"No HTML bundle compiled for '{project_slug}'")
+
+    return HTMLResponse(content=html, status_code=200)
 
 
 @app.post("/api/control/pause")
@@ -4947,7 +5309,7 @@ async def events_bus_stats() -> dict[str, Any]:
     if not os.path.exists(db_path):
         return {"exists": False}
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        conn = init_sqlite_connection(db_path, timeout_seconds=5.0)
         try:
             total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
             processed = conn.execute(
@@ -5013,7 +5375,7 @@ async def curator_health() -> dict[str, Any]:
             pass
 
     try:
-        conn = sqlite3.connect(curator_db, timeout=5)
+        conn = init_sqlite_connection(curator_db, timeout_seconds=5.0)
         try:
             # Tag distribution
             cur = conn.execute("SELECT tag, COUNT(*) FROM tagged_events GROUP BY tag")
@@ -5333,10 +5695,126 @@ async def get_chat_session(session_id: str):
             status_code=404,
             detail={
                 "error": "session_not_found",
-                "reason": f"Session '{session_id}' not found under the v0.1 contract (no live data path).",
+                "reason": f"Session '{session_id}' not found under the live brain archive.",
             },
         )
     return session
+
+
+@app.get("/api/gateway/agy/sessions")
+async def gateway_list_agy_sessions() -> list[dict[str, Any]]:
+    """Gateway API alias for AGY chat sessions."""
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    return cap.list_sessions()
+
+
+@app.get("/api/gateway/antigravity/status")
+@app.get("/api/antigravity/status")
+async def gateway_antigravity_status() -> dict[str, Any]:
+    """Get full system telemetry and operational status of Antigravity CLI and daemon."""
+    import hashlib
+    import os
+    import re
+    import subprocess
+    from pathlib import Path
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+    from prismatic.providers.llm import AntigravityProvider
+
+    cap = ChatAGYCapability()
+    reachable, reach_msg = cap.check_status()
+    provider = AntigravityProvider()
+    binary_path = provider._agy_binary
+    binary_sha = ""
+    if binary_path and os.path.isfile(binary_path):
+        try:
+            binary_sha = hashlib.sha256(Path(binary_path).read_bytes()).hexdigest()
+        except Exception:
+            pass
+
+    listening_ports = []
+    try:
+        ss_out = subprocess.run(
+            "ss -tulpn | grep agy-bin | awk '{print $5}'",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        ).stdout.strip()
+        for line in ss_out.splitlines():
+            m = re.search(r":(\d+)$", line)
+            if m:
+                listening_ports.append(int(m.group(1)))
+    except Exception:
+        pass
+
+    sessions_count = len(cap.list_sessions(limit=1000))
+    models = provider.list_models()
+
+    return {
+        "ok": reachable,
+        "status": "online" if reachable else "offline",
+        "message": reach_msg,
+        "binary_path": binary_path,
+        "binary_sha256": binary_sha,
+        "remote_control_instance": "hermes-webtop",
+        "remote_control_ports": listening_ports,
+        "proxy_port": 40589,
+        "available_models": models,
+        "recorded_sessions_count": sessions_count,
+        "active_brain_dirs": [str(d) for d in cap._get_brain_dirs()],
+    }
+
+
+@app.get("/api/gateway/harnesses")
+@app.get("/api/harnesses")
+async def gateway_list_harnesses() -> dict[str, Any]:
+    """List all dynamically discovered LLM and agent harnesses."""
+    from prismatic.harnesses.discovery import HarnessDiscoveryManager
+    mgr = HarnessDiscoveryManager()
+    harnesses = mgr.discover_all()
+    return {
+        "ok": True,
+        "total": len(harnesses),
+        "harnesses": [h.to_dict() for h in harnesses],
+    }
+
+
+@app.post("/api/gateway/harnesses/discover")
+@app.post("/api/harnesses/discover")
+async def gateway_discover_harnesses(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Trigger dynamic harness discovery and update the active registry."""
+    from prismatic.harnesses.discovery import HarnessDiscoveryManager
+    body = body or {}
+    auto_bench = bool(body.get("auto_bench", False))
+    mgr = HarnessDiscoveryManager()
+    harnesses = mgr.sync_registry(auto_bench=auto_bench)
+    return {
+        "ok": True,
+        "message": f"Successfully discovered and synchronized {len(harnesses)} harnesses",
+        "total": len(harnesses),
+        "harnesses": [h.to_dict() for h in harnesses],
+    }
+
+
+@app.post("/api/gateway/harnesses/benchmark")
+async def gateway_benchmark_harness(body: dict[str, Any]) -> dict[str, Any]:
+    """Execute a micro-benchmark verification run against a target harness."""
+    harness_id = body.get("harness_id")
+    if not harness_id:
+        raise HTTPException(status_code=400, detail="harness_id is required")
+
+    from prismatic.harnesses.discovery import HarnessDiscoveryManager
+    mgr = HarnessDiscoveryManager()
+    all_h = mgr.discover_all()
+    target_h = next((h for h in all_h if h.id == harness_id), None)
+    if not target_h:
+        raise HTTPException(status_code=404, detail=f"Harness '{harness_id}' not found")
+
+    prompt = body.get("prompt", "Respond with: HARNESS_BENCH_OK")
+    res = mgr.benchmark_harness(target_h, prompt=prompt)
+    return {"ok": res.get("ok", False), "benchmark": res}
 
 
 # ── Schedule Observatory Endpoints ─────────────────────────────────
@@ -5525,6 +6003,9 @@ async def serve_governance_index() -> HTMLResponse:
     return _serve_governance_dashboard_html()
 
 
+@app.get("/studio", response_class=HTMLResponse)
+@app.get("/assets", response_class=HTMLResponse)
+@app.get("/pulse", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 @app.get("/settings", response_class=HTMLResponse)
 @app.get("/tasks", response_class=HTMLResponse)
@@ -5562,6 +6043,54 @@ async def serve_review_factory_dashboard_page() -> HTMLResponse:
 async def serve_governance_tab_param(tab_name: str) -> HTMLResponse:
     """Serve canonical governance dashboard for /tab/{tab_name} routes."""
     return _serve_governance_dashboard_html()
+
+
+# =============================================================================
+# DISTRIBUTED TAILSCALE MESH & NODE REGISTRY (PHASE 2)
+# =============================================================================
+
+@app.get("/api/mesh/nodes")
+async def get_mesh_nodes(request: Request) -> dict[str, Any]:
+    """Return inventory of all discovered nodes across the Tailscale mesh."""
+    client = get_tailscale_mesh_client()
+    nodes = await client.list_nodes()
+    self_node = next((n.to_dict() for n in nodes if n.is_self), None)
+    return {
+        "ok": True,
+        "self": self_node,
+        "nodes": [n.to_dict() for n in nodes],
+        "total_nodes": len(nodes),
+        "online_nodes": sum(1 for n in nodes if n.online),
+    }
+
+
+@app.post("/api/mesh/ping")
+async def ping_mesh_node(request: Request) -> dict[str, Any]:
+    """Measure RTT latency to another node in the Tailscale mesh."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    target = data.get("target")
+    if not target:
+        raise HTTPException(status_code=400, detail="Missing required 'target' field in request body")
+
+    client = get_tailscale_mesh_client()
+    res = await client.ping(target)
+    return {"ok": res.get("success", False), "result": res}
+
+
+@app.get("/api/mesh/whois")
+async def whois_mesh_peer(request: Request, addr: str) -> dict[str, Any]:
+    """Look up authenticated peer identity for a given IP or address."""
+    if not addr:
+        raise HTTPException(status_code=400, detail="Missing required 'addr' query parameter")
+
+    client = get_tailscale_mesh_client()
+    identity = await client.whois(addr)
+    if not identity:
+        return {"ok": False, "error": f"Unable to resolve Tailscale identity for {addr}"}
+    return {"ok": True, "identity": identity.to_dict()}
 
 
 @app.get("/api/workspaces")
@@ -5930,6 +6459,9 @@ if _dep_router:
 from prismatic.gateway.routes.pwp import pwp_router  # noqa: E402
 app.include_router(pwp_router)
 
+from prismatic.gateway.routes.worker import worker_router  # noqa: E402
+app.include_router(worker_router)
+
 
 
 @app.get("/api/workspace/tree")
@@ -6000,8 +6532,7 @@ async def gateway_swarmproof_status() -> dict[str, Any]:
     runs_db = os.path.expanduser("~/.prismatic/runs.db")
     if os.path.exists(runs_db):
         try:
-            import sqlite3
-            with sqlite3.connect(runs_db) as conn:
+            with init_sqlite_connection(runs_db, timeout_seconds=5.0) as conn:
                 cur = conn.execute("SELECT COUNT(*) FROM runs")
                 total_receipts = cur.fetchone()[0]
                 cur = conn.execute("SELECT COUNT(*) FROM runs WHERE status IN ('completed', 'success')")
@@ -6034,8 +6565,7 @@ async def gateway_swarmproof_receipts(limit: int = 50) -> dict[str, Any]:
     runs_db = os.path.expanduser("~/.prismatic/runs.db")
     if os.path.exists(runs_db):
         try:
-            import sqlite3
-            with sqlite3.connect(runs_db) as conn:
+            with init_sqlite_connection(runs_db, timeout_seconds=5.0) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.execute(
                     "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?",

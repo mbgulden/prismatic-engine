@@ -31,7 +31,7 @@ That's it. The user clicks the link, signs in once with email OTP (or whatever A
 
 When **not** to use:
 
-- The path is already inside a public Cloudflare Pages deployment (e.g. `activeoahutours.com/...`). Use the public URL.
+- The path is already inside a public web deployment. Use the public URL.
 - The file is a secret, credential, key, or anything in the safety blocklist. See [Safety Policy](#safety-policy).
 - You only need to read the file as an LLM. Use the publisher's `/preview/<ws>/<rel>` endpoint or `read_file` directly — don't publish what the user will never see.
 
@@ -211,8 +211,7 @@ PY
 - **⚠️ IPv6 localhost 502 root cause:** Always use `127.0.0.1` in tunnel ingress, never `localhost`. See the `cloudflare-tunnel-api-management` skill.
 - **Pipx-managed static dir is the old workaround:** Don't write artifacts under `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/...` — they vanish on Hermes updates. The engine binary in `$PRISMATIC_HOME/bin/` is the durable home.
 - **Two `growthwebdev` zones exist in the API:** `growthwebdev.com` is the right one. `prismaticengine.com` also has the literal hostname `files.growthwebdev.com.prismaticengine.com` as a record — delete it if you see it. The CNAME for the tunnel must live in `growthwebdev.com`.
-- **Tunnel pull is async:** After `PUT /configurations`, wait 30–60s before testing externally.
-- **Don't conflate domains:** `activeoahu.com` and `activeoahutours.com` are different properties. Don't assume one URL covers the other.
+- **Don't conflate domains:** Different properties and hostnames require explicit routing. Don't assume one URL covers the other.
 - **Publish BEFORE you write the reply, not after:** A retry-mid-reply is more error-prone than publish-first.
 - **SENSITIVE paths return non-zero exit:** Don't `--yes` past them silently; tell the user.
 

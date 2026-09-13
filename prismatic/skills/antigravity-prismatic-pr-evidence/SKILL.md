@@ -61,7 +61,7 @@ When preparing a Pull Request or addressing review findings, the agent MUST asse
 
 ---
 
-## 4. Playwright 375px Visual Audit Protocol
+## 4. Playwright 375px Visual Audit & Screenshot Embedding Protocol
 
 Visual verification MUST be automated via Playwright against a live Gateway instance:
 
@@ -70,6 +70,11 @@ Visual verification MUST be automated via Playwright against a live Gateway inst
    - Spawn live Gateway server (`prismatic.gateway.server`) on isolated test port.
    - Assert `document.documentElement.scrollWidth <= 375` on 375px mobile viewport (zero horizontal overflow).
    - Save screenshots to `artifacts/visual_audit/`.
+3. **Mandatory Brain Artifact Registration & Embedding**:
+   - **Copy to Active Brain Directory**: Copy or save generated screenshot output files directly into the active session Brain Artifacts Directory (`<appDataDir>/brain/<conversation-id>/<name>.png`).
+   - **Embedding Syntax**: Embed images using standard absolute path syntax pointing to the brain directory (`![Caption](<appDataDir>/brain/<conversation-id>/<name>.png)`).
+   - **Strict Sandbox Prohibition**: NEVER embed screenshots with `file:///` URIs or paths outside the active brain directory, as webview sandbox security policies block loading them.
+
 
 ---
 

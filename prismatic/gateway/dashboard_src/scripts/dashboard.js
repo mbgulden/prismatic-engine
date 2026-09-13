@@ -636,7 +636,9 @@
             activeTab = tab;
             
             if (updateHistory && window.history && window.history.pushState) {
-                const targetPath = tab === "dashboard" ? "/" : `/${tab}`;
+                const targetPath = (currentUIMode === "creator" && tab === "studio")
+                    ? "/"
+                    : (tab === "dashboard" ? (currentUIMode === "creator" ? "/dashboard" : "/") : `/${tab}`);
                 const search = window.location.search || "";
                 if (window.location.pathname !== targetPath) {
                     window.history.pushState({ tab }, "", targetPath + search);
@@ -644,16 +646,16 @@
             }
 
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
+            const tabs = ['studio', 'assets', 'pulse', 'dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
                 
                 if (t === tab) {
-                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                    if (btn) btn.className = "inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
                     if (sec) sec.classList.remove("hidden");
                 } else {
-                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                    if (btn) btn.className = "inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
                     if (sec) sec.classList.add("hidden");
                 }
             });
@@ -674,6 +676,10 @@
             } else if (tab === 'signals') {
                 renderSignalsView();
                 fetchSwarmLockHistory();
+            } else if (tab === 'pulse') {
+                fetchPulseData();
+            } else if (tab === 'assets') {
+                refreshDeployedAssets();
             }
         }
 
@@ -3297,18 +3303,48 @@
             tabsBox.innerHTML = html;
         }
 
+        function renderFleetPulseCards(agents) {
+            const container = document.getElementById("fleet-pulse-cards-container");
+            if (!container) return;
+            if (!agents || !agents.length) {
+                container.innerHTML = `<div class="p-6 rounded-xl bg-slate-950/70 border border-slate-800 text-center col-span-full text-slate-500 font-mono text-xs">No active agent nodes discovered.</div>`;
+                return;
+            }
+            container.innerHTML = agents.slice(0, 12).map(ag => {
+                const aid = ag.agent_id || "agent";
+                const isExecuting = ag.status && (ag.status.toLowerCase().includes("active") || ag.status.toLowerCase().includes("executing"));
+                const statusColor = isExecuting ? "text-cyan-400" : (ag.status && ag.status.toLowerCase().includes("error") ? "text-rose-400" : "text-emerald-400");
+                const statusLabel = ag.status || "Online";
+
+                return `
+                    <div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2 hover:border-slate-700 transition" data-agent-card="${escapeHtml(aid)}">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-200 font-mono flex items-center gap-1.5">
+                                <span>${ag.icon || '🤖'}</span><span>${escapeHtml(ag.name || aid)}</span>
+                            </span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">${escapeHtml(ag.role || 'Agent')}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 line-clamp-2">${escapeHtml(ag.current_resource ? 'Lease: ' + ag.current_resource : (ag.active_model && ag.active_model !== 'auto' ? 'Model: ' + ag.active_model : (ag.role || 'Ready for tasks')))}</p>
+                        <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-900 flex justify-between">
+                            <span>Host: ${escapeHtml(ag.host || 'local')}</span>
+                            <span class="${statusColor}">${escapeHtml(statusLabel)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function renderSignalPanes(payload) {
             latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
             const panes = document.getElementById('signals-agent-panes');
             if (!panes) return;
 
             const knownAgents = discoveredAgentsList.length ? discoveredAgentsList : [
-                { agent_id: 'agy', name: 'Antigravity (AGY)', icon: '⚡', active_model: 'gemini-2.5-pro', status: 'idle' },
-                { agent_id: 'hermes', name: 'Hermes Orchestrator', icon: '🌐', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'kai', name: 'Kai (UI Specialist)', icon: '🎨', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'fred', name: 'Fred (TDD Specialist)', icon: '⚙️', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'george', name: 'George (Peer Reviewer)', icon: '🛡️', active_model: 'gpt-4o', status: 'idle' },
-                { agent_id: 'autobot', name: 'Autobot (CI Worker)', icon: '🤖', active_model: 'deepseek-r1', status: 'idle' }
+                { agent_id: 'orchestrator', name: 'Fleet Orchestrator', icon: '👑', active_model: 'auto', status: 'idle' },
+                { agent_id: 'architect', name: 'Systems Architect', icon: '⚙️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'builder', name: 'Implementation Specialist', icon: '🛠️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'reviewer', name: 'Quality Sentinel', icon: '🛡️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'deployer', name: 'Edge Deployer', icon: '🚀', active_model: 'auto', status: 'idle' }
             ];
 
             const byAgent = latestSignalsPayload.by_agent || {};
@@ -3869,10 +3905,20 @@
 
                 if (agentsRes && agentsRes.ok) {
                     const agentData = await agentsRes.json();
-                    discoveredAgentsList = agentData.agents || [];
+                    if (Array.isArray(agentData.agents)) {
+                        discoveredAgentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        discoveredAgentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    } else {
+                        discoveredAgentsList = [];
+                    }
                     const totalEl = document.getElementById("sig-metric-total");
                     if (totalEl) totalEl.textContent = discoveredAgentsList.length;
                     renderAgentTabs(discoveredAgentsList);
+                    renderFleetPulseCards(discoveredAgentsList);
                 }
 
                 if (signalsRes && signalsRes.ok) {
@@ -5829,10 +5875,277 @@
             if (modal) modal.classList.add('hidden');
         }
 
-        const dashboardTabIds = new Set([
+        /* =========================================================================
+           UI MODE BIFURCATION: CREATOR STUDIO VS ENGINEERING TELEMETRY
+           ========================================================================= */
+
+        const creatorTabIds = new Set(["studio", "assets", "pulse"]);
+        const engineeringTabIds = new Set([
             "dashboard", "telemetry", "merge", "review-factory", "workspaces",
             "skills", "signals", "swarmproof", "pwp", "plugins", "crons", "quota", "foundation", "settings",
         ]);
+        const dashboardTabIds = new Set([
+            "studio", "assets", "pulse",
+            "dashboard", "telemetry", "merge", "review-factory", "workspaces",
+            "skills", "signals", "swarmproof", "pwp", "plugins", "crons", "quota", "foundation", "settings",
+        ]);
+
+        let currentUIMode = localStorage.getItem('prismatic_ui_mode') || 'creator';
+
+        function setUIMode(mode, updateTab = true) {
+            currentUIMode = mode;
+            try {
+                localStorage.setItem('prismatic_ui_mode', mode);
+            } catch (e) {}
+
+            const creatorNav = document.getElementById('nav-creator-tabs');
+            const engineeringNav = document.getElementById('nav-engineering-tabs');
+            const btnCreator = document.getElementById('mode-btn-creator');
+            const btnEngineering = document.getElementById('mode-btn-engineering');
+
+            if (mode === 'creator') {
+                if (creatorNav) creatorNav.classList.remove('hidden');
+                if (engineeringNav) engineeringNav.classList.add('hidden');
+                if (btnCreator) {
+                    btnCreator.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5";
+                }
+                if (btnEngineering) {
+                    btnEngineering.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5";
+                }
+                if (updateTab && engineeringTabIds.has(activeTab)) {
+                    switchTab('studio');
+                }
+            } else {
+                if (creatorNav) creatorNav.classList.add('hidden');
+                if (engineeringNav) engineeringNav.classList.remove('hidden');
+                if (btnCreator) {
+                    btnCreator.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5";
+                }
+                if (btnEngineering) {
+                    btnEngineering.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5";
+                }
+                if (updateTab && creatorTabIds.has(activeTab)) {
+                    switchTab('dashboard');
+                }
+            }
+        }
+
+        /* =========================================================================
+           CREATOR STUDIO PRESETS & MANIFESTATION PIPELINE
+           ========================================================================= */
+
+        function loadStudioPreset(preset) {
+            const promptEl = document.getElementById('studio-prompt-input');
+            const targetEl = document.getElementById('studio-target-input');
+            const voiceEl = document.getElementById('studio-voice-select');
+            const stripeEl = document.getElementById('studio-check-stripe');
+            const mobileEl = document.getElementById('studio-check-mobile');
+            const seoEl = document.getElementById('studio-check-seo');
+
+            if (preset === 'software') {
+                if (promptEl) {
+                    promptEl.value = "Implement a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery.";
+                }
+                if (targetEl) targetEl.value = "kv-engine.local";
+                if (voiceEl) voiceEl.value = "technical";
+                if (stripeEl) stripeEl.checked = false;
+                if (mobileEl) mobileEl.checked = true;
+                if (seoEl) seoEl.checked = true;
+                showToast("⚡ Loaded Software Archetype preset");
+            } else if (preset === 'web') {
+                if (promptEl) {
+                    promptEl.value = "Modern developer tooling landing page and documentation portal with interactive code playgrounds, theme switching, and stripe subscription tiers.";
+                }
+                if (targetEl) targetEl.value = "tooling.dev";
+                if (voiceEl) voiceEl.value = "creative";
+                showToast("🌐 Loaded Web Property Archetype preset");
+            } else if (preset === 'ops') {
+                if (promptEl) {
+                    promptEl.value = "Automated fleet monitoring and self-healing cron daemon with Tailscale node health attestation and incident escalation runbooks.";
+                }
+                if (targetEl) targetEl.value = "ops.internal";
+                if (voiceEl) voiceEl.value = "executive";
+                showToast("📊 Loaded Operations Archetype preset");
+            }
+        }
+
+        async function executeStudioManifestation() {
+            const promptEl = document.getElementById('studio-prompt-input');
+            const promptText = promptEl ? promptEl.value.trim() : "";
+            if (!promptText) {
+                showToast("Please enter a vision or select a starter preset before manifesting.", true);
+                return;
+            }
+
+            const targetDomain = (document.getElementById('studio-target-input') || {}).value || "project.local";
+            const voice = (document.getElementById('studio-voice-select') || {}).value || "default";
+            const btn = document.getElementById('studio-manifest-btn');
+            const statusCard = document.getElementById('studio-manifest-status-card');
+            const stageBadge = document.getElementById('studio-manifest-stage-badge');
+            const stepText = document.getElementById('studio-manifest-step-text');
+            const progressBar = document.getElementById('studio-manifest-progress-bar');
+            const percentText = document.getElementById('studio-manifest-percent');
+            const urlLink = document.getElementById('studio-manifest-url-link');
+
+            if (btn) btn.disabled = true;
+            if (statusCard) statusCard.classList.remove('hidden');
+
+            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Orchestrator)";
+            if (stepText) stepText.textContent = "Decomposing high-level vision into atomic agent contracts...";
+            if (progressBar) progressBar.style.width = "20%";
+            if (percentText) percentText.textContent = "20%";
+
+            try {
+                const resp = await fetch("/api/gateway/studio/manifest", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        prompt: promptText,
+                        target_domain: targetDomain,
+                        voice: voice,
+                        task_id: "GRO-SWARM-01"
+                    })
+                });
+
+                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Worker Swarm)";
+                if (stepText) stepText.textContent = "Workers compiling deliverables, AST checks, and deployment schemas...";
+                if (progressBar) progressBar.style.width = "60%";
+                if (percentText) percentText.textContent = "60%";
+
+                const data = await resp.json();
+                const deliv = (data.result && data.result.deliverable) || {};
+                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'project'}/preview`;
+
+                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Complete)";
+                if (stepText) stepText.textContent = `Asset live at ${targetDomain} (Compiled in ${data.result ? data.result.duration_seconds : 0.1}s)`;
+                if (progressBar) progressBar.style.width = "100%";
+                if (percentText) percentText.textContent = "100%";
+
+                if (urlLink) {
+                    urlLink.href = previewUrl;
+                    urlLink.textContent = `https://${targetDomain}`;
+                }
+
+                // Update preview iframe to live compiled deliverable
+                const iframe = document.getElementById('asset-preview-iframe');
+                if (iframe) {
+                    iframe.src = previewUrl;
+                }
+
+                showToast("🚀 7-Step Swarm Loop Complete! Living Reality Manifested.");
+            } catch (err) {
+                console.error("Manifestation error:", err);
+                showToast("Manifestation dispatch error: " + err.message, true);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        /* =========================================================================
+           DEPLOYED ASSETS & LIVING REALITY CONTROLS
+           ========================================================================= */
+
+        function setAssetPreviewViewport(width) {
+            const wrapper = document.getElementById('asset-viewport-wrapper');
+            const label = document.getElementById('asset-viewport-dimension-label');
+            if (!wrapper) return;
+            if (width === 375) {
+                wrapper.style.maxWidth = "375px";
+                if (label) label.textContent = "Mobile Viewport (375px)";
+            } else if (width === 768) {
+                wrapper.style.maxWidth = "768px";
+                if (label) label.textContent = "Tablet Viewport (768px)";
+            } else {
+                wrapper.style.maxWidth = "100%";
+                if (label) label.textContent = "Responsive (100%)";
+            }
+        }
+
+        async function refreshDeployedAssets() {
+            const iframe = document.getElementById('asset-preview-iframe');
+            if (iframe) {
+                try {
+                    const res = await fetch("/api/gateway/deliverables");
+                    const data = await res.json();
+                    if (data.deliverables && data.deliverables.length > 0) {
+                        const first = data.deliverables[0];
+                        if (first.preview_url) {
+                            iframe.src = first.preview_url;
+                        }
+                    }
+                } catch (e) {
+                    const currentSrc = iframe.src;
+                    iframe.src = '';
+                    setTimeout(() => { iframe.src = currentSrc; }, 50);
+                }
+            }
+            showToast("Deployed assets & live viewports refreshed.");
+        }
+
+        /* =========================================================================
+           FLEET PULSE & 3-STATE INDICATORS
+           ========================================================================= */
+
+        async function toggleFleetEmergencyPause() {
+            await toggleFleetPause();
+            syncPulseControls();
+        }
+
+        function syncPulseControls() {
+            const icon = document.getElementById('pulse-pause-icon');
+            const label = document.getElementById('pulse-pause-label');
+            const headline = document.getElementById('pulse-status-headline');
+            const subhead = document.getElementById('pulse-status-subhead');
+            const dot = document.getElementById('pulse-indicator-dot');
+            const ping = document.getElementById('pulse-indicator-ping');
+
+            if (isFleetPaused) {
+                if (icon) icon.textContent = "▶";
+                if (label) label.textContent = "Resume Fleet";
+                if (headline) headline.textContent = "Swarm Fleet PAUSED by Operator";
+                if (subhead) subhead.textContent = "Emergency circuit breaker active. Agent daemons halted.";
+                if (dot) dot.className = "relative inline-flex rounded-full h-5 w-5 bg-rose-500";
+                if (ping) ping.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75";
+            } else {
+                if (icon) icon.textContent = "⏸";
+                if (label) label.textContent = "Pause Fleet";
+                if (headline) headline.textContent = "Swarm Fleet Operational & Synchronized";
+                if (subhead) subhead.textContent = "Autonomous agent fleet actively monitoring queues. Concurrency safety verified.";
+                if (dot) dot.className = "relative inline-flex rounded-full h-5 w-5 bg-emerald-500";
+                if (ping) ping.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75";
+            }
+        }
+
+        async function fetchPulseData() {
+            try {
+                const res = await fetch("/api/gateway/swarmlock/status");
+                if (res.ok) {
+                    const data = await res.json();
+                    const activeCount = document.getElementById('pulse-active-leases-count');
+                    const deflectionsCount = document.getElementById('pulse-deflections-count');
+                    if (activeCount) activeCount.textContent = String(data.active_lock_count || 0);
+                    if (deflectionsCount) deflectionsCount.textContent = String(data.deflected_collisions || 0);
+                }
+
+                const agentsRes = await fetch("/api/agents");
+                if (agentsRes.ok) {
+                    const agentData = await agentsRes.json();
+                    let agentsList = [];
+                    if (Array.isArray(agentData.agents)) {
+                        agentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        agentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    }
+                    renderFleetPulseCards(agentsList);
+                }
+            } catch (err) {
+                console.debug("Failed fetching pulse data:", err);
+            }
+            syncPulseControls();
+        }
 
         function dashboardTabFromURL() {
             const params = new URLSearchParams(window.location.search);
@@ -5846,7 +6159,13 @@
         }
 
         window.addEventListener("popstate", (e) => {
-            const tab = (e.state && e.state.tab) || dashboardTabFromURL() || "dashboard";
+            const explicit = (e.state && e.state.tab) || dashboardTabFromURL();
+            const tab = explicit || (currentUIMode === 'creator' ? "studio" : "dashboard");
+            if (engineeringTabIds.has(tab) && currentUIMode === 'creator') {
+                setUIMode('engineering', false);
+            } else if (creatorTabIds.has(tab) && currentUIMode === 'engineering') {
+                setUIMode('creator', false);
+            }
             switchTab(tab, null, false);
         });
 
@@ -5859,13 +6178,24 @@
                 || initialParams.has("workspace_id")
                 || initialParams.has("path")
             );
-            const initialTab = explicitTab || (workspaceDeepLink ? "workspaces" : "dashboard");
-            if (initialTab !== "dashboard") {
-                switchTab(initialTab, null, false);
+
+            let initialTab;
+            if (explicitTab) {
+                initialTab = explicitTab;
+                if (engineeringTabIds.has(explicitTab)) {
+                    currentUIMode = 'engineering';
+                } else if (creatorTabIds.has(explicitTab)) {
+                    currentUIMode = 'creator';
+                }
+            } else if (workspaceDeepLink) {
+                initialTab = "workspaces";
+                currentUIMode = 'engineering';
             } else {
-                fetchData();
-                fetchDagTopology();
+                initialTab = currentUIMode === 'creator' ? 'studio' : 'dashboard';
             }
+
+            setUIMode(currentUIMode, false);
+            switchTab(initialTab, null, false);
             loadPluginGovernance();
             loadPWPStatus();
             loadCanonicalAgyActivity();
@@ -5922,6 +6252,15 @@
                 }
             });
             
+            // Global Ctrl+Shift+D / Cmd+Shift+D mode toggle
+            window.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+                    e.preventDefault();
+                    setUIMode(currentUIMode === 'creator' ? 'engineering' : 'creator');
+                    showToast(`Switched to ${currentUIMode === 'creator' ? 'Creator Studio' : 'Engineering Telemetry'}`);
+                }
+            });
+
             // Show AGY as default agent details
             showAgentDetail('agy');
             fetchFleetControlStatus();
@@ -5951,6 +6290,9 @@
             const btn = document.getElementById("btn-fleet-pause-toggle");
             const indicator = document.getElementById("fleet-pause-indicator");
             const label = document.getElementById("fleet-pause-label");
+            if (typeof syncPulseControls === "function") {
+                syncPulseControls();
+            }
             if (!btn || !indicator || !label) return;
 
             if (isFleetPaused) {

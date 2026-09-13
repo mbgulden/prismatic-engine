@@ -97,7 +97,6 @@ Never claim a PR URL, deploy URL, Lighthouse result, merge, state transition, em
 Choose the narrowest accurate lane.
 
 - `content`: copy, SEO, editorial artifacts.
-- `active-oahu`: Active Oahu Tours site/domain operations.
 - `docs`: documentation-only repo changes.
 - `tests`: test harnesses or verification-only code.
 - `config`: config defaults, schemas, environment contracts.

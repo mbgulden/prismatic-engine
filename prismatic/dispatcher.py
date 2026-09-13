@@ -303,8 +303,28 @@ def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int
                 f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
                 f"for local task {task.id}: {preflight.reason}"
             )
-            continue
+        # Validate node affinity if specified
+        task_meta = getattr(task, "metadata", None)
+        if isinstance(task_meta, dict):
+            affinity = extract_node_affinity(task_meta)
+            if affinity:
+                aff_ok, aff_reason = check_node_affinity(affinity)
+                if not aff_ok:
+                    local_task_queue.update_status(
+                        task.id,
+                        "blocked",
+                        metadata_patch={
+                            "handoff_preflight_status": "blocked",
+                            "handoff_preflight_reason": f"node affinity failed: {aff_reason}",
+                        },
+                    )
+                    print(
+                        f"[dispatcher] 🚫 Node affinity check failed for local task {task.id}: {aff_reason}"
+                    )
+                    continue
+
         launcher = AGENT_LAUNCHERS.get(task.agent)
+
         if not launcher:
             continue
         result = launcher(task.id, title=task.title, workspace=task.workspace)
@@ -1316,50 +1336,147 @@ def record_launch_record(
 # Agent Configuration
 # ═══════════════════════════════════════════════════════════════
 
-AGENT_CONFIG: dict[str, dict[str, Any]] = {
-    "fred": {
-        "executable": AGY_PATH,  # fred is a Hermes/AGY instance
-        "mode": "signal",
-        "timeout": 300,
-        "next_label": "agent::kai",
-        "description": "Hermes orchestrator — first in pipeline",
-    },
-    "kai": {
-        "executable": "kai",
-        "mode": "signal",
-        "timeout": 600,
-        "next_label": "agent::agy",
-        "description": "Active Oahu Tours bot — review & deploy",
-    },
-    "agy": {
-        "executable": AGY_PATH,
-        "mode": "launch",
-        "timeout": 900,
-        "next_label": "agent::jules",
-        "description": "Antigravity CLI — code generation",
-    },
-    "george": {
-        "executable": "hermes --profile george",
-        "mode": "visible_hermes",
-        "timeout": 600,
-        "next_label": "",
-        "description": "Prismatic workflow/dashboard verification guard",
-    },
-    "jules": {
-        "executable": JULES_PATH,
-        "mode": "launch",
-        "timeout": 600,
-        "next_label": "agent::codex",
-        "description": "Jules CLI — testing & QA",
-    },
-    "codex": {
-        "executable": CODEX_PATH,
-        "mode": "launch",
-        "timeout": 1200,
-        "next_label": "",  # terminal — pipeline complete
-        "description": "Codex CLI — final polish & PR",
-    },
-}
+def _build_dynamic_agent_config() -> dict[str, dict[str, Any]]:
+    """Dynamically discover and construct agent configuration dictionary."""
+    config: dict[str, dict[str, Any]] = {}
+    try:
+        from prismatic.agents.discovery import AgentDiscoveryService
+        profiles = AgentDiscoveryService.get_agents()
+        for p in profiles:
+            agent_id = p.agent_id.lower()
+            harness = str((p.metadata or {}).get("harness", "") or "").lower()
+            if not harness:
+                if "agy" in agent_id or "antigravity" in agent_id:
+                    harness = "antigravity"
+                elif "jules" in agent_id:
+                    harness = "jules"
+                elif "codex" in agent_id:
+                    harness = "codex"
+                else:
+                    harness = "hermes"
+
+            if "antigravity" in harness or "agy" in harness:
+                exe = AGY_PATH
+                mode = "launch"
+            elif "jules" in harness:
+                exe = JULES_PATH
+                mode = "launch"
+            elif "codex" in harness:
+                exe = CODEX_PATH
+                mode = "launch"
+            else:
+                exe = f"hermes --profile {p.agent_id}"
+                mode = "signal"
+            config[agent_id] = {
+                "executable": exe,
+                "mode": mode,
+                "timeout": 600,
+                "next_label": "",
+                "description": f"{p.name} — {p.role}",
+                "model": p.active_model,
+                "harness": harness,
+            }
+    except Exception:
+        pass
+
+    if not config:
+        config = {
+            "orchestrator": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": "Sovereign Orchestration Agent",
+            },
+            "architect": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 900,
+                "next_label": "",
+                "description": "System Architecture & Spec Agent",
+            },
+            "executor": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 1200,
+                "next_label": "",
+                "description": "Code Execution & Refactoring Agent",
+            },
+            "verifier": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": "Deterministic Verification & Test Agent",
+            },
+            "curator": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 300,
+                "next_label": "",
+                "description": "Ledger & Audit Curation Agent",
+            },
+        }
+    return config
+
+
+class DynamicAgentConfigDict(dict):
+    """Dict proxy that transparently refreshes discovered agents if empty."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_refresh = 0.0
+        self._ttl = 30.0
+        self._refreshing = False
+
+    def _ensure_fresh(self) -> None:
+        if self._refreshing:
+            return
+        now = time.time()
+        if super().__len__() == 0 or (now - self._last_refresh > self._ttl):
+            self._refreshing = True
+            try:
+                fresh = _build_dynamic_agent_config()
+                self.clear()
+                self.update(fresh)
+                self._last_refresh = now
+            finally:
+                self._refreshing = False
+
+    def __getitem__(self, key: Any) -> Any:
+        self._ensure_fresh()
+        return super().__getitem__(key)
+
+    def __iter__(self) -> Any:
+        self._ensure_fresh()
+        return super().__iter__()
+
+    def __len__(self) -> int:
+        self._ensure_fresh()
+        return super().__len__()
+
+    def __contains__(self, key: Any) -> bool:
+        self._ensure_fresh()
+        return super().__contains__(key)
+
+    def keys(self) -> Any:
+        self._ensure_fresh()
+        return super().keys()
+
+    def values(self) -> Any:
+        self._ensure_fresh()
+        return super().values()
+
+    def items(self) -> Any:
+        self._ensure_fresh()
+        return super().items()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._ensure_fresh()
+        return super().get(key, default)
+
+
+AGENT_CONFIG: dict[str, dict[str, Any]] = DynamicAgentConfigDict(_build_dynamic_agent_config())
 
 
 # Jules host-path pre-screen: Jules sessions cannot safely inspect host-only
@@ -2679,6 +2796,103 @@ def resolve_assigned_agent(row_or_payload: dict[str, Any]) -> AssignedAgentResol
     )
 
 
+def extract_node_affinity(payload_or_row: dict[str, Any]) -> str | None:
+    """Extract requested node affinity (e.g. 'webtop-hermes', 'lightbringer-windows', 'any') from task/event."""
+    if not isinstance(payload_or_row, dict):
+        return None
+
+    # 1. Direct keys
+    for key in ("node_affinity", "affinity", "node", "target_node"):
+        val = payload_or_row.get(key)
+        if val and isinstance(val, str) and val.strip():
+            return val.strip().lower()
+
+    # 2. Metadata nested dict
+    meta = payload_or_row.get("metadata")
+    if isinstance(meta, dict):
+        for key in ("node_affinity", "affinity", "node", "target_node"):
+            val = meta.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip().lower()
+
+    # 3. Data nested dict
+    data = payload_or_row.get("data")
+    if isinstance(data, dict):
+        for key in ("node_affinity", "affinity", "node", "target_node"):
+            val = data.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip().lower()
+
+    # 4. Labels in payload/data
+    labels_obj = payload_or_row.get("labels") or (isinstance(data, dict) and data.get("labels"))
+    label_names: list[str] = []
+    if isinstance(labels_obj, list):
+        for item in labels_obj:
+            if isinstance(item, dict):
+                label_names.append(str(item.get("name", "")))
+            elif isinstance(item, str):
+                label_names.append(item)
+    elif isinstance(labels_obj, dict):
+        nodes = labels_obj.get("nodes", [])
+        if isinstance(nodes, list):
+            for item in nodes:
+                if isinstance(item, dict):
+                    label_names.append(str(item.get("name", "")))
+                elif isinstance(item, str):
+                    label_names.append(item)
+
+    for lname in label_names:
+        lname_clean = lname.strip().lower().replace("::", ":")
+        if lname_clean.startswith("node:") or lname_clean.startswith("affinity:"):
+            return lname_clean.split(":", 1)[1].strip()
+        if lname_clean.startswith("node-"):
+            return lname_clean[5:].strip()
+
+    return None
+
+
+def check_node_affinity(node_affinity: str | None) -> tuple[bool, str]:
+    """Check whether the requested node affinity is online and valid in the distributed mesh.
+
+    Returns (allowed, reason).
+    Allowed affinities:
+      - None, '', 'any', 'all', '*': always allowed.
+      - Hostname/IP: matches online nodes in /api/mesh/nodes or Tailscale LocalAPI.
+    """
+    if not node_affinity or node_affinity.strip().lower() in {"", "any", "all", "none", "*"}:
+        return (True, "affinity: any node accepted")
+
+    target = node_affinity.strip().lower()
+
+    try:
+        from prismatic.mesh.tailscale import get_tailscale_mesh_client
+        client = get_tailscale_mesh_client()
+        nodes = client.list_nodes_sync()
+        for node in nodes:
+            node_host = (node.hostname or "").lower()
+            node_dns = (node.dns_name or "").lower()
+            node_ips = [ip.lower() for ip in node.tailscale_ips]
+            if target == node_host or target in node_host or node_host in target or target == node_dns or target in node_ips:
+                if node.online:
+                    return (True, f"affinity target node '{node.hostname}' is online in mesh")
+                else:
+                    return (False, f"affinity target node '{node.hostname}' is offline in mesh")
+
+        # Check local hostname fallback
+        import socket
+        local_host = socket.gethostname().lower()
+        if target in local_host or local_host in target:
+            return (True, f"affinity target node '{target}' matches local host '{local_host}'")
+
+        return (False, f"affinity target node '{target}' not found in mesh")
+    except Exception as exc:
+        import socket
+        local_host = socket.gethostname().lower()
+        if target in local_host or local_host in target:
+            return (True, f"affinity target node '{target}' matches local host '{local_host}' (mesh check fallback: {exc})")
+        return (False, f"mesh node check failed: {exc}")
+
+
 def preflight_assigned_agent(
     row: dict[str, Any],
     resolution: AssignedAgentResolution,
@@ -2706,6 +2920,16 @@ def preflight_assigned_agent(
         )
     launcher_map = launchers or AGENT_LAUNCHERS
     payload = _assigned_agent_payload(row)
+
+    # Validate node affinity target in distributed mesh
+    affinity = extract_node_affinity(row) or extract_node_affinity(payload)
+    if affinity:
+        aff_ok, aff_reason = check_node_affinity(affinity)
+        if not aff_ok:
+            return AssignedAgentPreflight(
+                "blocked_preflight", False, f"node affinity check failed: {aff_reason}"
+            )
+
     handoff_result = handoff_dispatch_preflight(
         payload, agent, str(row.get("identifier") or "")
     )
@@ -2758,6 +2982,7 @@ def preflight_assigned_agent(
             "blocked_preflight", False, f"rate-limit gate unavailable: {exc}"
         )
     return AssignedAgentPreflight("passed", True, "ok")
+
 
 
 def dispatch_assigned_agent_event(

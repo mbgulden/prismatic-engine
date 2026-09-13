@@ -262,9 +262,9 @@ def test_load_registry_real_path_uses_adapter(monkeypatch):
     assert "pwp_kpi_capability" in loaded
     assert loaded["pwp_kpi_capability"]["enabled"] is True
     # Real registry has expected_data_layer_events on the site.
-    aot = next((s for s in loaded["sites"] if s["slug"] == "active-oahu"), None)
-    assert aot is not None
-    assert aot["pwp_kpi_override"]["enabled"] is True
+    site = next((s for s in loaded["sites"] if s["slug"] == "prismatic-core"), None)
+    assert site is not None
+    assert site["pwp_kpi_override"]["enabled"] is True
     # default_metric_specs should be populated from the dataLayer events.
-    assert "booking_click" in loaded["default_metric_specs"]
-    assert "purchase" in loaded["default_metric_specs"]
+    assert "page_view" in loaded["default_metric_specs"]
+    assert "conversion" in loaded["default_metric_specs"]

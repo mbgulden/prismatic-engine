@@ -11,6 +11,7 @@ compatibility for all callers across the Prismatic Engine governance layer.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -42,9 +43,33 @@ except ImportError:
 
 
 def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any) -> None:
-    """Emit a lock lifecycle event to the IPC bridge."""
+    """Emit a lock lifecycle event to the IPC bridge or in-process event bus."""
     if not _HAS_IPC:
         return
+
+    # If running inside an active asyncio event loop (e.g. within the FastAPI gateway),
+    # attempting a synchronous blocking socket connection to the gateway's own IPC bridge
+    # socket will block the loop and timeout. Instead, dispatch directly to EventBus.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+            bus = get_event_bus()
+            loop.create_task(
+                bus.publish(
+                    event_type=event_type,
+                    source=f"lock:{agent_id}",
+                    payload={"file": filepath, "agent": agent_id, **extra},
+                )
+            )
+            return
+        except Exception:
+            pass
+
     try:
         send_event_via_socket(
             event_type=event_type,

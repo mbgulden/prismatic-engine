@@ -261,7 +261,7 @@ def raw(workspace: str, path: str) -> Any:
     if st.st_size > MAX_DOWNLOAD_SIZE:
         raise HTTPException(status_code=413, detail=f"File too large (max {_human_bytes(MAX_DOWNLOAD_SIZE)})")
     ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-    return FileResponse(target, media_type=ctype, filename=target.name)
+    return FileResponse(target, media_type=ctype, headers={'Content-Disposition': 'inline'})
 
 
 @app.get("/download/{workspace}/{path:path}")

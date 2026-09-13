@@ -1311,9 +1311,16 @@ body.light-mode #dag-node-inspector-drawer {
 
         <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-4 min-w-0">
             <!-- Mode Switcher -->
-            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex space-x-1">
-                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-indigo-600 text-white rounded">Standalone</span>
-                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Native</span>
+            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex items-center space-x-1" data-proof-marker="dashboard-ui-mode-switcher">
+                <button type="button" id="mode-btn-creator" onclick="setUIMode('creator')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5" title="Calm Creator Studio mode: Prompt, Deliverables, Status">
+                    <span>✨</span>
+                    <span>Studio</span>
+                </button>
+                <button type="button" id="mode-btn-engineering" onclick="setUIMode('engineering')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5" title="Advanced System Telemetry (14 diagnostic tabs) · Press Ctrl+Shift+D">
+                    <span>⚙️</span>
+                    <span>Telemetry</span>
+                    <span class="hidden lg:inline-block text-[9px] font-mono text-slate-500 bg-slate-900 px-1 rounded">^⇧D</span>
+                </button>
             </div>
             <!-- Theme Toggle -->
             <button onclick="toggleTheme()" class="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/50 p-2 rounded-full transition flex items-center justify-center min-w-[36px] min-h-[36px]" aria-label="Toggle Theme">
@@ -1329,9 +1336,36 @@ body.light-mode #dag-node-inspector-drawer {
         </div>
     </header>
 
-    <!-- Navigation Tabs Bar -->
-    <nav class="border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap" aria-label="Main Navigation">
-        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap gap-2 min-w-0 list-none m-0 p-0">
+    <!-- Creator Navigation Bar (Default) -->
+    <nav id="nav-creator-tabs" class="border-b border-slate-800/80 bg-slate-950/40 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="creator-tabs-bar" aria-label="Creator Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center gap-2 min-w-0 list-none m-0 p-0">
+            <li>
+                <a id="tab-btn-studio" href="/studio" onclick="switchTab('studio', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                    ✨ Studio (The Prompt)
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-assets" href="/assets" onclick="switchTab('assets', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    🌍 Deployed Assets (Reality)
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-pulse" href="/pulse" onclick="switchTab('pulse', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    💓 Fleet Pulse (Status)
+                </a>
+            </li>
+            <li class="sm:ml-auto">
+                <button type="button" onclick="setUIMode('engineering')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-cyan-300 bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition">
+                    <span>⚡ Engineering Telemetry (14 tabs)</span>
+                    <span class="text-[10px] text-slate-500">→</span>
+                </button>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Engineering Navigation Bar (Diagnostics Deck) -->
+    <nav id="nav-engineering-tabs" class="hidden border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap" aria-label="Main Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center gap-2 min-w-0 list-none m-0 p-0">
             <li>
                 <a id="tab-btn-dashboard" href="/" onclick="switchTab('dashboard', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
                     Dashboard
@@ -1402,6 +1436,11 @@ body.light-mode #dag-node-inspector-drawer {
                     Settings
                 </a>
             </li>
+            <li class="sm:ml-auto">
+                <button type="button" onclick="setUIMode('creator')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-cyan-300 hover:text-white bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/60 transition">
+                    <span>← Studio Mode</span>
+                </button>
+            </li>
         </ul>
     </nav>
 
@@ -1409,6 +1448,337 @@ body.light-mode #dag-node-inspector-drawer {
     <main class="flex-grow p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
         
         <!-- SECTION 1: DASHBOARD (VISUALIZER topo + simulator + activity feed) -->
+        <!-- SECTION: CREATOR STUDIO -->
+        <div id="section-studio" class="space-y-6 max-w-full overflow-x-hidden">
+            <!-- Studio Hero Banner -->
+            <section class="glass-panel p-6 sm:p-8 rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/40 via-slate-900/60 to-cyan-950/30 space-y-4 shadow-2xl relative overflow-hidden">
+                <div class="absolute -right-12 -top-12 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">Creator Studio</span>
+                            <span class="text-xs font-mono text-slate-400">Input → Team → Reality</span>
+                        </div>
+                        <h2 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-cyan-300 via-indigo-200 to-white bg-clip-text text-transparent">
+                            What would you like to manifest today?
+                        </h2>
+                        <p class="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+                            Describe your idea. The Prismatic sovereign agent fleet will autonomously decompose contracts, generate architecture, compile components, audit security boundaries, and deliver verified artifacts.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="loadStudioPreset('software')" class="px-3 py-2 rounded-xl text-xs font-mono bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-1.5 shadow-sm">
+                            <span>⚡</span>
+                            <span>Software Preset</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Main Prompt Studio Deck -->
+            <section class="glass-panel p-6 rounded-2xl border border-slate-800 space-y-6">
+                <div class="space-y-2">
+                    <label for="studio-prompt-input" class="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                        1. Vision &amp; Core Offer (Natural Language)
+                    </label>
+                    <textarea id="studio-prompt-input" rows="4" class="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 font-mono transition resize-y" placeholder="Describe the system, web property, or engine... e.g. Build a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery..."></textarea>
+                </div>
+
+                <!-- Quick Preset Pills -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Quick Starters:</span>
+                    <button type="button" onclick="loadStudioPreset('software')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        ⚡ Distributed Key-Value Engine
+                    </button>
+                    <button type="button" onclick="loadStudioPreset('web')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        🌐 Developer Tooling Web Portal
+                    </button>
+                    <button type="button" onclick="loadStudioPreset('ops')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        📊 Autonomous Fleet Operations &amp; Cron
+                    </button>
+                </div>
+
+                <!-- Configuration Matrix (3 Columns) -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800/80">
+                    <!-- Column A: Brand Voice & Persona -->
+                    <div class="space-y-2">
+                        <label for="studio-voice-select" class="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                            2. Brand Voice &amp; Persona
+                        </label>
+                        <select id="studio-voice-select" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500">
+                            <option value="technical">🛠️ Technical — Systems Architecture &amp; Engineering</option>
+                            <option value="executive">👔 Executive — Direct, High-Conversion Vision</option>
+                            <option value="creative">🎨 Creative — Expressive Brand &amp; Product Voice</option>
+                            <option value="neutral">✨ Neutral — Adaptive Domain Context</option>
+                        </select>
+                        <p class="text-[11px] text-slate-500">Guides copy nuance, architectural conventions, and tone.</p>
+                    </div>
+
+                    <!-- Column B: Domain & Publishing Target -->
+                    <div class="space-y-2">
+                        <label for="studio-target-input" class="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                            3. Domain / Publishing Target
+                        </label>
+                        <input id="studio-target-input" type="text" value="project.local" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500" placeholder="e.g. engine.internal or *.domain.com">
+                        <p class="text-[11px] text-slate-500">Cloudflare Pages deployment target with instant SSL.</p>
+                    </div>
+
+                    <!-- Column C: Commerce & Integrations -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                            4. Enabled Capabilities
+                        </label>
+                        <div class="space-y-1.5 text-xs font-mono">
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input id="studio-check-stripe" type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                <span>Stripe Checkout &amp; Webhooks</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input id="studio-check-mobile" type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                <span>Playwright 375px Mobile Audit</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input id="studio-check-seo" type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                <span>Schema.org LocalBusiness SEO</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Bar & Manifest CTA -->
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-slate-800/80">
+                    <div class="flex items-center gap-2 text-xs text-slate-400 font-mono">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <span>Fleet Ready · SwarmLock Active · Zero Babysitting</span>
+                    </div>
+                    <button type="button" id="studio-manifest-btn" onclick="executeStudioManifestation()" class="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-indigo-700 hover:from-cyan-400 hover:to-indigo-600 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-indigo-950/60 flex items-center justify-center gap-2 transition duration-200">
+                        <svg class="w-4 h-4 text-cyan-200 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        <span>Manifest Idea → Reality</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Manifestation In-Flight / Result Preview Card -->
+            <section id="studio-manifest-status-card" class="hidden glass-panel p-6 rounded-2xl border border-indigo-500/40 bg-indigo-950/20 space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-3 h-3 rounded-full bg-indigo-500 animate-ping"></div>
+                        <h3 class="text-sm font-bold text-slate-100 uppercase tracking-wider font-mono">Manifestation Pipeline Active</h3>
+                    </div>
+                    <span id="studio-manifest-stage-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-indigo-600/30 text-indigo-300 border border-indigo-500/50">Dispatched</span>
+                </div>
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+                        <span id="studio-manifest-step-text">Orchestrator decomposing goals into atomic execution contracts...</span>
+                        <span id="studio-manifest-percent">25%</span>
+                    </div>
+                    <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                        <div id="studio-manifest-progress-bar" class="bg-gradient-to-r from-cyan-500 to-indigo-500 h-2 rounded-full transition-all duration-500" style="width: 25%"></div>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between pt-2 text-xs font-mono">
+                    <span class="text-slate-400">Target URL: <a id="studio-manifest-url-link" href="#" target="_blank" class="text-cyan-400 hover:underline">Ready for deployment</a></span>
+                    <button type="button" onclick="switchTab('assets')" class="text-indigo-400 hover:text-indigo-300 underline">View in Deployed Assets →</button>
+                </div>
+            </section>
+        </div>
+        <!-- SECTION: DEPLOYED ASSETS & LIVING REALITY -->
+        <div id="section-assets" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <!-- Header -->
+            <section class="glass-panel p-6 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-950/30 via-slate-900/60 to-cyan-950/30 space-y-2 shadow-xl">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">The Living Reality</span>
+                            <span class="text-xs font-mono text-slate-400">Published Sites · Live Commerce · SSL Active</span>
+                        </div>
+                        <h2 class="text-xl font-bold text-white tracking-wide mt-1">Deployed Assets &amp; Web Properties</h2>
+                        <p class="text-xs text-slate-300">Tangible, real-world outputs compiled by PWP, verified by AST guards, and hosted on Cloudflare Pages.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="refreshDeployedAssets()" class="pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 font-mono">
+                            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            <span>Refresh Assets</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Featured Deployment: Manifested Deliverable -->
+            <section class="glass-panel p-6 rounded-2xl border border-indigo-500/40 bg-slate-950/80 space-y-4 shadow-xl">
+                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <h3 id="asset-featured-title" class="text-base font-bold text-white font-mono">Manifested Engine Deliverable</h3>
+                            <span id="asset-featured-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-700/60 font-semibold">Sovereign Swarm Output</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-semibold">Active Preview</span>
+                        </div>
+                        <p id="asset-featured-summary" class="text-xs text-slate-400">Autonomous 7-step swarm loop deliverable compiled by Prismatic Engine, validated by AST guards, and served locally.</p>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        <a id="asset-featured-link" href="#" target="_blank" class="pe-btn pe-btn-primary text-xs flex items-center gap-1 font-mono">
+                            <span>Open In Tab</span>
+                            <span class="text-cyan-200">↗</span>
+                        </a>
+                        <button type="button" onclick="setAssetPreviewViewport(375)" class="pe-btn pe-btn-secondary text-xs font-mono">
+                            📱 375px Mobile
+                        </button>
+                        <button type="button" onclick="setAssetPreviewViewport(100)" class="pe-btn pe-btn-secondary text-xs font-mono">
+                            💻 Responsive
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metrics & Features Grid -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                        <span class="text-slate-500 text-[10px] uppercase">Commerce Engine</span>
+                        <div class="text-emerald-400 font-bold flex items-center gap-1.5">
+                            <span>✓ Stripe Webhooks</span>
+                        </div>
+                        <span class="text-[10px] text-slate-400">Self-Serve Checkout</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                        <span class="text-slate-500 text-[10px] uppercase">Mobile Audit</span>
+                        <div class="text-cyan-400 font-bold flex items-center gap-1.5">
+                            <span>✓ 375px Lossless</span>
+                        </div>
+                        <span class="text-[10px] text-slate-400">Playwright Verified</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                        <span class="text-slate-500 text-[10px] uppercase">Local SEO</span>
+                        <div class="text-indigo-400 font-bold flex items-center gap-1.5">
+                            <span>✓ Schema.org</span>
+                        </div>
+                        <span class="text-[10px] text-slate-400">LocalBusiness JSON-LD</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                        <span class="text-slate-500 text-[10px] uppercase">Hosting Infrastructure</span>
+                        <div class="text-amber-400 font-bold flex items-center gap-1.5">
+                            <span>✓ Cloudflare Pages</span>
+                        </div>
+                        <span class="text-[10px] text-slate-400">Edge CDN + SSL</span>
+                    </div>
+                </div>
+
+                <!-- Interactive Live Viewport Frame -->
+                <div class="space-y-2 pt-2">
+                    <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+                        <span class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                            <span>Live Viewport Sandbox:</span>
+                            <span id="asset-viewport-dimension-label" class="text-cyan-300 font-bold">Responsive (100%)</span>
+                        </span>
+                        <span class="text-[11px] text-slate-500">Rendered via Cloudflare Edge</span>
+                    </div>
+                    <div class="flex justify-center bg-slate-950/90 rounded-xl border border-slate-800 p-2 overflow-hidden min-h-[380px]">
+                        <div id="asset-viewport-wrapper" class="w-full transition-all duration-300 flex justify-center">
+                            <iframe id="asset-preview-iframe" src="about:blank" class="w-full h-[420px] rounded-lg border border-slate-800 bg-white" title="Live Preview"></iframe>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Additional Client Properties Catalog -->
+            <section class="space-y-4">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">Additional Deployed Client Properties</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Property Card: Valkyrie Arms -->
+                    <div class="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-sm font-bold text-slate-100 font-mono">Valkyrie Arms Training</h4>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">Deployed</span>
+                        </div>
+                        <p class="text-xs text-slate-400">Astro-based firearms training and tactical defense curriculum portal with FareHarbor booking integration.</p>
+                        <div class="flex items-center justify-between text-xs font-mono pt-2 border-t border-slate-800/80">
+                            <span class="text-slate-500">valkyriearmstraining.com</span>
+                            <a href="https://valkyriearmstraining.com" target="_blank" class="text-cyan-400 hover:underline">Visit Site ↗</a>
+                        </div>
+                    </div>
+
+                    <!-- Property Card: Sentinel ITAD -->
+                    <div class="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-sm font-bold text-slate-100 font-mono">Sentinel ITAD Logistics</h4>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">Deployed</span>
+                        </div>
+                        <p class="text-xs text-slate-400">Enterprise IT asset disposition and secure hardware data destruction logistics platform.</p>
+                        <div class="flex items-center justify-between text-xs font-mono pt-2 border-t border-slate-800/80">
+                            <span class="text-slate-500">sentinelitad.com</span>
+                            <a href="https://sentinelitad.com" target="_blank" class="text-cyan-400 hover:underline">Visit Site ↗</a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        <!-- SECTION: FLEET PULSE -->
+        <div id="section-pulse" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <!-- Header -->
+            <section class="glass-panel p-6 rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950/30 via-slate-900/60 to-purple-950/30 space-y-2 shadow-xl">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">Autonomy Health</span>
+                            <span class="text-xs font-mono text-slate-400">Zero Oversight · Continuous Concurrency</span>
+                        </div>
+                        <h2 class="text-xl font-bold text-white tracking-wide mt-1">Fleet Pulse &amp; Autonomous State</h2>
+                        <p class="text-xs text-slate-300">Live operational status of autonomous agent daemons operating under mathematical SwarmLock safety.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" id="pulse-emergency-pause-btn" onclick="toggleFleetEmergencyPause()" class="px-3.5 py-2 rounded-xl text-xs font-mono bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition flex items-center gap-2 shadow-sm">
+                            <span id="pulse-pause-icon">⏸</span>
+                            <span id="pulse-pause-label">Pause Fleet</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3-State High-Level Pulse Indicator Card -->
+            <section class="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+                    <div class="flex items-center gap-4">
+                        <div class="relative flex h-5 w-5 flex-shrink-0">
+                            <span id="pulse-indicator-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span id="pulse-indicator-dot" class="relative inline-flex rounded-full h-5 w-5 bg-emerald-500"></span>
+                        </div>
+                        <div>
+                            <h3 id="pulse-status-headline" class="text-base font-bold text-white font-mono">Swarm Fleet Operational &amp; Synchronized</h3>
+                            <p id="pulse-status-subhead" class="text-xs text-slate-400">Autonomous agent fleet actively monitoring queues. Concurrency safety verified.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 text-xs font-mono">
+                        <span class="text-slate-500">Active Leases: <strong id="pulse-active-leases-count" class="text-cyan-400">0</strong></span>
+                        <span class="text-slate-500">·</span>
+                        <span class="text-slate-500">Deflected Collisions: <strong id="pulse-deflections-count" class="text-emerald-400">0</strong></span>
+                    </div>
+                </div>
+
+                <!-- Active Agent Cards Grid (Dynamically Populated from /api/agents) -->
+                <div id="fleet-pulse-cards-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                    <div class="p-6 rounded-xl bg-slate-950/70 border border-slate-800 text-center col-span-full text-slate-500 font-mono text-xs">
+                        Scanning active fleet nodes across local profiles and Tailscale mesh...
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Stream Strip -->
+            <section class="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                        <span>Live Swarm Telemetry Stream</span>
+                    </h3>
+                    <button type="button" onclick="setUIMode('engineering'); switchTab('signals');" class="text-xs font-mono text-indigo-400 hover:text-indigo-300 underline">
+                        Open Full Signals Deck →
+                    </button>
+                </div>
+                <div id="pulse-live-events-list" class="space-y-1.5 font-mono text-xs max-h-48 overflow-y-auto pr-2">
+                    <div class="text-slate-500 text-center py-4">Listening for live WebSocket swarm events...</div>
+                </div>
+            </section>
+        </div>
         <div id="section-dashboard" class="space-y-6">
 <!-- 🌐 REACTIVE TOPOLOGICAL MERKLE-DAG PIPELINE & CONCURRENCY COCKPIT -->
 <section id="merkle-dag-cockpit-panel" class="rounded-2xl border border-slate-800/90 bg-slate-950/70 p-4 sm:p-6 space-y-4 shadow-2xl relative transition-all duration-300">
@@ -2760,10 +3130,10 @@ body.light-mode #dag-node-inspector-drawer {
         <div id="section-foundation" class="hidden space-y-6">
             <!-- Stats Grid -->
             <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <!-- Jules runs -->
+                <!-- Reviewer runs -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px] cursor-pointer hover:border-indigo-400 transition" onclick="switchTab('quota')">
                     <div class="flex items-center justify-between">
-                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules Daily Capacity</span>
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">PR Review Capacity</span>
                         <span class="text-[10px] text-indigo-400 font-mono">Quota Tab →</span>
                     </div>
                     <div class="flex items-end justify-between mt-2">
@@ -2775,9 +3145,9 @@ body.light-mode #dag-node-inspector-drawer {
                         <div id="progress-foundation-jules" class="bg-indigo-500 h-1.5 rounded-full" style="width: 0%"></div>
                     </div>
                 </div>
-                <!-- Ned runs -->
+                <!-- Local worker runs -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Ned CLI Sessions</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Local Worker Sessions</span>
                     <span id="stat-foundation-ned" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
                 </div>
                 <!-- AGY runs -->
@@ -2790,8 +3160,8 @@ body.light-mode #dag-node-inspector-drawer {
                 </div>
                 <!-- Active reviewer route -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Active AGY Reviewer Route</span>
-                    <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:jules</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Active Reviewer Route</span>
+                    <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:reviewer</span>
                 </div>
             </section>
 
@@ -3299,10 +3669,6 @@ body.light-mode #dag-node-inspector-drawer {
                 <!-- Dynamic Agent Selection Tabs -->
                 <div class="flex gap-2 overflow-x-auto pb-2 border-b border-slate-800/80 pt-2" id="signals-agent-tabs" data-proof-marker="signals-mobile-agent-tabs">
                     <button type="button" onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-indigo-600/30 text-indigo-300 border-indigo-500/40 font-bold shadow-sm">All</button>
-                    <button type="button" onclick="setSignalsAgent('agy')" data-agent-tab="agy" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">⚡ AGY</button>
-                    <button type="button" onclick="setSignalsAgent('kai')" data-agent-tab="kai" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🧠 Kai</button>
-                    <button type="button" onclick="setSignalsAgent('fred')" data-agent-tab="fred" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🛠️ Fred</button>
-                    <button type="button" onclick="setSignalsAgent('george')" data-agent-tab="george" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">⚖️ George</button>
                 </div>
 
                 <!-- Agent Process & Telemetry Panes -->
@@ -4137,7 +4503,7 @@ body.light-mode #dag-node-inspector-drawer {
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Dual-Mode Framework Importer</h3>
                                 <div>
                                     <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Client Property</label>
-                                    <input id="pwp-ingest-client" type="text" value="Active Oahu Tours" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <input id="pwp-ingest-client" type="text" value="Prismatic Showcase" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                                 </div>
                                 
                                 <div class="space-y-2">
@@ -4164,7 +4530,7 @@ body.light-mode #dag-node-inspector-drawer {
                             <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
                                 <div class="flex items-center justify-between">
                                     <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Client Knowledge Graph</h3>
-                                    <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Active Oahu Tours</span>
+                                    <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Prismatic Showcase</span>
                                 </div>
                                 <div id="pwp-graph-viewer" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[320px] overflow-y-auto text-xs font-mono text-slate-300">
                                     <!-- Knowledge graph JSON rendered here -->
@@ -4180,7 +4546,7 @@ body.light-mode #dag-node-inspector-drawer {
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Site Synthesis Configurator</h3>
                                 <div>
                                     <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Site Name</label>
-                                    <input id="pwp-synth-sitename" type="text" value="Active Oahu Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <input id="pwp-synth-sitename" type="text" value="Prismatic Engine Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                                 </div>
                                 <div>
                                     <label class="block text-[11px] font-medium text-slate-400 mb-1">Base Theme Blueprint</label>
@@ -4694,7 +5060,7 @@ body.light-mode #dag-node-inspector-drawer {
 
             async function pwpExportProjectScaffold() {
                 const select = document.getElementById('pwp-workspace-selector');
-                const slug = select ? select.value : 'active-oahu';
+                const slug = select ? select.value : 'prismatic-core';
                 const res = await fetch('/api/pwp/export-project', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -4731,7 +5097,7 @@ body.light-mode #dag-node-inspector-drawer {
 
             function pwpOpenConfigureKPIModal() {
                 const select = document.getElementById('pwp-workspace-selector');
-                const slug = select ? select.value : 'active-oahu';
+                const slug = select ? select.value : 'prismatic-core';
                 pwpConfigureWorkspaceKPIPrompt(slug);
             }
 
@@ -4917,8 +5283,8 @@ body.light-mode #dag-node-inspector-drawer {
                 <div class="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 space-y-4" data-proof-marker="jules-daily-capacity-resources">
                     <div class="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <h3 class="text-sm font-bold text-indigo-200 uppercase tracking-wider">Jules Daily Capacity</h3>
-                            <p id="jules-capacity-freshness" class="text-[11px] text-slate-500 mt-1">Loading dedicated Jules capacity ledger</p>
+                            <h3 class="text-sm font-bold text-indigo-200 uppercase tracking-wider">PR Review Daily Capacity</h3>
+                            <p id="jules-capacity-freshness" class="text-[11px] text-slate-500 mt-1">Loading dedicated review capacity ledger</p>
                         </div>
                         <span id="jules-capacity-badge" class="px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-400">Unavailable</span>
                     </div>
@@ -4936,7 +5302,7 @@ body.light-mode #dag-node-inspector-drawer {
                             <div id="jules-capacity-coverage" class="mt-1 text-sm font-bold text-amber-300">Unavailable</div>
                         </div>
                     </div>
-                    <div class="h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden" aria-label="Jules daily capacity progress">
+                    <div class="h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden" aria-label="Daily capacity progress">
                         <div id="jules-capacity-progress" class="h-full bg-indigo-500 rounded-full transition-all duration-500" style="width: 0%"></div>
                     </div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -5005,7 +5371,7 @@ body.light-mode #dag-node-inspector-drawer {
                     <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     Service Integrations &amp; OAuth Credentials Hub
                 </h2>
-                <p class="text-xs text-slate-500 mt-1">Interactive credentials marketplace: Google Antigravity OAuth, Jules CLI, AI Models, GitHub &amp; Infrastructure.</p>
+                <p class="text-xs text-slate-500 mt-1">Interactive credentials marketplace: API Keys, OAuth Providers, Multi-Model LLM Endpoints, GitHub &amp; Infrastructure.</p>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
                 <button type="button" onclick="openAddServiceModal()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-indigo-500/40 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 hover:text-white hover:border-indigo-400 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
@@ -5106,25 +5472,25 @@ body.light-mode #dag-node-inspector-drawer {
 
                 <!-- Jules DB Path -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">Jules Capacity Database Path</label>
+                    <label class="block font-bold text-slate-300">PR Review Capacity Database Path</label>
                     <input id="setting-JULES_DB_PATH" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="~/.prismatic/db/jules_capacity.sqlite3">
                 </div>
 
                 <!-- OpenAI Key -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">OpenAI API Key (George Peer Reviewer)</label>
+                    <label class="block font-bold text-slate-300">OpenAI API Key (Peer Review &amp; Analysis)</label>
                     <input id="setting-OPENAI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-proj-••••••••••••••••">
                 </div>
 
                 <!-- Anthropic Key -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">Anthropic API Key (Kai &amp; Fred)</label>
+                    <label class="block font-bold text-slate-300">Anthropic API Key (Reasoning &amp; Architecture)</label>
                     <input id="setting-ANTHROPIC_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-ant-••••••••••••••••">
                 </div>
 
                 <!-- Gemini Key -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">Google Gemini API Key (AGY Engine)</label>
+                    <label class="block font-bold text-slate-300">Google Gemini API Key (Multimodal &amp; Search)</label>
                     <input id="setting-GEMINI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="AIzaSy••••••••••••••••">
                 </div>
             </div>
@@ -5161,7 +5527,7 @@ body.light-mode #dag-node-inspector-drawer {
                         <optgroup label="Agent Harnesses &amp; Frameworks">
                             <option value="hermes">Hermes Orchestrator Hub</option>
                             <option value="agy">Antigravity (AGY CLI)</option>
-                            <option value="jules">Jules CLI Capacity Ledger</option>
+                            <option value="jules">PR Review Capacity Ledger</option>
                             <option value="devin">Devin AI Harness</option>
                         </optgroup>
                         <optgroup label="AI Models &amp; Cloud Infrastructure">
@@ -5699,6 +6065,23 @@ body.light-mode #dag-node-inspector-drawer {
             }
         }
 
+        function registerDynamicAgentPill(agentId) {
+            if (!agentId || agentId === "all" || agentId === "SYSTEM" || agentId === "unknown") return;
+            const container = document.getElementById("dag-agent-filters");
+            if (!container) return;
+            const sanitizedId = String(agentId).trim().toLowerCase();
+            const existing = container.querySelector(`[data-dag-agent="${sanitizedId}"]`);
+            if (!existing) {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.setAttribute("data-dag-agent", sanitizedId);
+                btn.className = "dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+                btn.textContent = `⚡ ${agentId}`;
+                btn.onclick = () => setDagAgentFilter(sanitizedId);
+                container.appendChild(btn);
+            }
+        }
+
         function toggleDagScrubber() {
             const bar = document.getElementById("dag-time-scrubber-bar");
             if (!bar) return;
@@ -5913,7 +6296,9 @@ body.light-mode #dag-node-inspector-drawer {
             activeTab = tab;
             
             if (updateHistory && window.history && window.history.pushState) {
-                const targetPath = tab === "dashboard" ? "/" : `/${tab}`;
+                const targetPath = (currentUIMode === "creator" && tab === "studio")
+                    ? "/"
+                    : (tab === "dashboard" ? (currentUIMode === "creator" ? "/dashboard" : "/") : `/${tab}`);
                 const search = window.location.search || "";
                 if (window.location.pathname !== targetPath) {
                     window.history.pushState({ tab }, "", targetPath + search);
@@ -5921,16 +6306,16 @@ body.light-mode #dag-node-inspector-drawer {
             }
 
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
+            const tabs = ['studio', 'assets', 'pulse', 'dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
                 
                 if (t === tab) {
-                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                    if (btn) btn.className = "inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
                     if (sec) sec.classList.remove("hidden");
                 } else {
-                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                    if (btn) btn.className = "inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
                     if (sec) sec.classList.add("hidden");
                 }
             });
@@ -5951,6 +6336,10 @@ body.light-mode #dag-node-inspector-drawer {
             } else if (tab === 'signals') {
                 renderSignalsView();
                 fetchSwarmLockHistory();
+            } else if (tab === 'pulse') {
+                fetchPulseData();
+            } else if (tab === 'assets') {
+                refreshDeployedAssets();
             }
         }
 
@@ -7155,6 +7544,7 @@ body.light-mode #dag-node-inspector-drawer {
             
             if (activeTab === 'dashboard') {
                 renderDashboardSummary();
+                fetchDagTopology();
                 await fetchQuotaSummary();
                 await fetchCompletedWorkGate();
                 await fetchPromotionDecisionLedger();
@@ -8573,18 +8963,48 @@ body.light-mode #dag-node-inspector-drawer {
             tabsBox.innerHTML = html;
         }
 
+        function renderFleetPulseCards(agents) {
+            const container = document.getElementById("fleet-pulse-cards-container");
+            if (!container) return;
+            if (!agents || !agents.length) {
+                container.innerHTML = `<div class="p-6 rounded-xl bg-slate-950/70 border border-slate-800 text-center col-span-full text-slate-500 font-mono text-xs">No active agent nodes discovered.</div>`;
+                return;
+            }
+            container.innerHTML = agents.slice(0, 12).map(ag => {
+                const aid = ag.agent_id || "agent";
+                const isExecuting = ag.status && (ag.status.toLowerCase().includes("active") || ag.status.toLowerCase().includes("executing"));
+                const statusColor = isExecuting ? "text-cyan-400" : (ag.status && ag.status.toLowerCase().includes("error") ? "text-rose-400" : "text-emerald-400");
+                const statusLabel = ag.status || "Online";
+
+                return `
+                    <div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2 hover:border-slate-700 transition" data-agent-card="${escapeHtml(aid)}">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-200 font-mono flex items-center gap-1.5">
+                                <span>${ag.icon || '🤖'}</span><span>${escapeHtml(ag.name || aid)}</span>
+                            </span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">${escapeHtml(ag.role || 'Agent')}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 line-clamp-2">${escapeHtml(ag.current_resource ? 'Lease: ' + ag.current_resource : (ag.active_model && ag.active_model !== 'auto' ? 'Model: ' + ag.active_model : (ag.role || 'Ready for tasks')))}</p>
+                        <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-900 flex justify-between">
+                            <span>Host: ${escapeHtml(ag.host || 'local')}</span>
+                            <span class="${statusColor}">${escapeHtml(statusLabel)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function renderSignalPanes(payload) {
             latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
             const panes = document.getElementById('signals-agent-panes');
             if (!panes) return;
 
             const knownAgents = discoveredAgentsList.length ? discoveredAgentsList : [
-                { agent_id: 'agy', name: 'Antigravity (AGY)', icon: '⚡', active_model: 'gemini-2.5-pro', status: 'idle' },
-                { agent_id: 'hermes', name: 'Hermes Orchestrator', icon: '🌐', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'kai', name: 'Kai (UI Specialist)', icon: '🎨', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'fred', name: 'Fred (TDD Specialist)', icon: '⚙️', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'george', name: 'George (Peer Reviewer)', icon: '🛡️', active_model: 'gpt-4o', status: 'idle' },
-                { agent_id: 'autobot', name: 'Autobot (CI Worker)', icon: '🤖', active_model: 'deepseek-r1', status: 'idle' }
+                { agent_id: 'orchestrator', name: 'Fleet Orchestrator', icon: '👑', active_model: 'auto', status: 'idle' },
+                { agent_id: 'architect', name: 'Systems Architect', icon: '⚙️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'builder', name: 'Implementation Specialist', icon: '🛠️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'reviewer', name: 'Quality Sentinel', icon: '🛡️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'deployer', name: 'Edge Deployer', icon: '🚀', active_model: 'auto', status: 'idle' }
             ];
 
             const byAgent = latestSignalsPayload.by_agent || {};
@@ -9145,10 +9565,20 @@ body.light-mode #dag-node-inspector-drawer {
 
                 if (agentsRes && agentsRes.ok) {
                     const agentData = await agentsRes.json();
-                    discoveredAgentsList = agentData.agents || [];
+                    if (Array.isArray(agentData.agents)) {
+                        discoveredAgentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        discoveredAgentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    } else {
+                        discoveredAgentsList = [];
+                    }
                     const totalEl = document.getElementById("sig-metric-total");
                     if (totalEl) totalEl.textContent = discoveredAgentsList.length;
                     renderAgentTabs(discoveredAgentsList);
+                    renderFleetPulseCards(discoveredAgentsList);
                 }
 
                 if (signalsRes && signalsRes.ok) {
@@ -10635,25 +11065,40 @@ body.light-mode #dag-node-inspector-drawer {
             ws.onmessage = (e) => {
                 try {
                     const event = JSON.parse(e.data);
-                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle"].includes(event.type) || (event.type && event.type.startsWith("review_factory_"))) {
+                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle", "task_enqueued"].includes(event.type) || (event.type && (event.type.startsWith("review_factory_") || event.type.startsWith("task.")))) {
                         fetchData();
                         if (activeTab === "review-factory") {
                             loadReviewFactory();
                         }
+                        if (activeTab === "ingestion-queue") {
+                            fetchWebhookQueue();
+                        }
                     }
                     if (event.type === "swarmlock_status" && event.payload) {
                         renderSwarmLockCockpit(event.payload);
+                        fetchDagTopology();
+                        if (activeTab === "review-factory") loadReviewFactory();
+                        if (activeTab === "ingestion-queue") fetchWebhookQueue();
                         const drawer = document.getElementById("swarmlock-history-drawer");
                         if (drawer && !drawer.classList.contains("hidden")) {
                             fetchSwarmLockHistory();
                         }
                     }
-                    if (event.type === "signal.emitted" || event.type === "signal") {
+                    if (event.type === "signal.emitted" || event.type === "signal" || event.type === "agent.discovered") {
+                        const sig = event.payload || event.signal || {};
+                        const agentId = sig.agent || event.agent;
+                        if (agentId) registerDynamicAgentPill(agentId);
+                        fetchDagTopology();
                         if (activeTab === "signals") {
                             renderSignalsView();
                         }
-                        const sig = event.payload || event.signal || {};
-                        addLocalSignal(sig.agent || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
+                        if (activeTab === "ingestion-queue") {
+                            fetchWebhookQueue();
+                        }
+                        if (activeTab === "review-factory") {
+                            loadReviewFactory();
+                        }
+                        addLocalSignal(agentId || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
                     }
                     if (event.type === "fleet_control_status" && event.payload) {
                         isFleetPaused = !!event.payload.fleet_paused;
@@ -11090,12 +11535,282 @@ body.light-mode #dag-node-inspector-drawer {
             if (modal) modal.classList.add('hidden');
         }
 
+        /* =========================================================================
+           UI MODE BIFURCATION: CREATOR STUDIO VS ENGINEERING TELEMETRY
+           ========================================================================= */
+
+        const creatorTabIds = new Set(["studio", "assets", "pulse"]);
+        const engineeringTabIds = new Set([
+            "dashboard", "telemetry", "merge", "review-factory", "workspaces",
+            "skills", "signals", "swarmproof", "pwp", "plugins", "crons", "quota", "foundation", "settings",
+        ]);
         const dashboardTabIds = new Set([
+            "studio", "assets", "pulse",
             "dashboard", "telemetry", "merge", "review-factory", "workspaces",
             "skills", "signals", "swarmproof", "pwp", "plugins", "crons", "quota", "foundation", "settings",
         ]);
 
+        let currentUIMode = localStorage.getItem('prismatic_ui_mode') || 'creator';
+
+        function setUIMode(mode, updateTab = true) {
+            currentUIMode = mode;
+            try {
+                localStorage.setItem('prismatic_ui_mode', mode);
+            } catch (e) {}
+
+            const creatorNav = document.getElementById('nav-creator-tabs');
+            const engineeringNav = document.getElementById('nav-engineering-tabs');
+            const btnCreator = document.getElementById('mode-btn-creator');
+            const btnEngineering = document.getElementById('mode-btn-engineering');
+
+            if (mode === 'creator') {
+                if (creatorNav) creatorNav.classList.remove('hidden');
+                if (engineeringNav) engineeringNav.classList.add('hidden');
+                if (btnCreator) {
+                    btnCreator.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5";
+                }
+                if (btnEngineering) {
+                    btnEngineering.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5";
+                }
+                if (updateTab && engineeringTabIds.has(activeTab)) {
+                    switchTab('studio');
+                }
+            } else {
+                if (creatorNav) creatorNav.classList.add('hidden');
+                if (engineeringNav) engineeringNav.classList.remove('hidden');
+                if (btnCreator) {
+                    btnCreator.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5";
+                }
+                if (btnEngineering) {
+                    btnEngineering.className = "px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5";
+                }
+                if (updateTab && creatorTabIds.has(activeTab)) {
+                    switchTab('dashboard');
+                }
+            }
+        }
+
+        /* =========================================================================
+           CREATOR STUDIO PRESETS & MANIFESTATION PIPELINE
+           ========================================================================= */
+
+        function loadStudioPreset(preset) {
+            const promptEl = document.getElementById('studio-prompt-input');
+            const targetEl = document.getElementById('studio-target-input');
+            const voiceEl = document.getElementById('studio-voice-select');
+            const stripeEl = document.getElementById('studio-check-stripe');
+            const mobileEl = document.getElementById('studio-check-mobile');
+            const seoEl = document.getElementById('studio-check-seo');
+
+            if (preset === 'software') {
+                if (promptEl) {
+                    promptEl.value = "Implement a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery.";
+                }
+                if (targetEl) targetEl.value = "kv-engine.local";
+                if (voiceEl) voiceEl.value = "technical";
+                if (stripeEl) stripeEl.checked = false;
+                if (mobileEl) mobileEl.checked = true;
+                if (seoEl) seoEl.checked = true;
+                showToast("⚡ Loaded Software Archetype preset");
+            } else if (preset === 'web') {
+                if (promptEl) {
+                    promptEl.value = "Modern developer tooling landing page and documentation portal with interactive code playgrounds, theme switching, and stripe subscription tiers.";
+                }
+                if (targetEl) targetEl.value = "tooling.dev";
+                if (voiceEl) voiceEl.value = "creative";
+                showToast("🌐 Loaded Web Property Archetype preset");
+            } else if (preset === 'ops') {
+                if (promptEl) {
+                    promptEl.value = "Automated fleet monitoring and self-healing cron daemon with Tailscale node health attestation and incident escalation runbooks.";
+                }
+                if (targetEl) targetEl.value = "ops.internal";
+                if (voiceEl) voiceEl.value = "executive";
+                showToast("📊 Loaded Operations Archetype preset");
+            }
+        }
+
+        async function executeStudioManifestation() {
+            const promptEl = document.getElementById('studio-prompt-input');
+            const promptText = promptEl ? promptEl.value.trim() : "";
+            if (!promptText) {
+                showToast("Please enter a vision or select a starter preset before manifesting.", true);
+                return;
+            }
+
+            const targetDomain = (document.getElementById('studio-target-input') || {}).value || "project.local";
+            const voice = (document.getElementById('studio-voice-select') || {}).value || "default";
+            const btn = document.getElementById('studio-manifest-btn');
+            const statusCard = document.getElementById('studio-manifest-status-card');
+            const stageBadge = document.getElementById('studio-manifest-stage-badge');
+            const stepText = document.getElementById('studio-manifest-step-text');
+            const progressBar = document.getElementById('studio-manifest-progress-bar');
+            const percentText = document.getElementById('studio-manifest-percent');
+            const urlLink = document.getElementById('studio-manifest-url-link');
+
+            if (btn) btn.disabled = true;
+            if (statusCard) statusCard.classList.remove('hidden');
+
+            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Orchestrator)";
+            if (stepText) stepText.textContent = "Decomposing high-level vision into atomic agent contracts...";
+            if (progressBar) progressBar.style.width = "20%";
+            if (percentText) percentText.textContent = "20%";
+
+            try {
+                const resp = await fetch("/api/gateway/studio/manifest", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        prompt: promptText,
+                        target_domain: targetDomain,
+                        voice: voice,
+                        task_id: "GRO-SWARM-01"
+                    })
+                });
+
+                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Worker Swarm)";
+                if (stepText) stepText.textContent = "Workers compiling deliverables, AST checks, and deployment schemas...";
+                if (progressBar) progressBar.style.width = "60%";
+                if (percentText) percentText.textContent = "60%";
+
+                const data = await resp.json();
+                const deliv = (data.result && data.result.deliverable) || {};
+                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'project'}/preview`;
+
+                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Complete)";
+                if (stepText) stepText.textContent = `Asset live at ${targetDomain} (Compiled in ${data.result ? data.result.duration_seconds : 0.1}s)`;
+                if (progressBar) progressBar.style.width = "100%";
+                if (percentText) percentText.textContent = "100%";
+
+                if (urlLink) {
+                    urlLink.href = previewUrl;
+                    urlLink.textContent = `https://${targetDomain}`;
+                }
+
+                // Update preview iframe to live compiled deliverable
+                const iframe = document.getElementById('asset-preview-iframe');
+                if (iframe) {
+                    iframe.src = previewUrl;
+                }
+
+                showToast("🚀 7-Step Swarm Loop Complete! Living Reality Manifested.");
+            } catch (err) {
+                console.error("Manifestation error:", err);
+                showToast("Manifestation dispatch error: " + err.message, true);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        /* =========================================================================
+           DEPLOYED ASSETS & LIVING REALITY CONTROLS
+           ========================================================================= */
+
+        function setAssetPreviewViewport(width) {
+            const wrapper = document.getElementById('asset-viewport-wrapper');
+            const label = document.getElementById('asset-viewport-dimension-label');
+            if (!wrapper) return;
+            if (width === 375) {
+                wrapper.style.maxWidth = "375px";
+                if (label) label.textContent = "Mobile Viewport (375px)";
+            } else if (width === 768) {
+                wrapper.style.maxWidth = "768px";
+                if (label) label.textContent = "Tablet Viewport (768px)";
+            } else {
+                wrapper.style.maxWidth = "100%";
+                if (label) label.textContent = "Responsive (100%)";
+            }
+        }
+
+        async function refreshDeployedAssets() {
+            const iframe = document.getElementById('asset-preview-iframe');
+            if (iframe) {
+                try {
+                    const res = await fetch("/api/gateway/deliverables");
+                    const data = await res.json();
+                    if (data.deliverables && data.deliverables.length > 0) {
+                        const first = data.deliverables[0];
+                        if (first.preview_url) {
+                            iframe.src = first.preview_url;
+                        }
+                    }
+                } catch (e) {
+                    const currentSrc = iframe.src;
+                    iframe.src = '';
+                    setTimeout(() => { iframe.src = currentSrc; }, 50);
+                }
+            }
+            showToast("Deployed assets & live viewports refreshed.");
+        }
+
+        /* =========================================================================
+           FLEET PULSE & 3-STATE INDICATORS
+           ========================================================================= */
+
+        async function toggleFleetEmergencyPause() {
+            await toggleFleetPause();
+            syncPulseControls();
+        }
+
+        function syncPulseControls() {
+            const icon = document.getElementById('pulse-pause-icon');
+            const label = document.getElementById('pulse-pause-label');
+            const headline = document.getElementById('pulse-status-headline');
+            const subhead = document.getElementById('pulse-status-subhead');
+            const dot = document.getElementById('pulse-indicator-dot');
+            const ping = document.getElementById('pulse-indicator-ping');
+
+            if (isFleetPaused) {
+                if (icon) icon.textContent = "▶";
+                if (label) label.textContent = "Resume Fleet";
+                if (headline) headline.textContent = "Swarm Fleet PAUSED by Operator";
+                if (subhead) subhead.textContent = "Emergency circuit breaker active. Agent daemons halted.";
+                if (dot) dot.className = "relative inline-flex rounded-full h-5 w-5 bg-rose-500";
+                if (ping) ping.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75";
+            } else {
+                if (icon) icon.textContent = "⏸";
+                if (label) label.textContent = "Pause Fleet";
+                if (headline) headline.textContent = "Swarm Fleet Operational & Synchronized";
+                if (subhead) subhead.textContent = "Autonomous agent fleet actively monitoring queues. Concurrency safety verified.";
+                if (dot) dot.className = "relative inline-flex rounded-full h-5 w-5 bg-emerald-500";
+                if (ping) ping.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75";
+            }
+        }
+
+        async function fetchPulseData() {
+            try {
+                const res = await fetch("/api/gateway/swarmlock/status");
+                if (res.ok) {
+                    const data = await res.json();
+                    const activeCount = document.getElementById('pulse-active-leases-count');
+                    const deflectionsCount = document.getElementById('pulse-deflections-count');
+                    if (activeCount) activeCount.textContent = String(data.active_lock_count || 0);
+                    if (deflectionsCount) deflectionsCount.textContent = String(data.deflected_collisions || 0);
+                }
+
+                const agentsRes = await fetch("/api/agents");
+                if (agentsRes.ok) {
+                    const agentData = await agentsRes.json();
+                    let agentsList = [];
+                    if (Array.isArray(agentData.agents)) {
+                        agentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        agentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    }
+                    renderFleetPulseCards(agentsList);
+                }
+            } catch (err) {
+                console.debug("Failed fetching pulse data:", err);
+            }
+            syncPulseControls();
+        }
+
         function dashboardTabFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const queryTab = params.get("tab");
+            if (queryTab && dashboardTabIds.has(queryTab)) return queryTab;
             const requestedHash = window.location.hash.replace(/^#/, "");
             if (dashboardTabIds.has(requestedHash)) return requestedHash;
             const path = window.location.pathname.replace(/^\//, "").replace(/^tab\//, "");
@@ -11104,7 +11819,13 @@ body.light-mode #dag-node-inspector-drawer {
         }
 
         window.addEventListener("popstate", (e) => {
-            const tab = (e.state && e.state.tab) || dashboardTabFromURL() || "dashboard";
+            const explicit = (e.state && e.state.tab) || dashboardTabFromURL();
+            const tab = explicit || (currentUIMode === 'creator' ? "studio" : "dashboard");
+            if (engineeringTabIds.has(tab) && currentUIMode === 'creator') {
+                setUIMode('engineering', false);
+            } else if (creatorTabIds.has(tab) && currentUIMode === 'engineering') {
+                setUIMode('creator', false);
+            }
             switchTab(tab, null, false);
         });
 
@@ -11117,12 +11838,24 @@ body.light-mode #dag-node-inspector-drawer {
                 || initialParams.has("workspace_id")
                 || initialParams.has("path")
             );
-            const initialTab = explicitTab || (workspaceDeepLink ? "workspaces" : "dashboard");
-            if (initialTab !== "dashboard") {
-                switchTab(initialTab, null, false);
+
+            let initialTab;
+            if (explicitTab) {
+                initialTab = explicitTab;
+                if (engineeringTabIds.has(explicitTab)) {
+                    currentUIMode = 'engineering';
+                } else if (creatorTabIds.has(explicitTab)) {
+                    currentUIMode = 'creator';
+                }
+            } else if (workspaceDeepLink) {
+                initialTab = "workspaces";
+                currentUIMode = 'engineering';
             } else {
-                fetchData();
+                initialTab = currentUIMode === 'creator' ? 'studio' : 'dashboard';
             }
+
+            setUIMode(currentUIMode, false);
+            switchTab(initialTab, null, false);
             loadPluginGovernance();
             loadPWPStatus();
             loadCanonicalAgyActivity();
@@ -11179,6 +11912,15 @@ body.light-mode #dag-node-inspector-drawer {
                 }
             });
             
+            // Global Ctrl+Shift+D / Cmd+Shift+D mode toggle
+            window.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+                    e.preventDefault();
+                    setUIMode(currentUIMode === 'creator' ? 'engineering' : 'creator');
+                    showToast(`Switched to ${currentUIMode === 'creator' ? 'Creator Studio' : 'Engineering Telemetry'}`);
+                }
+            });
+
             // Show AGY as default agent details
             showAgentDetail('agy');
             fetchFleetControlStatus();
@@ -11208,6 +11950,9 @@ body.light-mode #dag-node-inspector-drawer {
             const btn = document.getElementById("btn-fleet-pause-toggle");
             const indicator = document.getElementById("fleet-pause-indicator");
             const label = document.getElementById("fleet-pause-label");
+            if (typeof syncPulseControls === "function") {
+                syncPulseControls();
+            }
             if (!btn || !indicator || !label) return;
 
             if (isFleetPaused) {

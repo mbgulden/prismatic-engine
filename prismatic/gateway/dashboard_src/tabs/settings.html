@@ -6,7 +6,7 @@
                     <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     Service Integrations &amp; OAuth Credentials Hub
                 </h2>
-                <p class="text-xs text-slate-500 mt-1">Interactive credentials marketplace: Google Antigravity OAuth, Jules CLI, AI Models, GitHub &amp; Infrastructure.</p>
+                <p class="text-xs text-slate-500 mt-1">Interactive credentials marketplace: API Keys, OAuth Providers, Multi-Model LLM Endpoints, GitHub &amp; Infrastructure.</p>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
                 <button type="button" onclick="openAddServiceModal()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-indigo-500/40 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 hover:text-white hover:border-indigo-400 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
@@ -107,25 +107,25 @@
 
                 <!-- Jules DB Path -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">Jules Capacity Database Path</label>
+                    <label class="block font-bold text-slate-300">PR Review Capacity Database Path</label>
                     <input id="setting-JULES_DB_PATH" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="~/.prismatic/db/jules_capacity.sqlite3">
                 </div>
 
                 <!-- OpenAI Key -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">OpenAI API Key (George Peer Reviewer)</label>
+                    <label class="block font-bold text-slate-300">OpenAI API Key (Peer Review &amp; Analysis)</label>
                     <input id="setting-OPENAI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-proj-••••••••••••••••">
                 </div>
 
                 <!-- Anthropic Key -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">Anthropic API Key (Kai &amp; Fred)</label>
+                    <label class="block font-bold text-slate-300">Anthropic API Key (Reasoning &amp; Architecture)</label>
                     <input id="setting-ANTHROPIC_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-ant-••••••••••••••••">
                 </div>
 
                 <!-- Gemini Key -->
                 <div class="space-y-1">
-                    <label class="block font-bold text-slate-300">Google Gemini API Key (AGY Engine)</label>
+                    <label class="block font-bold text-slate-300">Google Gemini API Key (Multimodal &amp; Search)</label>
                     <input id="setting-GEMINI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="AIzaSy••••••••••••••••">
                 </div>
             </div>
@@ -162,7 +162,7 @@
                         <optgroup label="Agent Harnesses &amp; Frameworks">
                             <option value="hermes">Hermes Orchestrator Hub</option>
                             <option value="agy">Antigravity (AGY CLI)</option>
-                            <option value="jules">Jules CLI Capacity Ledger</option>
+                            <option value="jules">PR Review Capacity Ledger</option>
                             <option value="devin">Devin AI Harness</option>
                         </optgroup>
                         <optgroup label="AI Models &amp; Cloud Infrastructure">

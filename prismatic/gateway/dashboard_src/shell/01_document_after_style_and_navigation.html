@@ -15,9 +15,16 @@
 
         <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-4 min-w-0">
             <!-- Mode Switcher -->
-            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex space-x-1">
-                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-indigo-600 text-white rounded">Standalone</span>
-                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Native</span>
+            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex items-center space-x-1" data-proof-marker="dashboard-ui-mode-switcher">
+                <button type="button" id="mode-btn-creator" onclick="setUIMode('creator')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5" title="Calm Creator Studio mode: Prompt, Deliverables, Status">
+                    <span>✨</span>
+                    <span>Studio</span>
+                </button>
+                <button type="button" id="mode-btn-engineering" onclick="setUIMode('engineering')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5" title="Advanced System Telemetry (14 diagnostic tabs) · Press Ctrl+Shift+D">
+                    <span>⚙️</span>
+                    <span>Telemetry</span>
+                    <span class="hidden lg:inline-block text-[9px] font-mono text-slate-500 bg-slate-900 px-1 rounded">^⇧D</span>
+                </button>
             </div>
             <!-- Theme Toggle -->
             <button onclick="toggleTheme()" class="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/50 p-2 rounded-full transition flex items-center justify-center min-w-[36px] min-h-[36px]" aria-label="Toggle Theme">
@@ -33,9 +40,36 @@
         </div>
     </header>
 
-    <!-- Navigation Tabs Bar -->
-    <nav class="border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap" aria-label="Main Navigation">
-        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap gap-2 min-w-0 list-none m-0 p-0">
+    <!-- Creator Navigation Bar (Default) -->
+    <nav id="nav-creator-tabs" class="border-b border-slate-800/80 bg-slate-950/40 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="creator-tabs-bar" aria-label="Creator Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center gap-2 min-w-0 list-none m-0 p-0">
+            <li>
+                <a id="tab-btn-studio" href="/studio" onclick="switchTab('studio', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                    ✨ Studio (The Prompt)
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-assets" href="/assets" onclick="switchTab('assets', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    🌍 Deployed Assets (Reality)
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-pulse" href="/pulse" onclick="switchTab('pulse', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    💓 Fleet Pulse (Status)
+                </a>
+            </li>
+            <li class="sm:ml-auto">
+                <button type="button" onclick="setUIMode('engineering')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-cyan-300 bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition">
+                    <span>⚡ Engineering Telemetry (14 tabs)</span>
+                    <span class="text-[10px] text-slate-500">→</span>
+                </button>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Engineering Navigation Bar (Diagnostics Deck) -->
+    <nav id="nav-engineering-tabs" class="hidden border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap" aria-label="Main Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center gap-2 min-w-0 list-none m-0 p-0">
             <li>
                 <a id="tab-btn-dashboard" href="/" onclick="switchTab('dashboard', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
                     Dashboard
@@ -105,6 +139,11 @@
                 <a id="tab-btn-settings" href="/settings" onclick="switchTab('settings', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
                     Settings
                 </a>
+            </li>
+            <li class="sm:ml-auto">
+                <button type="button" onclick="setUIMode('creator')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-cyan-300 hover:text-white bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/60 transition">
+                    <span>← Studio Mode</span>
+                </button>
             </li>
         </ul>
     </nav>

@@ -1,10 +1,10 @@
         <div id="section-foundation" class="hidden space-y-6">
             <!-- Stats Grid -->
             <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <!-- Jules runs -->
+                <!-- Reviewer runs -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px] cursor-pointer hover:border-indigo-400 transition" onclick="switchTab('quota')">
                     <div class="flex items-center justify-between">
-                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules Daily Capacity</span>
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">PR Review Capacity</span>
                         <span class="text-[10px] text-indigo-400 font-mono">Quota Tab →</span>
                     </div>
                     <div class="flex items-end justify-between mt-2">
@@ -16,9 +16,9 @@
                         <div id="progress-foundation-jules" class="bg-indigo-500 h-1.5 rounded-full" style="width: 0%"></div>
                     </div>
                 </div>
-                <!-- Ned runs -->
+                <!-- Local worker runs -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Ned CLI Sessions</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Local Worker Sessions</span>
                     <span id="stat-foundation-ned" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
                 </div>
                 <!-- AGY runs -->
@@ -31,8 +31,8 @@
                 </div>
                 <!-- Active reviewer route -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Active AGY Reviewer Route</span>
-                    <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:jules</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Active Reviewer Route</span>
+                    <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:reviewer</span>
                 </div>
             </section>
 

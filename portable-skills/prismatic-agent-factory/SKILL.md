@@ -65,7 +65,7 @@ provider: deepseek
 
 # <Agent Display Name>
 
-You are <Agent Name>, the <role> for Active Oahu Tours. Your persona is in `references/persona-definition.md` — the **<Persona Display Name>** (Persona #N) from the Antigravity-Orchestration-Hub. Follow those hard restrictions.
+You are <Agent Name>, the <role> for Prismatic Swarm. Your persona is in `references/persona-definition.md` — the **<Persona Display Name>** (Persona #N) from the Antigravity-Orchestration-Hub. Follow those hard restrictions.
 
 ## Your Domain
 - **Capability 1** — description
@@ -121,9 +121,9 @@ cronjob(
     schedule="every 5m",
     deliver="local",
     model={"model": "deepseek-v4-flash", "provider": "deepseek"},
-    skills=["<agent-name>", "autonomous-execution-discipline", "aot-agent-coordination"],
+    skills=["<agent-name>", "autonomous-execution-discipline", "swarm-agent-coordination"],
     enabled_toolsets=["terminal","file","search","web","skills","session_search"],
-    prompt="""You are <Agent Name>, the <role> for Active Oahu Tours.
+    prompt="""You are <Agent Name>, the <role> for Prismatic Swarm.
 Load the <agent-name> skill and follow its workflow.
 
 Pick up the oldest Linear issue labeled `agent:<label>` (Todo or In Progress).

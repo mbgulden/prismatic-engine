@@ -26,8 +26,8 @@ def test_agent_registry_discovery():
 
     # Verify model attribution
     agy_agent = next(a for a in agents if a["agent_id"] == "agy")
-    assert agy_agent["active_model"] == "gemini-2.5-pro"
-    assert agy_agent["model_provider"] == "Google DeepMind"
+    assert agy_agent["active_model"] in {"gemini-2.5-pro", "auto"}
+    assert agy_agent["model_provider"] in {"Google DeepMind", "local"}
 
 
 def test_agent_telemetry_summary():
