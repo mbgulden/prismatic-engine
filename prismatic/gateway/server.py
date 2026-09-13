@@ -6503,7 +6503,7 @@ async def pwp_kpi_dashboard_file(filename: str):
     # prior-submission json). Reject traversal and unknown extensions.
     if "/" in filename or "\\" in filename or filename.startswith("."):
         raise HTTPException(status_code=400, detail="invalid file name")
-    if not filename.rsplit(".", 1)[-1].lower() in {"html", "json", "css"}:
+    if filename.rsplit(".", 1)[-1].lower() not in {"html", "json", "css"}:
         raise HTTPException(status_code=400, detail="unsupported file type")
     try:
         _kpi_dashboard_ensure_fresh()
