@@ -47,7 +47,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 
 from prismatic.mesh.tailscale import TailscaleAuthMiddleware, get_tailscale_mesh_client
 
@@ -6435,6 +6435,88 @@ async def pwp_kpi_publish_dashboard(request: Request) -> dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# --- PWP KPI dashboard static surface (GRO-4919) ----------------------------
+# The publish_kpi_tracker capability's `build_dashboard()` is designed to write
+# its rendered HTML + dashboard_data.json into a "publish_root" that the PWP
+# dashboard host serves at /pwp/kpi/ (see site_builder.py `dashboard_route` and
+# publish_kpi_tracker.py render_index asset hrefs: /pwp/kpi/<slug>.html,
+# /pwp/kpi/pwp-publish-kpi.css). This route provides that missing serving
+# layer on the gateway: it (re)renders the dashboard into a stable state dir
+# on a TTL and serves the generated files.
+
+_KPI_DASHBOARD_TTL_S = 300  # re-render at most once every 5 minutes
+
+
+def _kpi_dashboard_root() -> Path:
+    base = Path(os.environ.get("PRISMATIC_STATE_DIR", Path.home() / ".prismatic")).expanduser()
+    root = base / "pwp" / "kpi-dashboard"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _kpi_dashboard_import():
+    # NOTE: the `plugins.pwp...` import path used by the /api/pwp/kpi/* cluster
+    # does not resolve in the deployed gateway (no top-level `plugins` package);
+    # the live, verified path is prismatic.shipped_plugins.pwp....
+    try:
+        from prismatic.shipped_plugins.pwp.capabilities import (
+            publish_kpi_tracker as _kpi,
+        )
+
+        return _kpi
+    except Exception:
+        from plugins.pwp.capabilities import publish_kpi_tracker as _kpi  # type: ignore
+
+        return _kpi
+
+
+def _kpi_dashboard_ensure_fresh() -> None:
+    """Render the KPI dashboard into the stable publish root if stale."""
+    root = _kpi_dashboard_root()
+    index = root / "index.html"
+    if index.exists():
+        age = time.time() - index.stat().st_mtime
+        if age < _KPI_DASHBOARD_TTL_S:
+            return
+    kpi = _kpi_dashboard_import()
+    kpi.build_dashboard(publish_root=root, write_snapshot=True)
+
+
+@app.get("/pwp/kpi/", response_class=FileResponse)
+async def pwp_kpi_dashboard_index():
+    try:
+        _kpi_dashboard_ensure_fresh()
+    except Exception as exc:
+        logger.exception("kpi dashboard render failed")
+        raise HTTPException(status_code=500, detail=f"KPI dashboard render failed: {exc}") from exc
+    index = _kpi_dashboard_root() / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="KPI dashboard index not built")
+    return FileResponse(index, media_type="text/html")
+
+
+@app.get("/pwp/kpi/{filename}", response_class=FileResponse)
+async def pwp_kpi_dashboard_file(filename: str):
+    # Serve only generated leaf files (per-site pages, css, json snapshot,
+    # prior-submission json). Reject traversal and unknown extensions.
+    if "/" in filename or "\\" in filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="invalid file name")
+    if filename.rsplit(".", 1)[-1].lower() not in {"html", "json", "css"}:
+        raise HTTPException(status_code=400, detail="unsupported file type")
+    try:
+        _kpi_dashboard_ensure_fresh()
+    except Exception as exc:
+        logger.exception("kpi dashboard render failed")
+        raise HTTPException(status_code=500, detail=f"KPI dashboard render failed: {exc}") from exc
+    target = (_kpi_dashboard_root() / filename).resolve()
+    if not str(target).startswith(str(_kpi_dashboard_root().resolve())) or not target.exists():
+        raise HTTPException(status_code=404, detail="KPI dashboard asset not found")
+    media = "text/html" if target.suffix == ".html" else (
+        "application/json" if target.suffix == ".json" else "text/css"
+    )
+    return FileResponse(target, media_type=media)
 
 
 from prismatic.review_factory.routes import (  # noqa: E402
