@@ -56,20 +56,20 @@ verification = [
     "swarmproof @ git+https://github.com/mbgulden/swarmproof.git@main",
 ]
 mesh = [
-    "swarmmesh @ git+https://github.com/mbgulden/swarmmesh.git@main",
-    "swarmmemory @ git+https://github.com/mbgulden/swarmmemory.git@main",
-    "swarmcas @ git+https://github.com/mbgulden/swarmcas.git@main",
+    "swarmmesh @ git+https://github.com/mbgulden/swarmmesh.git@master",
+    "swarmmemory @ git+https://github.com/mbgulden/swarmmemory.git@master",
+    "swarmcas @ git+https://github.com/mbgulden/swarmcas.git@master",
 ]
 robustness = [
-    "swarmsandbox @ git+https://github.com/mbgulden/swarmsandbox.git@main",
-    "swarmmerge @ git+https://github.com/mbgulden/swarmmerge.git@main",
-    "swarmmeter @ git+https://github.com/mbgulden/swarmmeter.git@main",
+    "swarmsandbox @ git+https://github.com/mbgulden/swarmsandbox.git@master",
+    "swarmmerge @ git+https://github.com/mbgulden/swarmmerge.git@master",
+    "swarmmeter @ git+https://github.com/mbgulden/swarmmeter.git@master",
 ]
 security = [
-    "swarmvault @ git+https://github.com/mbgulden/swarmvault.git@main",
+    "swarmvault @ git+https://github.com/mbgulden/swarmvault.git@master",
 ]
 consensus = [
-    "swarmconsensus @ git+https://github.com/mbgulden/swarmconsensus.git@main",
+    "swarmconsensus @ git+https://github.com/mbgulden/swarmconsensus.git@master",
 ]
 dev = ["build>=1.0", "pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.1", "ruff>=0.5,<0.16", "twine>=5.0"]
 all = ["prismatic-engine[http,redis,gateway,primitives,verification,mesh,robustness,security,consensus]"]
