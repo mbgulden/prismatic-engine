@@ -63,9 +63,15 @@ jobs:
         run: |
           HOST="${RECEIVER_HOST:-localhost}"
           echo "Triggering deploy receiver at http://${HOST}:9460/deploy"
-          curl -s -f -X POST \
+          # The receiver answers 2xx only when the deploy (including the real
+          # gateway redeploy + rollback-on-failure) actually succeeded. Any
+          # failure must turn this run RED -- never swallow it into green.
+          if ! curl -s -f -X POST \
             -H "X-Hub-Signature-256: sha256=${HMAC_SIG}" \
             -H "Content-Type: application/json" \
             --data "${PAYLOAD_JSON}" \
-            "http://${HOST}:9460/deploy" || echo "Receiver call completed or offline"
+            "http://${HOST}:9460/deploy"; then
+            echo "::error::Deploy receiver call failed -- the gateway was NOT redeployed. Check the receiver log at ~/.prismatic/logs/deploy-receiver.log"
+            exit 1
+          fi
 

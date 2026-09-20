@@ -51,6 +51,7 @@ class DeployRecord:
     release_symlink: str = ""
     health_check: dict[str, Any] = field(default_factory=dict)
     linear_transitions: list[dict[str, Any]] = field(default_factory=list)
+    gateway_deploy: dict[str, Any] = field(default_factory=dict)
     duration_ms: int = 0
     success: bool = True
     failure_reason: str | None = None
@@ -72,6 +73,7 @@ class DeployRecord:
             release_symlink=d.get("release_symlink", ""),
             health_check=d.get("health_check", {}),
             linear_transitions=d.get("linear_transitions", []),
+            gateway_deploy=d.get("gateway_deploy", {}),
             duration_ms=d.get("duration_ms", 0),
             success=d.get("success", True),
             failure_reason=d.get("failure_reason"),

@@ -24,6 +24,7 @@ try:
 except ImportError:
     _HAS_FASTAPI = False
 
+from pe.deploy.gateway_redeploy import GatewayRedeployer
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
 from pe.deploy.linear_transition import LinearDeployTransitioner
@@ -113,12 +114,14 @@ class DeployReceiverPipeline:
         health_checker: PostDeployHealthChecker | None = None,
         transitioner: LinearDeployTransitioner | None = None,
         store: DeployManifestStore | None = None,
+        gateway_redeployer: GatewayRedeployer | None = None,
     ):
         self.source_repo = source_repo or Path(".").resolve()
         self.deploy_runner = deploy_runner or AtomicDeployRunner()
         self.health_checker = health_checker or PostDeployHealthChecker()
         self.transitioner = transitioner or LinearDeployTransitioner()
         self.store = store or DeployManifestStore()
+        self.gateway_redeployer = gateway_redeployer or GatewayRedeployer()
 
     def process_deploy(
         self,
@@ -142,6 +145,29 @@ class DeployReceiverPipeline:
         )
 
         is_dry_run = self.deploy_runner.dry_run or bool(payload.get("dry_run", False))
+
+        # Step 1b: Real atomic gateway redeploy -- close the merge->prod loop.
+        # A merge to main must redeploy the RUNNING gateway, not just record it.
+        gateway_info: dict[str, Any] = {}
+        if success and not is_dry_run:
+            gw_res = self.gateway_redeployer.redeploy(
+                pr_sha=pr_sha, repo=self.source_repo
+            )
+            gateway_info = gw_res.to_dict()
+            if gw_res.skipped:
+                logger.info("Gateway redeploy skipped: %s", gw_res.reason)
+            elif not gw_res.success:
+                success = False
+                err_msg = (
+                    f"GATEWAY REDEPLOY FAILED: {gw_res.reason}"
+                    + (
+                        " [rolled back to previous release]"
+                        if gw_res.rolled_back
+                        else " [ROLLBACK FAILED -- manual recovery required]"
+                    )
+                )
+        elif is_dry_run:
+            gateway_info = {"skipped": True, "reason": "dry-run"}
 
         # Step 2: Post-deploy health check
         health_res = self.health_checker.check(
@@ -181,6 +207,7 @@ class DeployReceiverPipeline:
             release_symlink=str(self.deploy_runner.release_symlink),
             health_check=health_res,
             linear_transitions=transitions,
+            gateway_deploy=gateway_info,
             duration_ms=duration_ms,
             success=success,
             failure_reason=err_msg if not success else None,
@@ -220,10 +247,15 @@ def create_deploy_receiver_app() -> Any:
 
         record = pipeline.process_deploy(payload)
 
-        return {
+        body = {
             "status": "success" if record.success else "failed",
             "deploy_record": record.to_dict(),
         }
+        # A failed deploy must fail loudly: the workflow's curl -f turns this
+        # into a red run instead of a green lie.
+        if not record.success:
+            return JSONResponse(status_code=500, content=body)
+        return body
 
     @app.get("/health")
     async def receiver_health() -> Dict[str, Any]:
