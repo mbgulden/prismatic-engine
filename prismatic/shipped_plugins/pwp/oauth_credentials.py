@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-
 UBERSUGGEST_SCOPE = "profile domain keywords serp backlinks site_audit content"
 UBERSUGGEST_TOKEN_ENDPOINT = "https://ubersuggest-mcp.neilpatelapi.com/token"
 UBERSUGGEST_MCP_ENDPOINT = "https://ubersuggest-mcp.neilpatelapi.com/mcp"
@@ -76,21 +75,11 @@ PROVIDERS: dict[str, OAuthProviderConfig] = {
 
 def default_token_paths(provider: str) -> TokenPaths:
     if provider != "ubersuggest":
-        raise CredentialRefreshError(
-            f"No default token paths registered for provider: {provider}"
-        )
+        raise CredentialRefreshError(f"No default token paths registered for provider: {provider}")
     return TokenPaths(
-        access_token=Path(
-            os.environ.get("UBERSUGGEST_ACCESS_TOKEN_FILE", "/tmp/ubs_token")
-        ),
-        refresh_token=Path(
-            os.environ.get("UBERSUGGEST_REFRESH_TOKEN_FILE", "/tmp/ubs_refresh")
-        ),
-        response_json=Path(
-            os.environ.get(
-                "UBERSUGGEST_REFRESH_RESPONSE_FILE", "/tmp/ubs_refresh_response.json"
-            )
-        ),
+        access_token=Path(os.environ.get("UBERSUGGEST_ACCESS_TOKEN_FILE", "/tmp/ubs_token")),
+        refresh_token=Path(os.environ.get("UBERSUGGEST_REFRESH_TOKEN_FILE", "/tmp/ubs_refresh")),
+        response_json=Path(os.environ.get("UBERSUGGEST_REFRESH_RESPONSE_FILE", "/tmp/ubs_refresh_response.json")),
     )
 
 
@@ -103,21 +92,13 @@ def _read_token(path: Path, label: str) -> str:
     return token
 
 
-def validate_token_shape(
-    token: str, *, label: str, provider: OAuthProviderConfig
-) -> None:
+def validate_token_shape(token: str, *, label: str, provider: OAuthProviderConfig) -> None:
     if "..." in token:
-        raise CredentialRefreshError(
-            f"{label} token contains literal ellipsis; token was display-mangled"
-        )
+        raise CredentialRefreshError(f"{label} token contains literal ellipsis; token was display-mangled")
     if len(token) <= provider.min_token_length:
-        raise CredentialRefreshError(
-            f"{label} token suspiciously short: {len(token)} chars"
-        )
+        raise CredentialRefreshError(f"{label} token suspiciously short: {len(token)} chars")
     if provider.token_prefix and not token.startswith(provider.token_prefix):
-        raise CredentialRefreshError(
-            f"{label} token has unexpected prefix: {token[: min(len(token), 12)]!r}"
-        )
+        raise CredentialRefreshError(f"{label} token has unexpected prefix: {token[: min(len(token), 12)]!r}")
 
 
 def _atomic_write(path: Path, value: str, *, mode: int = 0o600) -> None:
@@ -148,17 +129,13 @@ def _post_form(url: str, data: Mapping[str, str], timeout: float) -> dict[str, A
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:1000]
-        raise CredentialRefreshError(
-            f"Token endpoint HTTP {exc.code}: {detail}"
-        ) from exc
+        raise CredentialRefreshError(f"Token endpoint HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise CredentialRefreshError(f"Token endpoint request failed: {exc}") from exc
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise CredentialRefreshError(
-            f"Token endpoint returned non-JSON response: {raw[:200]!r}"
-        ) from exc
+        raise CredentialRefreshError(f"Token endpoint returned non-JSON response: {raw[:200]!r}") from exc
     return parsed
 
 
@@ -167,8 +144,7 @@ def refresh_oauth_token(
     paths: TokenPaths,
     *,
     timeout: float = 30,
-    http_post: Callable[[str, Mapping[str, str], float], Mapping[str, Any]]
-    | None = None,
+    http_post: Callable[[str, Mapping[str, str], float], Mapping[str, Any]] | None = None,
     verifier: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> RefreshResult:
     """Rotate an OAuth access token using a stored refresh token.
@@ -194,14 +170,10 @@ def refresh_oauth_token(
         )
     )
     if paths.response_json is not None:
-        _atomic_write(
-            paths.response_json, json.dumps(response, indent=2, sort_keys=True)
-        )
+        _atomic_write(paths.response_json, json.dumps(response, indent=2, sort_keys=True))
 
     if "access_token" not in response or "refresh_token" not in response:
-        raise CredentialRefreshError(
-            f"Token endpoint did not return access+refresh tokens: {response}"
-        )
+        raise CredentialRefreshError(f"Token endpoint did not return access+refresh tokens: {response}")
 
     access = str(response["access_token"])
     refresh = str(response["refresh_token"])
@@ -230,6 +202,7 @@ def verify_ubersuggest_mcp(access_token: str) -> Mapping[str, Any]:
     """
 
     import asyncio
+
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
@@ -246,11 +219,7 @@ def verify_ubersuggest_mcp(access_token: str) -> Mapping[str, Any]:
                     {"domain": "activeoahutours.com"},
                 )
                 auth_text = getattr(auth.content[0], "text", "") if auth.content else ""
-                overview_text = (
-                    getattr(overview.content[0], "text", "{}")
-                    if overview.content
-                    else "{}"
-                )
+                overview_text = getattr(overview.content[0], "text", "{}") if overview.content else "{}"
                 overview_data = json.loads(overview_text)
                 return {
                     "auth_status": auth_text,
@@ -261,27 +230,53 @@ def verify_ubersuggest_mcp(access_token: str) -> Mapping[str, Any]:
     return asyncio.run(_run())
 
 
+def get_provider_status(provider_name: str, *, verify: bool = False) -> dict[str, Any]:
+    """Return secret-redacted provider status dictionary."""
+    if provider_name not in PROVIDERS:
+        return {"status": "error", "error": f"Unknown provider '{provider_name}'"}
+    provider = PROVIDERS[provider_name]
+    paths = default_token_paths(provider_name)
+    try:
+        access = _read_token(paths.access_token, "access")
+        refresh = _read_token(paths.refresh_token, "refresh")
+        validate_token_shape(access, label="access", provider=provider)
+        validate_token_shape(refresh, label="refresh", provider=provider)
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "provider": provider_name,
+            "access_token_len": len(access),
+            "refresh_token_len": len(refresh),
+        }
+        if verify and provider_name == "ubersuggest":
+            payload["verified"] = dict(verify_ubersuggest_mcp(access))
+        return payload
+    except Exception as exc:
+        return {"status": "error", "provider": provider_name, "error": str(exc)}
+
+
+def refresh_provider_credentials(provider_name: str) -> dict[str, Any]:
+    """Rotate credentials for provider using refresh token."""
+    if provider_name not in PROVIDERS:
+        return {"status": "error", "error": f"Unknown provider '{provider_name}'"}
+    provider = PROVIDERS[provider_name]
+    paths = default_token_paths(provider_name)
+    try:
+        res = refresh_oauth_token(provider, paths)
+        return res.public_dict()
+    except Exception as exc:
+        return {"status": "error", "provider": provider_name, "error": str(exc)}
+
+
+
 def _cmd_refresh(args: argparse.Namespace) -> int:
     provider = PROVIDERS[args.provider]
     paths = TokenPaths(
-        access_token=Path(args.access_token_file)
-        if args.access_token_file
-        else default_token_paths(args.provider).access_token,
-        refresh_token=Path(args.refresh_token_file)
-        if args.refresh_token_file
-        else default_token_paths(args.provider).refresh_token,
-        response_json=Path(args.response_file)
-        if args.response_file
-        else default_token_paths(args.provider).response_json,
+        access_token=Path(args.access_token_file) if args.access_token_file else default_token_paths(args.provider).access_token,
+        refresh_token=Path(args.refresh_token_file) if args.refresh_token_file else default_token_paths(args.provider).refresh_token,
+        response_json=Path(args.response_file) if args.response_file else default_token_paths(args.provider).response_json,
     )
-    verifier = (
-        verify_ubersuggest_mcp
-        if args.provider == "ubersuggest" and not args.no_verify
-        else None
-    )
-    result = refresh_oauth_token(
-        provider, paths, timeout=args.timeout, verifier=verifier
-    )
+    verifier = verify_ubersuggest_mcp if args.provider == "ubersuggest" and not args.no_verify else None
+    result = refresh_oauth_token(provider, paths, timeout=args.timeout, verifier=verifier)
     if args.verbose:
         print(json.dumps(result.public_dict(), indent=2, sort_keys=True))
     return 0
@@ -310,27 +305,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="PWP credential provider tooling")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    refresh = sub.add_parser(
-        "refresh", help="rotate provider OAuth credentials with a refresh token"
-    )
+    refresh = sub.add_parser("refresh", help="rotate provider OAuth credentials with a refresh token")
     refresh.add_argument("provider", choices=sorted(PROVIDERS))
     refresh.add_argument("--access-token-file")
     refresh.add_argument("--refresh-token-file")
     refresh.add_argument("--response-file")
     refresh.add_argument("--timeout", type=float, default=30)
-    refresh.add_argument(
-        "--no-verify", action="store_true", help="skip live provider smoke verification"
-    )
-    refresh.add_argument(
-        "--verbose", action="store_true", help="print non-secret refresh summary"
-    )
+    refresh.add_argument("--no-verify", action="store_true", help="skip live provider smoke verification")
+    refresh.add_argument("--verbose", action="store_true", help="print non-secret refresh summary")
     refresh.set_defaults(func=_cmd_refresh)
 
     status = sub.add_parser("status", help="validate local provider token files")
     status.add_argument("provider", choices=sorted(PROVIDERS))
-    status.add_argument(
-        "--verify", action="store_true", help="run live provider smoke verification"
-    )
+    status.add_argument("--verify", action="store_true", help="run live provider smoke verification")
     status.set_defaults(func=_cmd_status)
 
     return parser

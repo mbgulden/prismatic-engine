@@ -205,8 +205,11 @@ def _classify(gate_input: CompletedWorkGateInput) -> CompletedWorkGateState:
         return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
 
     source_path = _string(packet.get("source_path"))
-    home_prefix = f"{Path.home()}/"
-    if not source_path or not source_path.startswith(home_prefix):
+    try:
+        is_under_home = source_path and Path(source_path).resolve().is_relative_to(Path.home().resolve())
+    except Exception:
+        is_under_home = False
+    if not source_path or not is_under_home:
         reasons.append(
             "source_path must be an absolute path under the operator home directory"
         )
@@ -235,9 +238,15 @@ def _classify(gate_input: CompletedWorkGateInput) -> CompletedWorkGateState:
     touched_paths = _string_list(lane_scope.get("touched_paths"))
     if not touched_paths:
         touched_paths = changed_files
+    if packet.get("ACCEPTANCE_DECISION") == "PENDING":
+        reasons.append("producer acceptance pending independent review")
+        return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
     out_of_scope = _out_of_scope_paths(touched_paths, allowed_paths)
     if out_of_scope:
-        reasons.append("touched paths outside lane scope: " + ", ".join(out_of_scope))
+        reason = "touched paths outside lane scope: " + ", ".join(out_of_scope)
+        if lane_scope.get("manual_review_reason"):
+            reason += f" ({lane_scope['manual_review_reason']})"
+        reasons.append(reason)
         return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
 
     conflicts = tuple(gate_input.conflicts)
@@ -303,12 +312,20 @@ def _state(
     proof: Mapping[str, Any] = raw_proof if isinstance(raw_proof, Mapping) else {}
     changed_files = tuple(_string_list(packet.get("changed_files")))
     eligible = classification is GateClassification.MERGE_READY
+
+    reasons_list = list(reasons)
+    lane_scope = packet.get("lane_scope")
+    if isinstance(lane_scope, Mapping) and lane_scope.get("manual_review_reason"):
+        m_reason = str(lane_scope.get("manual_review_reason"))
+        if not any(m_reason in r for r in reasons_list):
+            reasons_list.append(m_reason)
+
     return CompletedWorkGateState(
         classification=classification,
         eligible_for_merge=eligible,
         requires_clean_rebuild=classification
         is GateClassification.CLEAN_REBUILD_REQUIRED,
-        reasons=tuple(reasons),
+        reasons=tuple(reasons_list),
         agent=_string(packet.get("agent")),
         source_branch=_string(packet.get("source_branch")),
         source_path=_string(packet.get("source_path")),

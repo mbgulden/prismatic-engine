@@ -26,16 +26,16 @@ pipeline:
       timeout: 300
       next_label: pipeline:review
 
-  # Pipeline for Kai (Active Oahu Tours)
-  - name: kai
-    agent: kai
+  # Pipeline for Content & Documentation Worker
+  - name: content
+    agent: content_worker
     labels:
-      - pipeline:kai
+      - pipeline:content
     keywords:
-      - "oahu"
-      - "tour"
-      - "booking"
-      - "customer"
+      - "content"
+      - "documentation"
+      - "seo"
+      - "editorial"
     settings:
       mode: signal
       timeout: 600

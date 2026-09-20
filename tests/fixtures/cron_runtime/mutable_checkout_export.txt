@@ -1,0 +1,4 @@
+# BEGIN PRISMATIC_NATIVE_CRONS
+0 3 * * * cd /home/ubuntu/work/prismatic-pe-native-crons && python3 scripts/pwp credentials refresh ubersuggest
+0 4 * * 1 cd /home/ubuntu/work/prismatic-pe-native-crons && python3 scripts/seo/aot_kpi_tracker.py
+# END PRISMATIC_NATIVE_CRONS

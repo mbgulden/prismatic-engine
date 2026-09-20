@@ -11,10 +11,11 @@ delegates to ``prismatic.cli.doctor.run``. The pre-existing
 subcommand surface. This file tests the new module surface.
 """
 
+import contextlib
+import io
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
-from dataclasses import asdict
+from unittest.mock import MagicMock, patch
 
 from prismatic.doctor import (
     run_doctor,
@@ -28,6 +29,7 @@ from prismatic.doctor import (
     _probe_config_paths,
     _probe_github,
     _probe_linear,
+    _probe_native_components,
     _compute_verdict,
 )
 from prismatic.cli.doctor import run as doctor_cli_run, EXIT_OK, EXIT_ERROR
@@ -36,6 +38,7 @@ from prismatic.cli.doctor import run as doctor_cli_run, EXIT_OK, EXIT_ERROR
 def _empty_namespace(**kwargs):
     """Build a SimpleNamespace from kwargs. Avoids importing types."""
     from types import SimpleNamespace
+
     return SimpleNamespace(**kwargs)
 
 
@@ -65,16 +68,71 @@ class TestDoctorPureFunction(unittest.TestCase):
         names = {p.name for p in report.providers}
         self.assertEqual(names, {"github"})
 
+    def test_run_doctor_github_is_optional_unless_explicitly_required(self):
+        with (
+            patch(
+                "prismatic.doctor._probe_github",
+                side_effect=lambda _path: ProviderReport(
+                    name="github", status="disconnected"
+                ),
+            ),
+            patch(
+                "prismatic.doctor._probe_native_components",
+                return_value=[
+                    CapabilityReport(
+                        name="git", status="ok", required=True, role="native_required"
+                    )
+                ],
+            ),
+        ):
+            optional = run_doctor(
+                provider="github", capability_names=[], required_providers=set()
+            )
+            required = run_doctor(
+                provider="github",
+                capability_names=[],
+                required_providers={"github"},
+            )
+
+        self.assertEqual(optional.verdict, "WARN")
+        self.assertEqual(optional.required_providers, [])
+        self.assertFalse(optional.providers[0].required)
+        self.assertEqual(optional.providers[0].role, "optional_transport")
+        self.assertFalse(optional.hosted_ci_required)
+        self.assertEqual(required.verdict, "ERROR")
+        self.assertEqual(required.required_providers, ["github"])
+        self.assertTrue(required.providers[0].required)
+        self.assertEqual(required.providers[0].role, "explicit_required_provider")
+
     def test_run_doctor_to_dict_is_json_safe(self):
         report = run_doctor()
         d = report.to_dict()
         # Should be JSON-serializable
         import json
+
         json.dumps(d)
         # Top-level keys
         self.assertEqual(
             set(d.keys()),
-            {"system", "config", "providers", "capabilities", "verdict"},
+            {
+                "system",
+                "config",
+                "providers",
+                "capabilities",
+                "native_components",
+                "verdict",
+                "acceptance_authority",
+                "required_providers",
+                "hosted_ci_required",
+            },
+        )
+        self.assertEqual(d["acceptance_authority"], "native_provider_neutral_receipt")
+        self.assertEqual(d["required_providers"], [])
+        self.assertFalse(d["hosted_ci_required"])
+        self.assertTrue(d["native_components"])
+        self.assertTrue(all(item["required"] for item in d["native_components"]))
+        self.assertTrue(
+            all(item["role"] == "native_required" for item in d["native_components"])
         )
 
     def test_default_capability_names_is_canonical_order(self):
@@ -117,8 +175,11 @@ class TestProviderProbes(unittest.TestCase):
     """Provider probes should return ProviderReport instances."""
 
     def test_probe_github_no_token_returns_disconnected(self):
-        env = {k: v for k, v in __import__("os").environ.items()
-               if k not in ("GITHUB_TOKEN", "GH_TOKEN", "PRISMATIC_GITHUB_TOKEN")}
+        env = {
+            k: v
+            for k, v in __import__("os").environ.items()
+            if k not in ("GITHUB_TOKEN", "GH_TOKEN", "PRISMATIC_GITHUB_TOKEN")
+        }
         with patch.dict("os.environ", env, clear=True):
             # Use a tmp path that has no config.yaml
             with patch("pathlib.Path.exists", return_value=False):
@@ -127,13 +188,17 @@ class TestProviderProbes(unittest.TestCase):
                     mock_run.return_value = MagicMock(
                         returncode=1, stdout="", stderr=""
                     )
-                    report = _probe_github(__import__("pathlib").Path("/nonexistent/config.yaml"))
+                    report = _probe_github(
+                        __import__("pathlib").Path("/nonexistent/config.yaml")
+                    )
         self.assertEqual(report.name, "github")
         self.assertEqual(report.status, "disconnected")
         self.assertIn("GITHUB_TOKEN", report.remediation or "")
 
     def test_probe_linear_missing_token_returns_disconnected(self):
-        env = {k: v for k, v in __import__("os").environ.items() if k != "LINEAR_API_KEY"}
+        env = {
+            k: v for k, v in __import__("os").environ.items() if k != "LINEAR_API_KEY"
+        }
         with patch.dict("os.environ", env, clear=True):
             report = _probe_linear()
         self.assertEqual(report.name, "linear")
@@ -142,7 +207,9 @@ class TestProviderProbes(unittest.TestCase):
     def test_probe_linear_with_token_returns_connected(self):
         with patch.dict("os.environ", {"LINEAR_API_KEY": "test-key"}, clear=False):
             # Mock the provider import to avoid hitting the real API
-            with patch.dict("sys.modules", {"prismatic.providers.tasks.linear": MagicMock()}):
+            with patch.dict(
+                "sys.modules", {"prismatic.providers.tasks.linear": MagicMock()}
+            ):
                 mock_mod = sys.modules["prismatic.providers.tasks.linear"]
                 mock_provider = MagicMock()
                 mock_provider._api_key = "test-key"
@@ -163,9 +230,12 @@ class TestCapabilityProbes(unittest.TestCase):
         with patch("prismatic.capabilities.registry") as mock_reg:
             mock_reg.get.return_value = None  # all missing
             from prismatic.doctor import _probe_capabilities
+
             reports = _probe_capabilities(["agy", "vcs.github"])
         self.assertEqual([r.name for r in reports], ["agy", "vcs.github"])
-        self.assertEqual([r.status for r in reports], ["missing_registry", "missing_registry"])
+        self.assertEqual(
+            [r.status for r in reports], ["missing_registry", "missing_registry"]
+        )
 
 
 class TestVerdictComputation(unittest.TestCase):
@@ -182,21 +252,34 @@ class TestVerdictComputation(unittest.TestCase):
         ]
         self.assertEqual(_compute_verdict(providers, capabilities), "OK")
 
-    def test_verdict_error_when_github_disconnected(self):
+    def test_verdict_warn_when_github_disconnected_by_default(self):
         providers = [
             ProviderReport(name="github", status="disconnected"),
             ProviderReport(name="linear", status="connected"),
         ]
         capabilities = [CapabilityReport(name="linear", status="ok")]
-        self.assertEqual(_compute_verdict(providers, capabilities), "ERROR")
+        self.assertEqual(_compute_verdict(providers, capabilities), "WARN")
+        self.assertEqual(_compute_verdict(providers, capabilities, {"github"}), "ERROR")
 
-    def test_verdict_error_when_linear_disconnected(self):
+    def test_required_native_component_failure_is_error(self):
+        native = [
+            CapabilityReport(
+                name="native.receipt_store",
+                status="error",
+                required=True,
+                role="native_required",
+            )
+        ]
+        self.assertEqual(_compute_verdict([], [], set(), native), "ERROR")
+
+    def test_verdict_warn_when_linear_disconnected_by_default(self):
         providers = [
             ProviderReport(name="github", status="connected"),
             ProviderReport(name="linear", status="disconnected"),
         ]
         capabilities = [CapabilityReport(name="linear", status="ok")]
-        self.assertEqual(_compute_verdict(providers, capabilities), "ERROR")
+        self.assertEqual(_compute_verdict(providers, capabilities), "WARN")
+        self.assertEqual(_compute_verdict(providers, capabilities, {"linear"}), "ERROR")
 
     def test_verdict_warn_when_non_golden_provider_disconnected(self):
         # If only an "extra" provider is disconnected and the golden
@@ -228,7 +311,11 @@ class TestDoctorCliHandler(unittest.TestCase):
         # report by mocking run_doctor at the import location used by
         # the CLI handler.
         green = DoctorReport(
-            system=SystemInfo(python_version="3.12.0", git_version="git 2.43.0", gh_cli_version="gh 2.45.0"),
+            system=SystemInfo(
+                python_version="3.12.0",
+                git_version="git 2.43.0",
+                gh_cli_version="gh 2.45.0",
+            ),
             config=ConfigInfo(
                 prismatic_home="/tmp",
                 user_config_path="/tmp/config.yaml",
@@ -241,7 +328,12 @@ class TestDoctorCliHandler(unittest.TestCase):
                 ProviderReport(
                     name="linear",
                     status="connected",
-                    rate_limit_info={"remaining": 2490.0, "limit": 2500, "consumed": 10, "utilization_pct": 0.40}
+                    rate_limit_info={
+                        "remaining": 2490.0,
+                        "limit": 2500,
+                        "consumed": 10,
+                        "utilization_pct": 0.40,
+                    },
                 ),
             ],
             capabilities=[
@@ -254,7 +346,6 @@ class TestDoctorCliHandler(unittest.TestCase):
             verdict="OK",
         )
         with patch("prismatic.cli.doctor.run_doctor", return_value=green):
-            import io, contextlib
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = doctor_cli_run(_empty_namespace())
@@ -264,8 +355,11 @@ class TestDoctorCliHandler(unittest.TestCase):
             self.assertIn("[System]", output)
             self.assertIn("[Config]", output)
             self.assertIn("[GitHub]", output)
+            self.assertIn("OPTIONAL TRANSPORT", output)
             self.assertIn("[Linear]", output)
             self.assertIn("Rate Limit:", output)
+            self.assertIn("[Native Verification]", output)
+            self.assertIn("Hosted CI Required: false", output)
             self.assertIn("[Capabilities]", output)
             self.assertIn("Reports:", output)
             self.assertIn("Diagnostics complete.", output)
@@ -273,9 +367,15 @@ class TestDoctorCliHandler(unittest.TestCase):
     def test_cli_run_returns_exit_error_when_verdict_error(self):
         error_report = DoctorReport(
             system=SystemInfo(python_version="3.12.0"),
-            config=ConfigInfo(prismatic_home="/tmp", user_config_path="/tmp/cfg", database_path="/tmp/db"),
+            config=ConfigInfo(
+                prismatic_home="/tmp",
+                user_config_path="/tmp/cfg",
+                database_path="/tmp/db",
+            ),
             providers=[ProviderReport(name="github", status="disconnected")],
-            capabilities=[CapabilityReport(name="vcs.github", status="error", message="missing")],
+            capabilities=[
+                CapabilityReport(name="vcs.github", status="error", message="missing")
+            ],
             verdict="ERROR",
         )
         with patch("prismatic.cli.doctor.run_doctor", return_value=error_report):
@@ -285,15 +385,19 @@ class TestDoctorCliHandler(unittest.TestCase):
     def test_cli_run_provider_filter_propagates(self):
         # The CLI must pass args.provider through to run_doctor.
         captured: dict = {}
+
         def fake_run_doctor(provider=None, capability_names=None):
             captured["provider"] = provider
             return DoctorReport(
                 system=SystemInfo(),
-                config=ConfigInfo(prismatic_home="", user_config_path="", database_path=""),
+                config=ConfigInfo(
+                    prismatic_home="", user_config_path="", database_path=""
+                ),
                 providers=[],
                 capabilities=[],
                 verdict="OK",
             )
+
         with patch("prismatic.cli.doctor.run_doctor", side_effect=fake_run_doctor):
             rc = doctor_cli_run(_empty_namespace(provider="github"))
         self.assertEqual(rc, EXIT_OK)
@@ -305,6 +409,7 @@ class TestBackwardCompatDispatchDelegate(unittest.TestCase):
 
     def test_dispatcher_cmd_doctor_delegates_to_cli_module(self):
         import prismatic.dispatcher as dispatcher
+
         self.assertTrue(callable(dispatcher.cmd_doctor))
         # The signature takes an args object. The dispatcher delegates
         # to prismatic.cli.doctor.run (the CLI handler), which then
@@ -314,12 +419,321 @@ class TestBackwardCompatDispatchDelegate(unittest.TestCase):
         with patch("prismatic.cli.doctor.run") as fake_cli:
             # The CLI handler's run() will return whatever we set here.
             fake_cli.return_value = EXIT_OK
-            import io, contextlib
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = dispatcher.cmd_doctor(ns)
             self.assertEqual(rc, EXIT_OK)
             fake_cli.assert_called_once_with(ns)
+
+
+def test_native_revocation_state_missing_is_required_error(tmp_path, monkeypatch):
+    db_path = tmp_path / "receipts.sqlite3"
+    db_path.write_bytes(b"")
+    monkeypatch.setenv("PRISMATIC_VERIFICATION_RECEIPT_DB", str(db_path))
+    monkeypatch.setenv(
+        "PRISMATIC_VERIFICATION_REVOCATION_STORE", str(tmp_path / "missing.json")
+    )
+
+    reports = _probe_native_components()
+    revocation = next(
+        item for item in reports if item.name == "native.revocation_state"
+    )
+    assert revocation.required is True
+    assert revocation.status == "error"
+    assert _compute_verdict([], [], set(), reports) == "ERROR"
+
+
+def test_canonical_consumer_probe_ok_on_valid_inventory():
+    reports = _probe_native_components()
+    consumer_probe = next(
+        item for item in reports if item.name == "native.canonical_consumer"
+    )
+    assert consumer_probe.required is True
+    assert consumer_probe.status == "ok"
+    assert "cap-1 task-admission" in consumer_probe.message
+
+
+def test_canonical_consumer_probe_error_when_legacy_declared(tmp_path, monkeypatch):
+    import prismatic.doctor as doctor_mod
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    bad_json = config_dir / "runtime-services.json"
+    bad_json.write_text(
+        '{"schema_version": 1, "components": [{'
+        '"id": "consumer", "module_path": "prismatic.gateway.event_handlers.dispatch_consumer_v3",'
+        '"state_paths": ["/home/ubuntu/.prismatic/bus/dispatch_consumer.rowid"]'
+        "}]}",
+        encoding="utf-8",
+    )
+
+    fake_pkg = tmp_path / "prismatic"
+    fake_pkg.mkdir()
+    ok, msg = doctor_mod._probe_canonical_consumer(fake_pkg)
+    assert ok is False
+    assert "canonical inventory" in msg
+
+
+def test_canonical_consumer_probe_uses_absolute_inventory_override(
+    tmp_path, monkeypatch
+):
+    import prismatic.doctor as doctor_mod
+    from pathlib import Path
+
+    manifest = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
+    monkeypatch.setenv("PRISMATIC_RUNTIME_SERVICES_CONFIG", str(manifest))
+    installed_like_package = tmp_path / "site-packages" / "prismatic"
+    installed_like_package.mkdir(parents=True)
+    ok, msg = doctor_mod._probe_canonical_consumer(installed_like_package)
+    assert ok is True
+    assert "one-shot consumer" in msg
+
+
+def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
+    tmp_path, monkeypatch
+):
+    import copy
+    import json
+    from pathlib import Path
+    import prismatic.doctor as doctor_mod
+
+    source = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
+    base = json.loads(source.read_text(encoding="utf-8"))
+    manifest = tmp_path / "runtime-services.json"
+    monkeypatch.setenv("PRISMATIC_RUNTIME_SERVICES_CONFIG", str(manifest))
+    package_root = tmp_path / "site-packages" / "prismatic"
+    package_root.mkdir(parents=True)
+
+    def rejected(document, expected):
+        manifest.write_text(json.dumps(document), encoding="utf-8")
+        ok, msg = doctor_mod._probe_canonical_consumer(package_root)
+        assert ok is False
+        assert expected in msg
+
+    consumer_index = next(
+        index
+        for index, item in enumerate(base["components"])
+        if item["id"] == "consumer"
+    )
+    for field, value, expected in (
+        ("module_path", ["prismatic.task_admission_consumer"], "module_path"),
+        ("source_path", None, "source_path"),
+        ("state_paths", "not-a-list", "state_paths"),
+        ("environment_files", [None], "environment_files"),
+    ):
+        document = copy.deepcopy(base)
+        document["components"][consumer_index][field] = value
+        rejected(document, expected)
+
+    for needle, expected in (
+        ("event_log.sqlite", "state_paths"),
+        ("task-admission.json", "state_paths"),
+    ):
+        document = copy.deepcopy(base)
+        component = document["components"][consumer_index]
+        component["state_paths"] = [
+            path for path in component["state_paths"] if needle not in path
+        ]
+        rejected(document, expected)
+
+    document = copy.deepcopy(base)
+    document["components"].append(copy.deepcopy(document["components"][consumer_index]))
+    rejected(document, "exactly one consumer")
+
+    document = copy.deepcopy(base)
+    document["schema_version"] = True
+    rejected(document, "structure invalid")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["separately_versioned"] = 0
+    rejected(document, "separately_versioned")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["source_path"] = (
+        "/tmp/counterfeit/prismatic/task_admission_consumer.py"
+    )
+    rejected(document, "source_path")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["state_paths"] = [
+        "/tmp/event_log.sqlite",
+        "/tmp/not_task_admission_policy_real",
+        "/tmp/not_task_admission_launchers_real",
+    ]
+    rejected(document, "state_paths")
+
+
+def _systemd_show_result(
+    *,
+    load: str = "loaded",
+    active: str = "inactive",
+    unit: str = "disabled",
+    command: str = "",
+    returncode: int = 0,
+):
+    import subprocess
+
+    output = (
+        f"LoadState={load}\nActiveState={active}\n"
+        f"UnitFileState={unit}\nExecStart={command}\n"
+    )
+    return subprocess.CompletedProcess(
+        ["systemctl", "show"], returncode, stdout=output, stderr=""
+    )
+
+
+def test_legacy_consumer_service_probe_error_when_active(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(
+            active="active",
+            unit="enabled",
+            command="python -m prismatic.gateway.event_handlers.dispatch_consumer_v3",
+        ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "not safely contained" in msg
+
+
+def test_legacy_consumer_service_probe_ok_when_masked(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(
+            load="masked", active="inactive", unit="masked"
+        ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "safely inactive and masked" in msg
+
+
+def test_consumer_service_probe_ok_for_disabled_canonical_one_shot(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(
+            command="python -m prismatic.task_admission_consumer"
+        ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "canonical one-shot" in msg
+
+
+def test_consumer_service_probe_rejects_canonical_substring_bypasses(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    bypasses = (
+        "python -m evil --label=prismatic.task_admission_consumer",
+        "python -m prismatic.task_admission_consumer_evil",
+        "/bin/echo prismatic.task_admission_consumer",
+        "python -m prismatic.task_admission_consumer --unknown value",
+        "python -m prismatic.task_admission_consumer --db",
+        "python -m prismatic.task_admission_consumer --db /tmp/a --db /tmp/b",
+    )
+    for command in bypasses:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *args, _command=command, **kwargs: _systemd_show_result(
+                command=_command
+            ),
+        )
+        ok, msg = doctor_mod._probe_legacy_consumer_service()
+        assert ok is False, (command, msg)
+        assert "legacy-or-unknown" in msg
+
+
+def test_consumer_service_probe_accepts_systemd_structured_exact_argv(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    command = (
+        "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m "
+        "prismatic.task_admission_consumer --identity consumer-1 ; "
+        "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(command=command),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "canonical one-shot" in msg
+
+
+@patch("subprocess.run")
+def test_inactive_disabled_legacy_command_still_fails_closed(mock_run):
+    import prismatic.doctor as doctor_mod
+
+    mock_run.return_value = _systemd_show_result(
+        command="python -m prismatic.gateway.event_handlers.dispatch_consumer_v3"
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "legacy-or-unknown" in msg
+
+
+@patch("subprocess.run")
+def test_legacy_consumer_service_probe_rejects_incomplete_output(mock_run):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    mock_run.return_value = subprocess.CompletedProcess(
+        ["systemctl", "show"], 0, stdout="ActiveState=inactive\n", stderr=""
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "incomplete properties" in msg
+
+
+@patch("subprocess.run")
+def test_legacy_consumer_service_probe_rejects_unexpected_states(mock_run):
+    import prismatic.doctor as doctor_mod
+
+    for active, unit in (
+        ("activating", "disabled"),
+        ("inactive", "static"),
+        ("unknown", "disabled"),
+        ("garbage", "garbage"),
+    ):
+        mock_run.return_value = _systemd_show_result(
+            active=active,
+            unit=unit,
+            command="python -m prismatic.task_admission_consumer",
+        )
+        ok, msg = doctor_mod._probe_legacy_consumer_service()
+        assert ok is False, (active, unit, msg)
+        assert "not safely contained" in msg
+
+
+def test_legacy_consumer_service_probe_error_when_systemd_inspection_unavailable(
+    monkeypatch,
+):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    def mock_run_fail(cmd, **kwargs):
+        raise OSError("systemctl binary missing")
+
+    monkeypatch.setattr(subprocess, "run", mock_run_fail)
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "systemd inspection support unavailable" in msg
 
 
 if __name__ == "__main__":

@@ -7,13 +7,14 @@ Designed to run shortly after the nightly restart window (e.g. at 06:15 UTC).
 
 from __future__ import annotations
 
-import os
-import sys
 import json
 import logging
-import urllib.request
+import os
+import sys
 import urllib.error
-from datetime import datetime, time as datetime_time, timezone, timedelta
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from datetime import time as datetime_time
 from typing import Any
 
 from prismatic.gateway.alert_manager import AlertRouter
@@ -62,7 +63,7 @@ def check_gateway_health(
             "name": "GatewayDown",
             "severity": "critical",
             "summary": "Gateway is down — connection refused or timeout",
-            "details": f"gateway_url={gateway_url} error={str(exc)}",
+            "details": f"gateway_url={gateway_url} error={exc!s}",
         }
         router.route(alert)
         return {
@@ -99,7 +100,7 @@ def check_gateway_health(
             "name": "GatewayDown",
             "severity": "critical",
             "summary": "Gateway returned malformed health JSON",
-            "details": f"body={body[:200]} error={str(exc)}",
+            "details": f"body={body[:200]} error={exc!s}",
         }
         router.route(alert)
         return {

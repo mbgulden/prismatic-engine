@@ -11,10 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-import re
 from typing import Any
 
 from prismatic.agy_completed_work import get_completed_work, list_completed_work
@@ -22,8 +23,28 @@ from prismatic.agy_merge_backlog import (
     build_operator_pr_creation_dry_run,
     verify_merge_backlog_item,
 )
+from prismatic.verification.receipt_store import (
+    VerificationReceiptStore,
+    verification_receipt_store_path,
+)
 
 ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER = "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK"
+_NATIVE_BINDING_FIELDS = (
+    "receipt_id",
+    "receipt_sha256",
+    "repository_id",
+    "task_id",
+    "base_sha",
+    "base_tree_sha",
+    "candidate_sha",
+    "tree_sha",
+)
+
+
+def _expected_native_bindings(native_acceptance: dict[str, Any]) -> dict[str, Any]:
+    return {field: native_acceptance.get(field) for field in _NATIVE_BINDING_FIELDS} | {
+        "checkout_clean_state": native_acceptance.get("checkout_clean_state")
+    }
 
 
 def _now() -> str:
@@ -119,6 +140,70 @@ def _valid_source_commit_sha(value: Any) -> str | None:
     return None
 
 
+def _native_acceptance_for(row_payload: dict[str, Any]) -> dict[str, Any]:
+    packet = row_payload.get("packet") or {}
+    evidence_retention = row_payload.get("evidence_retention") or {}
+    task_id = str(packet.get("issue_identifier") or "").strip()
+    candidate_sha = _valid_source_commit_sha(
+        evidence_retention.get("source_commit_sha")
+    )
+    store_path = verification_receipt_store_path()
+    if not task_id or not candidate_sha:
+        return {
+            "status": "blocked",
+            "reason": "missing_task_or_candidate_binding",
+            "authoritative": True,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        }
+    if not store_path.is_file():
+        return {
+            "status": "blocked",
+            "reason": "native_receipt_store_missing",
+            "authoritative": True,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        }
+    try:
+        receipt = VerificationReceiptStore(store_path).find_latest(
+            task_id=task_id, candidate_sha=candidate_sha
+        )
+    except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
+        return {
+            "status": "blocked",
+            "reason": f"native_receipt_read_failed:{type(exc).__name__}",
+            "authoritative": True,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        }
+    if receipt is None:
+        return {
+            "status": "blocked",
+            "reason": "matching_native_receipt_missing",
+            "authoritative": True,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        }
+    accepted = receipt.classification == "accepted" and receipt.merge_eligible
+    return {
+        "status": "accepted" if accepted else receipt.classification,
+        "reason": receipt.decision_reason,
+        "authoritative": True,
+        "receipt_id": receipt.receipt_id,
+        "receipt_sha256": receipt.receipt_sha256,
+        "repository_id": receipt.receipt.get("repository_id"),
+        "task_id": receipt.receipt.get("task_id"),
+        "base_sha": receipt.receipt.get("base_sha"),
+        "base_tree_sha": receipt.receipt.get("base_tree_sha"),
+        "candidate_sha": candidate_sha,
+        "tree_sha": receipt.receipt.get("tree_sha"),
+        "checkout_clean_state": receipt.receipt.get("checkout_clean_state"),
+        "merge_authorized": accepted,
+        "deploy_authorized": accepted,
+        "hosted_signals_required": False,
+    }
+
+
 def _source_decision_summary(source: dict[str, Any]) -> dict[str, Any]:
     evidence_retention = source.get("evidence_retention")
     evidence = evidence_retention if isinstance(evidence_retention, dict) else {}
@@ -192,25 +277,30 @@ def build_promotion_decision(
     source_decision = _source_decision_summary(
         row_payload.get("promotion_decision") or {}
     )
+    native_acceptance = _native_acceptance_for(row_payload)
     source_allows_promotion = _source_decision_allows_promotion(source_decision)
+    native_allows_promotion = bool(native_acceptance.get("merge_authorized"))
     recommendation = _recommendation_from_source(source_decision)
     status = (
         "decision_ready"
         if source_allows_promotion
+        and native_allows_promotion
         and verification_gate == "pass"
         and integration == "pass_ready_for_review"
         else str(source_decision.get("status") or "manual_review")
     )
     if not source_allows_promotion and status == "decision_ready":
         status = "manual_review"
+    if not native_allows_promotion:
+        status = "manual_review"
     if status != "decision_ready" and recommendation == "open_or_update_pr":
         recommendation = "manual_review"
 
     okf = {
         "objective": "Agent completed-work output becomes trustworthy and operator-decisionable.",
-        "key_result": "One completed-work row has a durable promotion decision backed by packet classification, dry-run PR/Linear planning, verified PR dry-run, and operator-visible evidence.",
-        "function": "completed-work packet classifier + promotion decision ledger + dry-run bridge routes",
-        "evidence": "packet/read-model fields, merge backlog verification gate, dry-run PR/Linear plan, side-effect safety flags, and ledger record",
+        "key_result": "One completed-work row has a durable promotion decision with provider-neutral native authorization and optional PR/Linear planning.",
+        "function": "completed-work classifier + native receipt authority + promotion ledger",
+        "evidence": "packet/read-model fields, exact-artifact native receipt, optional dry-run transport plans, side-effect safety flags, and ledger record",
         "promotion_decision": recommendation,
     }
     side_effects = {
@@ -256,6 +346,14 @@ def build_promotion_decision(
         ),
         "dry_run_only": pr_dry_run.get("dry_run_only"),
         "source_decision": source_decision,
+        "native_acceptance": native_acceptance,
+        "expected_native_bindings": _expected_native_bindings(native_acceptance),
+        "authorization": {
+            "acceptance_authority": "native_provider_neutral_receipt",
+            "merge_authorized": bool(native_acceptance.get("merge_authorized")),
+            "deploy_authorized": bool(native_acceptance.get("deploy_authorized")),
+            "hosted_signals_required": False,
+        },
         "source_decision_gate": {
             "allows_promotion": source_allows_promotion,
             "required_status": "decision_ready",
@@ -323,6 +421,19 @@ def _fail_closed_revalidation_view(
     view["recommendation"] = "manual_review"
     view.setdefault("source_decision", {})
     evidence = dict(view.get("evidence") or {})
+    evidence["native_acceptance"] = {
+        "status": "blocked",
+        "reason": reason,
+        "authoritative": True,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+    }
+    evidence["authorization"] = {
+        "acceptance_authority": "native_provider_neutral_receipt",
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "hosted_signals_required": False,
+    }
     evidence["current_evidence_revalidation"] = {
         "status": "failed_closed",
         "reason": reason,
@@ -366,7 +477,14 @@ def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
             else "manual_review"
         )
         view["source_decision"] = current.get("source_decision") or {}
+        view["target_issue"] = current.get("target_issue")
         evidence = dict(view.get("evidence") or {})
+        current_evidence = current.get("evidence") or {}
+        evidence["native_acceptance"] = current_evidence.get("native_acceptance")
+        evidence["expected_native_bindings"] = current_evidence.get(
+            "expected_native_bindings"
+        )
+        evidence["authorization"] = current_evidence.get("authorization")
         evidence["current_evidence_revalidation"] = {
             "status": "failed_closed",
             "reason": "current_completed_work_evidence_not_decision_ready",
@@ -383,7 +501,14 @@ def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
     view["source_decision"] = (
         current.get("source_decision") or record.get("source_decision") or {}
     )
+    view["target_issue"] = current.get("target_issue")
     evidence = dict(view.get("evidence") or {})
+    current_evidence = current.get("evidence") or {}
+    evidence["native_acceptance"] = current_evidence.get("native_acceptance")
+    evidence["expected_native_bindings"] = current_evidence.get(
+        "expected_native_bindings"
+    )
+    evidence["authorization"] = current_evidence.get("authorization")
     evidence["current_evidence_revalidation"] = {
         "status": "passed",
         "reason": "current_completed_work_evidence_decision_ready",

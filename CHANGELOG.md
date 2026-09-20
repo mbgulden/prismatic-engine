@@ -23,6 +23,9 @@ The project is currently alpha. Dates use UTC.
 
 ### Changed
 
+- Journal daily/weekly recaps now render at most 50 latest evidence-cited claims, keep CLI results compact, write a bounded citation manifest, and fail closed before writing oversized artifacts.
+- Added the portable Antigravity/AGY workspace customization bundle, explicit installer/status/uninstaller/audit CLI, packaged wheel resources, and task/plan/result templates while preserving canonical Prismatic admission and review gates.
+- Hardened customization management with whole-plan preflight, atomic capture-and-verify mutation, no-replace creation, rollback-safe transactions, exact current-bundle manifest trust, no-follow collision-proof backups, non-regular-file rejection, and descriptor-anchored structural audits that reject symlink roots and never return raw frontmatter values.
 - CI now runs a supported Python matrix and release smoke/readiness checks.
 - Publish workflow now verifies tags, checks distributions, uploads artifacts, and creates build provenance before PyPI publication.
 

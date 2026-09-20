@@ -8,7 +8,7 @@
       "id": "verified-agent-output",
       "objective": "Agent proposals become accepted work only through exact-artifact independent evidence.",
       "owner": "merge judge",
-      "system_of_record": "Merge Factory attestations + Git/GitHub",
+      "system_of_record": "Git object identity + versioned verification receipts + Merge Factory attestations",
       "key_results": [
         "reviewed SHA equals PR head at merge",
         "all required proof classes report scope and non-claims",
@@ -22,8 +22,31 @@
         "tests/test_merge_factory.py",
         "docs/contracts/verification-contract.md"
       ],
-      "current_surface": "API/CLI/CI",
+      "current_surface": "API/CLI/provider status projections; provider-neutral receipt runtime pending",
       "review_after": "2026-10-21"
+    },
+    {
+      "id": "provider-neutral-verification",
+      "objective": "Merge evidence remains exact, independent, and portable across hosted, self-hosted, local, and offline Git workflows.",
+      "owner": "merge judge and verification maintainers",
+      "system_of_record": "versioned verification receipts + Merge Factory attestations + Git object identity",
+      "key_results": [
+        "at least one approved clean-room backend emits a valid exact-head receipt for every merge",
+        "provider status projections never override receipt validation",
+        "GitHub, Bitbucket, GitLab, Forgejo/Gitea, local Git, and bundle inputs pass one conformance contract",
+        "head change, expiry, revocation, digest mismatch, or producer-only evidence fails closed"
+      ],
+      "functions": [
+        "prismatic/core/merge_factory.py",
+        "prismatic/providers/github.py"
+      ],
+      "evidence": [
+        "docs/decisions/ADR-0002-provider-neutral-verification-receipts.md",
+        "docs/contracts/verification-contract.md",
+        "tests/test_okf_docs.py"
+      ],
+      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner operational",
+      "review_after": "2026-10-23"
     },
     {
       "id": "systemic-orchestration-correctness",
@@ -86,6 +109,35 @@
       "review_after": "2026-10-21"
     },
     {
+      "id": "canonical-agy-execution",
+      "objective": "Every unattended AGY producer uses one durable, hash-bound, evidence-first execution workflow.",
+      "owner": "Prismatic Engine orchestration maintainers",
+      "system_of_record": "canonical AGY manifest + launch/process receipts + exact task and executable digests",
+      "key_results": [
+        "all PE AGY CLI launches begin with /goal and use the tmux durable anchor",
+        "task, executable, manifest, session, and process identity are retained and fail closed on drift",
+        "plan/result/log artifacts are durable and producer output never self-authorizes acceptance",
+        "long AGY runs have no wall-clock cap and expose durable exact-run activity to the dashboard without automatic inactivity kills"
+      ],
+      "functions": [
+        "prismatic/agy_cli.py",
+        "prismatic/agy_activity.py",
+        "prismatic/harnesses/agy_cli.py",
+        "prismatic/gateway/server.py",
+        "prismatic/cli/__init__.py"
+      ],
+      "evidence": [
+        "tests/test_agy_cli_canonical_workflow.py",
+        "tests/test_agy_cli_harness.py",
+        "tests/test_agy_activity_dashboard.py",
+        "tests/test_agy_process_containment.py",
+        "docs/contracts/canonical-agy-cli-workflow.md",
+        "docs/decisions/ADR-0003-canonical-agy-cli-workflow.md"
+      ],
+      "current_surface": "canonical CLI/harness/contract plus dashboard activity projection; legacy launcher delegation pending",
+      "review_after": "2026-10-25"
+    },
+    {
       "id": "authoritative-operator-view",
       "objective": "Dashboard and chat show truthful state derived from durable stores.",
       "owner": "gateway/dashboard maintainers",
@@ -104,6 +156,33 @@
       ],
       "current_surface": "dashboard/API/Telegram",
       "review_after": "2026-10-21"
+    },
+    {
+      "id": "hermes-fleet-prismatic-integration",
+      "objective": "Hermes multi-agent fleet executes concurrently under distributed mutual exclusion, automated token hygiene, and multi-surface streaming.",
+      "owner": "swarm orchestration maintainers",
+      "system_of_record": "SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts",
+      "key_results": [
+        "zero concurrent write collisions on locked repository resources across profiles",
+        "automated context hygiene caps token growth at 48k tokens via /compress, preventing degenerate model token spew",
+        "streaming telemetry synchronizes in real-time across Telegram bots, Prismatic Signals SSE, and Hermes Desktop Portal (port 9119)",
+        "systemd template service hermes-gateway@ enables automated single-command fleet lifecycle management"
+      ],
+      "functions": [
+        "prismatic/fleet/manager.py",
+        "prismatic/gateway/server.py",
+        "prismatic/agent_signal_stream.py",
+        "prismatic/cli/__init__.py"
+      ],
+      "evidence": [
+        "docs/okf-hermes-prismatic-fleet-integration.md",
+        "docs/UNIFIED_STREAMING_SWARM_AUDIT.md",
+        "tests/test_fleet_manager.py",
+        "tests/test_multi_agent_concurrency_barrage.py",
+        "scripts/run_unified_streaming_swarm_audit.py"
+      ],
+      "current_surface": "Telegram/Signals SSE/Hermes Desktop (9119)/SwarmLock API",
+      "review_after": "2026-10-25"
     }
   ]
 }

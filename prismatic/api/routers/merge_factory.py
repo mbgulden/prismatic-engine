@@ -89,6 +89,9 @@ class LockAcquireRequest(BaseModel):
     evidence_digest: str = Field(..., description="Evidence SHA-256 digest")
     approval_attestation_id: str = Field(..., description="Approval attestation ID")
     ttl_seconds: int = Field(..., description="Time to live in seconds")
+    acquisition_token: str = Field(
+        default="", description="Exact token for renewing an existing lock"
+    )
 
 
 class LockHeartbeatRequest(BaseModel):
@@ -100,6 +103,18 @@ class LockHeartbeatRequest(BaseModel):
     manifest_digest: str = Field(..., description="Manifest SHA-256 digest")
     evidence_digest: str = Field(..., description="Evidence SHA-256 digest")
     approval_attestation_id: str = Field(..., description="Approval attestation ID")
+    acquisition_token: str = Field(
+        ..., min_length=32, description="Exact lock acquisition token"
+    )
+
+
+class LockReleaseRequest(BaseModel):
+    repository: str = Field(..., description="Repository name")
+    target: str = Field(..., description="Target branch/destination name")
+    issue_id: str = Field(..., description="Issue identifier")
+    acquisition_token: str = Field(
+        ..., min_length=32, description="Exact lock acquisition token"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -108,8 +123,14 @@ class LockHeartbeatRequest(BaseModel):
 
 
 @router.get("/policy")
-async def get_policy() -> Dict[str, Any]:
-    """Retrieve the current operator policy."""
+async def get_policy(
+    principal: Principal = Depends(get_principal),
+) -> Dict[str, Any]:
+    """Retrieve the current operator policy.
+
+    RF-R3: authenticated read.  Unauthenticated callers receive 401.
+    """
+    _ = principal  # auth-gate only; no scope check needed for reads
     return MergeFactoryStore().get_policy()
 
 
@@ -130,8 +151,14 @@ async def set_policy(
 
 
 @router.get("/cohort")
-async def list_cohort() -> Dict[str, Any]:
-    """List all admission cohort items."""
+async def list_cohort(
+    principal: Principal = Depends(get_principal),
+) -> Dict[str, Any]:
+    """List all admission cohort items.
+
+    RF-R3: authenticated read.  Unauthenticated callers receive 401.
+    """
+    _ = principal
     cohort = MergeFactoryStore().get_cohort()
     return {"cohort": cohort, "count": len(cohort)}
 
@@ -259,8 +286,14 @@ async def get_attestation(
     evidence_digest: str = Query(..., description="Evidence SHA-256 digest"),
     repository: str = Query(..., description="Git repository name"),
     target: str = Query(..., description="Target branch/destination name"),
+    principal: Principal = Depends(get_principal),
 ) -> Dict[str, Any]:
-    """Pure/read-only validation of active candidate approval. Open to ordinary callers."""
+    """Pure/read-only validation of active candidate approval.
+
+    RF-R3: same authenticated principal boundary as other Merge Factory
+    reads.  Unauthenticated callers receive 401.
+    """
+    _ = principal
     return MergeFactoryStore().validate_approval(
         issue_id=issue_id,
         base_sha=base_sha,
@@ -295,6 +328,7 @@ async def acquire_lock(
             approval_attestation_id=request.approval_attestation_id,
             ttl_seconds=request.ttl_seconds,
             principal=principal,
+            acquisition_token=request.acquisition_token,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -319,6 +353,7 @@ async def heartbeat_lock(
             evidence_digest=request.evidence_digest,
             approval_attestation_id=request.approval_attestation_id,
             principal=principal,
+            acquisition_token=request.acquisition_token,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -328,11 +363,22 @@ async def heartbeat_lock(
 
 @router.post("/lock/release")
 async def release_lock(
-    repository: str = Query(..., description="Repository name"),
-    target: str = Query(..., description="Target branch/destination name"),
-    issue_id: str = Query(..., description="Issue identifier"),
+    request: LockReleaseRequest,
     principal: Principal = Depends(get_principal),
 ) -> Dict[str, Any]:
-    """Release merge lock."""
-    MergeFactoryStore().release_lock(repository, target, issue_id, principal)
-    return {"status": "released", "repository": repository, "target": target}
+    """Release a merge lock using its exact acquisition capability."""
+    try:
+        MergeFactoryStore().release_lock(
+            request.repository,
+            request.target,
+            request.issue_id,
+            principal,
+            request.acquisition_token,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    return {
+        "status": "released",
+        "repository": request.repository,
+        "target": request.target,
+    }

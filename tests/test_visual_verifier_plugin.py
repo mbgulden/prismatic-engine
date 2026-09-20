@@ -7,7 +7,7 @@ from io import StringIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "plugins" / "visual-verifier"
+PLUGIN_ROOT = ROOT / "prismatic" / "shipped_plugins" / "visual-verifier"
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 

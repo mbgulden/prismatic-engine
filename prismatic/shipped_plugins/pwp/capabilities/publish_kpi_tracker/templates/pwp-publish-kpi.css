@@ -1,0 +1,41 @@
+/* pwp-publish-kpi.css — multi-site KPI dashboard styles. */
+.pwp-kpi-table { width: 100%; border-collapse: collapse; font-family: -apple-system, "Inter", sans-serif; }
+.pwp-kpi-table th, .pwp-kpi-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(95, 114, 97, 0.18); vertical-align: top; }
+.pwp-kpi-table thead th { background: rgba(95, 114, 97, 0.10); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #2F3631; }
+.pwp-kpi-table .num { font-variant-numeric: tabular-nums; font-size: 13px; }
+.pwp-kpi-table .muted { color: #8C8275; font-size: 12px; }
+.pwp-kpi-accordions details { border: 1px solid rgba(95, 114, 97, 0.18); border-radius: 6px; margin-bottom: 12px; padding: 12px 16px; background: rgba(255, 255, 255, 0.86); }
+.pwp-kpi-accordions summary { cursor: pointer; font-size: 14px; }
+.pwp-kpi-list { list-style: none; padding: 0; margin: 12px 0 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.pwp-kpi-list li { padding: 8px 12px; background: rgba(95, 114, 97, 0.06); border-radius: 4px; }
+.pwp-kpi-detail { border: 1px solid rgba(95, 114, 97, 0.18); border-radius: 6px; margin-bottom: 8px; padding: 12px 16px; background: rgba(255, 255, 255, 0.86); }
+.pwp-kpi-detail summary { cursor: pointer; font-size: 14px; }
+.pwp-kpi-detail dl { display: grid; grid-template-columns: 80px 1fr; gap: 4px 12px; margin: 12px 0 0 0; }
+.pwp-kpi-detail dt { color: #5C625E; font-size: 12px; }
+.pwp-kpi-detail dd { font-size: 13px; margin: 0; }
+
+/* Per-site row layout for the multi-site index. The smallest visual unit
+   that closes the loop: each site gets a header + card grid, with `—`
+   placeholders for missing runtime values so the structure stays visible
+   even before the cron has populated values. */
+.pwp-kpi-site-row { border: 1px solid rgba(95, 114, 97, 0.18); border-radius: 6px; margin-bottom: 16px; padding: 16px 20px; background: rgba(255, 255, 255, 0.92); }
+.pwp-kpi-site-header h3 { margin: 0 0 4px 0; font-size: 16px; }
+.pwp-kpi-site-header p { margin: 4px 0; font-size: 13px; }
+.pwp-kpi-site-header a { font-size: 13px; }
+.pwp-kpi-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }
+.pwp-kpi-card { padding: 12px 14px; background: rgba(95, 114, 97, 0.08); border: 1px solid rgba(95, 114, 97, 0.12); border-radius: 6px; }
+.pwp-kpi-card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #5C625E; margin-bottom: 6px; }
+.pwp-kpi-card-value { font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 600; color: #2F3631; }
+.pwp-kpi-card-delta { font-size: 12px; color: #8C8275; margin-top: 4px; }
+
+/* Pending Changes panel — surfaces outstanding provisioning tasks
+   (soft-failed steps, unmerged runs, failed runs) at the top of the
+   dashboard index so the operator sees what's waiting for them. */
+.pwp-pending-changes { border: 1px solid rgba(196, 144, 70, 0.32); border-radius: 6px; margin: 0 0 24px 0; padding: 16px 20px; background: rgba(252, 244, 220, 0.88); }
+.pwp-pending-changes h2 { margin: 0 0 8px 0; font-size: 16px; color: #6B4F1F; }
+.pwp-pending-changes ul { list-style: none; padding: 0; margin: 8px 0 0 0; }
+.pwp-pending-changes li { padding: 10px 12px; background: rgba(255, 255, 255, 0.85); border-radius: 4px; margin-bottom: 8px; border-left: 4px solid #C49046; }
+.pwp-pending-changes li:last-child { margin-bottom: 0; }
+.pwp-pending-changes .pwp-pending-kind { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 3px; background: #C49046; color: #fff; margin-left: 8px; }
+.pwp-pending-changes .pwp-pending-detail { font-size: 12px; background: rgba(0, 0, 0, 0.04); padding: 6px 10px; border-radius: 4px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+.pwp-pending-changes .pwp-pending-action { font-size: 12px; color: #2F3631; margin: 4px 0 0 0; font-family: ui-monospace, "SF Mono", monospace; }

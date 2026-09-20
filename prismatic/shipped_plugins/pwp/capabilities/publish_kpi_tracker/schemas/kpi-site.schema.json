@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/pwp-kpi-site.schema.json",
+  "title": "PWP Publish-KPI-Tracker — per-site schema",
+  "description": "Schema for a single per-site `*.kpi.json` file under plugins/pwp/capabilities/publish_kpi_tracker/sites/. A site extends an optional parent collection (slugs of type 'funnel_xxx' or 'site_hygiene' from another registered site) and may override individual metrics on key collision. The `front_of_card` flag is site-local: an inherited metric is NOT surfaced on the child unless the child re-declares it.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "name", "owner", "site_slug", "domain", "metrics"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "name":           { "type": "string", "minLength": 1, "maxLength": 64 },
+    "owner":          { "type": "string", "minLength": 1, "maxLength": 64 },
+    "site_slug":      { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "domain":         { "type": "string", "format": "hostname" },
+    "extends":        { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "tracking_property": { "type": "string", "pattern": "^G-[A-Z0-9]{4,12}$" },
+    "description":    { "type": "string", "maxLength": 1024 },
+    "site": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "title": { "type": "string" },
+        "operator": { "type": "string" },
+        "expected_dataLayer_events": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+        }
+      }
+    },
+    "expected_data_layer_events": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+    },
+    "ga4_recommended_events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["select_item","select_content","view_item","view_cart","add_to_cart","begin_checkout","add_payment_info","add_shipping_info","purchase","complete_registration","refund"]
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/metric" }
+    },
+    "share_targets":      { "type": "object" },
+    "delivery_cadence":   { "type": "object" },
+    "kpi_collection_theme": { "type": "object" }
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "required": ["id", "label", "source"],
+      "additionalProperties": true,
+      "properties": {
+        "id":         { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
+        "label":      { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source": {
+          "type": "string",
+          "enum": ["ga4","stripe","telegram","internal","derived","gsc","mcp","sheets","ci","verifier"]
+        },
+        "event":      { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "metric":     { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "field":      { "type": "string" },
+        "filter":     { "type": "string" },
+        "format":     { "type": "string", "enum": ["number","percent","currency","duration"] },
+        "formula":    { "type": "string" },
+        "source_urls": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "front_of_card": { "type": "boolean" },
+        "alert_threshold": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "operator": { "type": "string", "enum": ["gt","lt","gte","lte","eq"] },
+            "value":    { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}

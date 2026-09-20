@@ -17,6 +17,10 @@ from typing import Any, Mapping, Sequence
 
 AGY_RESULT_PACKET_MARKER = "AGY_TASK_RESULT_PACKET_OK"
 AGY_RESULT_PACKET_SCHEMA_MARKER = "AGY_RESULT_PACKET_SCHEMA_OK"
+AGY_CLOSEOUT_V02_MARKER = "AGY_TASK_RESULT_PACKET_OK"
+#: Tasks at or above this issue number require the v0.2 closeout contract.
+#: Tasks below this number continue to use the legacy raw AGY dialect.
+AGY_CLOSEOUT_V02_MIN_ISSUE = 4500
 
 ALLOWED_BASE_BRANCHES = {"main", "origin/main"}
 MERGE_LANES = {
@@ -102,6 +106,89 @@ class ResultPacketValidationError(ValueError):
     def __init__(self, errors: Sequence[str]):
         self.errors = tuple(errors)
         super().__init__("AGY raw result packet invalid: " + "; ".join(self.errors))
+
+
+def is_v02_closeout_packet(packet: Mapping[str, Any]) -> bool:
+    return (
+        packet.get("agent") == "agy" and packet.get("MARKER") == AGY_CLOSEOUT_V02_MARKER
+    )
+
+
+def _parse_task_number(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"GRO-([0-9]+)", value.strip(), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def requires_v02_closeout(
+    packet: Mapping[str, Any], trusted_issue: str | None = None
+) -> bool:
+    """Tasks at or above the cutoff MUST use the v0.2 closeout contract.
+
+    The trusted issue identifier (when supplied by the dispatcher) is the
+    authoritative source for activation. Falling back to producer-controlled
+    fields alone would let a producer bypass the v0.2 contract by claiming a
+    legacy task id under a modern dispatch.
+
+    When ``trusted_issue`` is supplied and does not match any producer-declared
+    numeric id, the producer's claim is rejected entirely.
+    """
+    trusted_number = _parse_task_number(trusted_issue)
+    producer_numbers: list[int] = []
+    for field in ("TASK_ID", "issue_identifier", "issue_id"):
+        number = _parse_task_number(packet.get(field))
+        if number is not None:
+            producer_numbers.append(number)
+    if trusted_number is not None:
+        if any(n != trusted_number for n in producer_numbers):
+            raise ResultPacketValidationError(
+                (
+                    f"producer issue identifier disagrees with trusted dispatch "
+                    f"issue '{trusted_issue}'",
+                )
+            )
+        return trusted_number >= AGY_CLOSEOUT_V02_MIN_ISSUE
+    # No trusted context available: only treat modern dialect as required when
+    # every producer-declared numeric id is at or above the cutoff. Any
+    # producer field claiming a legacy id below the cutoff short-circuits.
+    if not producer_numbers:
+        return False
+    if all(n < AGY_CLOSEOUT_V02_MIN_ISSUE for n in producer_numbers):
+        return False
+    return all(n >= AGY_CLOSEOUT_V02_MIN_ISSUE for n in producer_numbers)
+
+
+def v02_provenance_required(
+    packet: Mapping[str, Any], trusted_issue: str | None = None
+) -> bool:
+    """True if the v0.2 schema requires a trusted launch context for this packet."""
+    return requires_v02_closeout(
+        packet, trusted_issue=trusted_issue
+    ) and is_v02_closeout_packet(packet)
+
+
+def require_valid_v02_closeout(
+    packet: Mapping[str, Any],
+    launch_context: Any | None = None,
+    directory: Path | None = None,
+) -> Mapping[str, Any]:
+    """Delegate to the importable v0.2 schema-driven validator.
+
+    The runtime caller must separately enforce a launch context binding via
+    :func:`require_valid_closeout_with_launch`; this entry point validates
+    structure only. ``directory`` is forwarded so log/SHA/RESULT.md checks
+    run by default whenever the runtime knows where the artifacts live.
+    """
+    from prismatic.skills.prismatic_agent_closeout_contract.scripts.validate_closeout_packet import (
+        validate_closeout_packet,
+    )
+
+    outcome = validate_closeout_packet(
+        packet, launch_context=launch_context, directory=directory
+    )
+    outcome.raise_for_status()
+    return packet
 
 
 def load_packet(path: str | Path) -> dict[str, Any]:
@@ -225,9 +312,13 @@ def validate_packet(packet: Mapping[str, Any]) -> ValidationResult:
     # non_claims are explicitly negative claims; scan for secrets/control chars,
     # not for production words as positive assertions.
     _reject_control_or_secret_values("non_claims", non_claims, errors)
-
+    # Same secret/path primitives also apply to changed_files and verification
+    # commands (defense in depth: a secret-shaped command or a traversed path
+    # must fail validation independently of how the legacy dialect labels them).
     for value in changed_files:
         _validate_repo_path("changed_files", value, errors)
+    for value in commands:
+        _validate_command_value("verification.commands", value, errors)
     for value in artifacts:
         _validate_artifact_path(value, errors)
     log_path = verification.get("log_path")
@@ -311,6 +402,28 @@ def _validate_repo_path(field: str, value: str, errors: list[str]) -> None:
     if value.startswith("/"):
         errors.append(f"{field} must not be an absolute path")
     _validate_safe_path(field, value, errors)
+
+
+def _validate_command_value(field: str, value: str, errors: list[str]) -> None:
+    """Apply the same secret/junk/path primitives to verification commands.
+
+    Verification commands are not paths but they must still be free of control
+    characters, secret-shaped payloads, and absolute paths that escape the
+    repository tree. This mirrors what the v0.2 schema validator enforces for
+    CHANGED_PATHS/COMMAND.
+    """
+    if CONTROL_RE.search(value):
+        errors.append(f"{field} contains control characters")
+        return
+    if SECRET_VALUE_RE.search(value):
+        errors.append(f"{field} contains secret-like content")
+        return
+    # Absolute paths inside commands must stay under the operator home.
+    stripped = value.strip()
+    if stripped.startswith("/"):
+        home = str(Path.home()) + "/"
+        if not (stripped.startswith(home) or stripped.startswith("/tmp/")):
+            errors.append(f"{field} absolute path must stay under operator home")
 
 
 def _validate_artifact_path(value: str, errors: list[str]) -> None:

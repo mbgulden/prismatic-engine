@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from prismatic import dispatcher
 from prismatic.jules_capacity import (
     DAILY_LIMIT,
@@ -14,6 +16,13 @@ from prismatic.jules_capacity import (
     record_jules_launch,
     reconcile_jules_list_output,
 )
+
+
+@pytest.fixture(autouse=True)
+def _freeze_jules_capacity_retention_clock(monkeypatch) -> None:
+    """Keep fixed historical fixtures inside the retention window."""
+    frozen_now = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("prismatic.jules_capacity._utcnow", lambda: frozen_now)
 
 
 def test_stable_identity_replay_is_idempotent_but_distinct_identities_split(

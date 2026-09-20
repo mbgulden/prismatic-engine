@@ -1,0 +1,66 @@
+        <!-- SECTION: FLEET PULSE -->
+        <div id="section-pulse" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <!-- Header -->
+            <section class="glass-panel p-6 rounded-2xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950/30 via-slate-900/60 to-purple-950/30 space-y-2 shadow-xl">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">Autonomy Health</span>
+                            <span class="text-xs font-mono text-slate-400">Zero Oversight · Continuous Concurrency</span>
+                        </div>
+                        <h2 class="text-xl font-bold text-white tracking-wide mt-1">Fleet Pulse &amp; Autonomous State</h2>
+                        <p class="text-xs text-slate-300">Live operational status of autonomous agent daemons operating under mathematical SwarmLock safety.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" id="pulse-emergency-pause-btn" onclick="toggleFleetEmergencyPause()" class="px-3.5 py-2 rounded-xl text-xs font-mono bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition flex items-center gap-2 shadow-sm">
+                            <span id="pulse-pause-icon">⏸</span>
+                            <span id="pulse-pause-label">Pause Fleet</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3-State High-Level Pulse Indicator Card -->
+            <section class="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+                    <div class="flex items-center gap-4">
+                        <div class="relative flex h-5 w-5 flex-shrink-0">
+                            <span id="pulse-indicator-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span id="pulse-indicator-dot" class="relative inline-flex rounded-full h-5 w-5 bg-emerald-500"></span>
+                        </div>
+                        <div>
+                            <h3 id="pulse-status-headline" class="text-base font-bold text-white font-mono">Swarm Fleet Operational &amp; Synchronized</h3>
+                            <p id="pulse-status-subhead" class="text-xs text-slate-400">Autonomous agent fleet actively monitoring queues. Concurrency safety verified.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 text-xs font-mono">
+                        <span class="text-slate-500">Active Leases: <strong id="pulse-active-leases-count" class="text-cyan-400">0</strong></span>
+                        <span class="text-slate-500">·</span>
+                        <span class="text-slate-500">Deflected Collisions: <strong id="pulse-deflections-count" class="text-emerald-400">0</strong></span>
+                    </div>
+                </div>
+
+                <!-- Active Agent Cards Grid (Dynamically Populated from /api/agents) -->
+                <div id="fleet-pulse-cards-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                    <div class="p-6 rounded-xl bg-slate-950/70 border border-slate-800 text-center col-span-full text-slate-500 font-mono text-xs">
+                        Scanning active fleet nodes across local profiles and Tailscale mesh...
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Stream Strip -->
+            <section class="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                        <span>Live Swarm Telemetry Stream</span>
+                    </h3>
+                    <button type="button" onclick="setUIMode('engineering'); switchTab('signals');" class="text-xs font-mono text-indigo-400 hover:text-indigo-300 underline">
+                        Open Full Signals Deck →
+                    </button>
+                </div>
+                <div id="pulse-live-events-list" class="space-y-1.5 font-mono text-xs max-h-48 overflow-y-auto pr-2">
+                    <div class="text-slate-500 text-center py-4">Listening for live WebSocket swarm events...</div>
+                </div>
+            </section>
+        </div>

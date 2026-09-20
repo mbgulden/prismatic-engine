@@ -1,0 +1,6 @@
+=== Prismatic Execution Log — Attempt 20260804-02 (BLOCKED) ===
+[2026-08-04T13:10:00Z] Task GRO-4457 initiated by agent:agy
+[2026-08-04T13:10:01Z] Running pytest tests/test_gateway.py
+[2026-08-04T13:10:02Z] FAILED: test_gateway.py::test_proxy_authorization_header
+[2026-08-04T13:10:02Z] Blocker detected: Missing authorization header propagation on gateway proxy route.
+[2026-08-04T13:10:03Z] Execution halted in BLOCKED state.

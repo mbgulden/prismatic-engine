@@ -6,10 +6,10 @@ Copy and customize this template for each interview topic.
 
 ## 🎙️ Expert Interview — [TOPIC]
 
-**Interviewer:** Hermes (Fred)  
-**Expert:** Michael Gulden — [role: Oahu kayak guide / Active Oahu Tours founder / local expert]  
-**Use for:** [which sites: activeoahutours.com / activeoahu.com / yourhawaiiguide.com]  
-**Content outputs:** [tour pages, blog posts, social, FAQ schema, video shorts]
+**Interviewer:** Agent (Orchestrator)
+**Expert:** Domain Expert — [role: Founder / Technical Architect / Subject Specialist]
+**Use for:** [target domain / knowledge repository]
+**Content outputs:** [feature pages, documentation, FAQ schema, publications]
 
 ---
 

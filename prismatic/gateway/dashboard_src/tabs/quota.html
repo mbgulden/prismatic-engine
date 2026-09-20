@@ -9,8 +9,8 @@
                 <div class="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 space-y-4" data-proof-marker="jules-daily-capacity-resources">
                     <div class="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <h3 class="text-sm font-bold text-indigo-200 uppercase tracking-wider">Jules Daily Capacity</h3>
-                            <p id="jules-capacity-freshness" class="text-[11px] text-slate-500 mt-1">Loading dedicated Jules capacity ledger</p>
+                            <h3 class="text-sm font-bold text-indigo-200 uppercase tracking-wider">PR Review Daily Capacity</h3>
+                            <p id="jules-capacity-freshness" class="text-[11px] text-slate-500 mt-1">Loading dedicated review capacity ledger</p>
                         </div>
                         <span id="jules-capacity-badge" class="px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-400">Unavailable</span>
                     </div>
@@ -28,7 +28,7 @@
                             <div id="jules-capacity-coverage" class="mt-1 text-sm font-bold text-amber-300">Unavailable</div>
                         </div>
                     </div>
-                    <div class="h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden" aria-label="Jules daily capacity progress">
+                    <div class="h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden" aria-label="Daily capacity progress">
                         <div id="jules-capacity-progress" class="h-full bg-indigo-500 rounded-full transition-all duration-500" style="width: 0%"></div>
                     </div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -87,72 +87,5 @@
                 </div>
             </div>
         </div>
-
-    </main>
-
-    <!-- Native Cron Delete Confirmation Modal -->
-    <div id="cron-delete-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="glass-panel w-full max-w-lg rounded-xl shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
-            <div class="border-b border-slate-800 p-4 flex items-center justify-between">
-                <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Delete Native Cron?</h3>
-                <button onclick="closeCronDeleteModal()" class="text-slate-500 hover:text-slate-300 font-bold text-xl" aria-label="Cancel delete cron">&times;</button>
-            </div>
-            <div class="p-5 space-y-4 text-sm text-slate-300">
-                <p>Deleting removes this cron from the queue and marks it deleted. If you may want it later, deactivate instead.</p>
-                <div id="cron-delete-target" class="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs font-mono text-slate-400"></div>
-                <div class="flex flex-wrap justify-end gap-2 pt-2">
-                    <button onclick="confirmCronDeactivateFromModal()" class="px-3 py-2 rounded-lg text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20">Deactivate</button>
-                    <button onclick="confirmCronDeleteFromModal()" class="px-3 py-2 rounded-lg text-xs font-bold bg-rose-500/10 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20">Delete — I’m sure</button>
-                    <button onclick="closeCronDeleteModal()" class="px-3 py-2 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">Cancel</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Webhook Event Modal -->
-    <div id="modal-container" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="glass-panel w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onclick="event.stopPropagation()">
-            <div class="border-b border-slate-800 p-4 flex items-center justify-between">
-                <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
-                    <span>Webhook Details</span>
-                    <span id="modal-id-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-xs"></span>
-                </h3>
-                <button onclick="closeModal()" class="text-slate-500 hover:text-slate-300 font-bold text-xl">&times;</button>
-            </div>
-            <div class="p-6 overflow-y-auto space-y-4">
-                <div class="grid grid-cols-2 gap-4 text-xs">
-                    <div>
-                        <span class="text-slate-500 uppercase font-semibold">Agent Name</span>
-                        <div id="modal-agent" class="text-slate-200 mt-1 font-semibold text-sm"></div>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 uppercase font-semibold">Action</span>
-                        <div id="modal-action" class="text-slate-200 mt-1 capitalize text-sm"></div>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 uppercase font-semibold">Status</span>
-                        <div id="modal-status" class="mt-1"></div>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 uppercase font-semibold">Queued At</span>
-                        <div id="modal-queued" class="text-slate-200 mt-1 text-sm"></div>
-                    </div>
-                </div>
-                <div class="border-t border-slate-800/80 pt-4">
-                    <span class="text-slate-500 uppercase font-semibold text-xs block mb-2">Raw JSON Payload</span>
-                    <pre id="modal-payload" class="bg-slate-950 text-slate-300 p-4 rounded-lg overflow-x-auto text-[11px] font-mono border border-slate-900 max-h-[300px]"></pre>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Footer -->
-    <footer class="border-t border-slate-900 py-4 px-6 text-center text-xs text-slate-600 bg-slate-950/20">
-        Prismatic Hub v0.1.0 • Standalone Gateway Telemetry
-    </footer>
-
-    <!-- Toast Notifications -->
-    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold transform translate-y-20 opacity-0 transition duration-300 pointer-events-none flex items-center space-x-2">
-        <span id="toast-text">Toast Message</span>
-    </div>
+    </section>
 

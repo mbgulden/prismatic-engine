@@ -8,17 +8,26 @@ operator scripts. It does not merge, dispatch, or mutate git state.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import logging
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
+from prismatic.agy_result_packet import (
+    AGY_RESULT_PACKET_MARKER,
+    is_raw_agy_result_packet,
+    is_v02_closeout_packet,
+    require_valid_packet,
+    requires_v02_closeout,
+)
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
     classify_completed_work,
@@ -31,6 +40,14 @@ DEFAULT_DB_NAME = "agy_completed_work.db"
 DEFAULT_EVIDENCE_DIR_NAME = "agy-completed-work-evidence"
 MAX_RETAINED_EVIDENCE_BYTES = 2 * 1024 * 1024
 AGY_PACKET_NORMALIZATION_MARKER = "AGY_RESULT_PACKET_NORMALIZED_OK"
+
+logger = logging.getLogger(__name__)
+
+
+class AgyCompletedWorkConflictError(ValueError):
+    """Raised when a completed-work packet conflicts with an existing deterministic ID."""
+
+
 INTEGRATION_CLASSIFICATIONS = {
     "merge_ready": "pass_ready_for_review",
     "blocked_missing_proof": "invalid_repairable",
@@ -93,6 +110,132 @@ _SECRET_FILENAMES = {
 _SECRET_FILENAME_PREFIXES = (".env",)
 
 
+_VALIDATOR_MODULE_CACHE: dict = {}
+
+
+def _load_validator_module():
+    """Load the closeout validator module even when the editable install does
+    not expose ``prismatic.skills.*`` as importable packages.
+
+    The validator file is part of the packaged skill, so we load it by absolute
+    filesystem path. The module is cached to avoid re-execution.
+    """
+    cached = _VALIDATOR_MODULE_CACHE.get("module")
+    if cached is not None:
+        return cached
+    module_name = "prismatic_pacc_validator"
+    spec_path = (
+        Path(__file__).resolve().parent
+        / "skills"
+        / "prismatic-agent-closeout-contract"
+        / "scripts"
+        / "validate_closeout_packet.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, spec_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load validator from {spec_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    _VALIDATOR_MODULE_CACHE["module"] = module
+    return module
+
+
+def _launch_context_from_settings():
+    """Read trusted launch context from env, when set by the dispatcher."""
+    validator = _load_validator_module()
+
+    issue = os.environ.get("PRISMATIC_DISPATCH_ISSUE")
+    branch = os.environ.get("PRISMATIC_DISPATCH_SOURCE_BRANCH")
+    base = os.environ.get("PRISMATIC_DISPATCH_BASE_BRANCH")
+    source_path = os.environ.get("PRISMATIC_DISPATCH_SOURCE_PATH")
+    candidate = os.environ.get("PRISMATIC_DISPATCH_CANDIDATE_HEAD")
+    candidate_tree = os.environ.get("PRISMATIC_DISPATCH_CANDIDATE_TREE")
+    base_commit = os.environ.get("PRISMATIC_DISPATCH_BASE_HEAD")
+    if not all(
+        [issue, branch, base, source_path, candidate, candidate_tree, base_commit]
+    ):
+        return None
+    return validator.LaunchContext(
+        issue_identifier=issue,
+        source_branch=branch,
+        base_branch=base,
+        source_path=source_path,
+        candidate_commit=candidate,
+        candidate_tree=candidate_tree,
+        base_commit=base_commit,
+    )
+
+
+def _adapt_v02_packet_with_context(
+    packet: Mapping[str, Any], context
+) -> dict[str, Any]:
+    """Adapt validated v0.2 producer output to the existing gate dialect.
+
+    No field is invented: ``source_branch``/``base_branch``/``source_path``/
+    ``source_commit_sha``/``base_commit_sha`` come from the trusted launch
+    context. ``ACCEPTANCE_DECISION`` remains ``PENDING`` until the independent
+    reviewer upgrades it.
+    """
+    adapted = {
+        "agent": "agy",
+        "issue_identifier": packet["TASK_ID"],
+        "branch": context.source_branch,
+        "base_branch": context.base_branch,
+        "source_branch": context.source_branch,
+        "source_path": context.source_path,
+        "source_commit_sha": context.candidate_commit,
+        "base_commit_sha": context.base_commit,
+        "changed_files": list(packet["CHANGED_PATHS"]),
+        "pr_url": None,
+        "result_artifacts": list(packet["result_artifacts"]),
+        "verification": {
+            "commands": list(packet["COMMAND"]),
+            "result": packet["RESULT"],
+            "log_path": packet["LOG"],
+            "ad_hoc_or_canonical": packet["AD_HOC_OR_CANONICAL"],
+        },
+        "proof": {
+            "commands": list(packet["COMMAND"]),
+            "result": packet["RESULT"],
+            "log_path": packet["LOG"],
+            "log_sha256": packet["LOG_SHA256"],
+            "scope": packet["SCOPE"],
+            "marker": packet["MARKER"],
+            "ad_hoc_or_canonical": packet["AD_HOC_OR_CANONICAL"],
+            "non_claims": list(packet["NOT_CLAIMING"]),
+            "attempt_id": packet["ATTEMPT_ID"],
+            "candidate_tree": packet["CANDIDATE_TREE"],
+            "proof_classes": list(packet["PROOF_CLASSES"]),
+            "side_effects": dict(packet["SIDE_EFFECTS"]),
+            "blockers": list(packet["BLOCKERS"]),
+        },
+        "v02_closeout": dict(packet),
+        "trusted_launch_context": {
+            "issue_identifier": context.issue_identifier,
+            "source_branch": context.source_branch,
+            "base_branch": context.base_branch,
+            "source_path": context.source_path,
+            "candidate_commit": context.candidate_commit,
+            "candidate_tree": context.candidate_tree,
+            "base_commit": context.base_commit,
+        },
+        "non_claims": list(packet["NOT_CLAIMING"]),
+        "merge_lane": packet["merge_lane"],
+        "risk_level": packet["risk_level"],
+        "next_action": packet["NEXT_ACTION"],
+        "marker": AGY_RESULT_PACKET_MARKER,
+        "ACCEPTANCE_DECISION": "PENDING",
+    }
+    return adapted
+
+
+def _validate_v02_packet_with_launch(packet: Mapping[str, Any], context) -> None:
+    validator = _load_validator_module()
+    outcome = validator.validate_closeout_packet(packet, launch_context=context)
+    outcome.raise_for_status()
+
+
 def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Adapt canonical AGY result packets into the completed-work gate dialect.
 
@@ -101,9 +244,45 @@ def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     source_branch, proof, and object-shaped lane_scope. This adapter fills only
     derivable, safe fields and leaves genuinely missing provenance absent so the
     gate can reject it explicitly.
+
+    Tasks at or above the v0.2 closeout cutoff (issue number ``>= 4500``) MUST
+    be validated with a trusted launch context. If the dispatcher has not
+    supplied a context, the v0.2 packet is rejected with ``INVALID_CLOSEOUT``
+    before any normalization, gate classification, durable evidence retention,
+    or SQLite upsert.
     """
 
     normalized = _json_object(packet, "packet")
+    context = _launch_context_from_settings()
+    trusted_issue = context.issue_identifier if context is not None else None
+    if requires_v02_closeout(normalized, trusted_issue=trusted_issue):
+        if not is_v02_closeout_packet(normalized):
+            raise ValueError("GRO-4500+ AGY packets require the v0.2 closeout contract")
+        if context is None:
+            raise ValueError(
+                "GRO-4500+ AGY packet missing trusted launch context "
+                "(PRISMATIC_DISPATCH_* env vars)"
+            )
+        _validate_v02_packet_with_launch(normalized, context)
+        normalized = _adapt_v02_packet_with_context(normalized, context)
+        # Reject any spoofed optional provenance in the lossless v02_closeout
+        # payload that contradicts the trusted launch context. The validator
+        # already binds required fields; this catches optional fields that
+        # the schema permits but the trusted dispatcher would not allow.
+        retained = normalized.get("v02_closeout")
+        if isinstance(retained, Mapping):
+            for field in ("SOURCE_BRANCH", "BASE_BRANCH", "SOURCE_PATH"):
+                spoofed = retained.get(field)
+                trusted = {
+                    "SOURCE_BRANCH": context.source_branch,
+                    "BASE_BRANCH": context.base_branch,
+                    "SOURCE_PATH": context.source_path,
+                }[field]
+                if isinstance(spoofed, str) and spoofed != trusted:
+                    raise ValueError(
+                        f"spoofed {field}='{spoofed}' contradicts trusted context "
+                        f"'{trusted}'"
+                    )
     issue = _safe_slug(
         _string(normalized.get("issue_identifier"))
         or _string(normalized.get("issue_id"))
@@ -244,14 +423,23 @@ def _normalize_lane_scope(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
         lane = {"name": lane_name}
     changed = _string_list(packet.get("changed_files"))
-    if packet.get("risk_level") == "high" or packet.get("next_action") in {
-        "needs-human-review",
-        "needs-fred-cleanup",
-    }:
+    acceptance = _string(packet.get("ACCEPTANCE_DECISION"))
+    if (
+        acceptance == "PENDING"
+        or packet.get("risk_level") == "high"
+        or packet.get("next_action")
+        in {
+            "needs-human-review",
+            "needs-fred-cleanup",
+        }
+    ):
         lane.setdefault("touched_paths", changed)
         lane.setdefault("allowed_paths", [])
         lane.setdefault(
-            "manual_review_reason", "raw AGY risk/next_action requires manual review"
+            "manual_review_reason",
+            "awaiting_review_factory_decision"
+            if acceptance == "PENDING"
+            else "raw AGY risk/next_action requires manual review",
         )
         return lane
     lane.setdefault("touched_paths", changed)
@@ -1289,6 +1477,12 @@ class CompletedWorkRow:
         }
 
 
+def _packets_equal(p1: Mapping[str, Any], p2: Mapping[str, Any]) -> bool:
+    return json.dumps(dict(p1), sort_keys=True, default=str) == json.dumps(
+        dict(p2), sort_keys=True, default=str
+    )
+
+
 class AgyCompletedWorkStore:
     """SQLite store for completed AGY packets and gate decisions."""
 
@@ -1431,6 +1625,43 @@ class AgyCompletedWorkStore:
         source_is_stale: bool = False,
         conflicts: Sequence[str] | None = None,
     ) -> CompletedWorkRow:
+        """Ingest a completed-work result packet (closeout).
+
+        After the row is durably stored, eligible work is enqueued into the
+        Review Factory on a best-effort basis: ingestion is the system of
+        record and never fails because the review queue is unavailable.
+        """
+        row = self._ingest_packet(
+            packet,
+            dirty_source=dirty_source,
+            source_is_stale=source_is_stale,
+            conflicts=conflicts,
+        )
+        self._enqueue_review_factory_best_effort(row)
+        return row
+
+    def _enqueue_review_factory_best_effort(self, row: CompletedWorkRow) -> None:
+        """Enqueue freshly ingested completed work into the Review Factory.
+
+        Best-effort: failures are logged and never propagate, so completed-
+        work closeout stays durable even if the review queue is down.
+        """
+        try:
+            from prismatic.review_factory.backlog_importer import BacklogImporter
+
+            if BacklogImporter().ingest_completed_work_row(row):
+                logger.info("review factory: enqueued completed work %s", row.id)
+        except Exception as exc:  # never break ingestion
+            logger.warning("review factory: enqueue skipped for %s: %s", row.id, exc)
+
+    def _ingest_packet(
+        self,
+        packet: Mapping[str, Any],
+        *,
+        dirty_source: bool = False,
+        source_is_stale: bool = False,
+        conflicts: Sequence[str] | None = None,
+    ) -> CompletedWorkRow:
         if is_raw_agy_result_packet(packet):
             # Canonical raw AGY packets must pass the strict contract before any
             # normalization, gate classification, durable evidence retention, or
@@ -1443,7 +1674,7 @@ class AgyCompletedWorkStore:
             dirty_source=dirty_source,
             source_is_stale=source_is_stale,
             conflicts=conflicts or (),
-            trusted_agents=("agy", "fred", "jules"),
+            trusted_agents=("agy", "fred", "jules", "kai", "george"),
         )
         raw_proof = normalized_packet.get("proof")
         proof: Mapping[str, Any] = raw_proof if isinstance(raw_proof, Mapping) else {}
@@ -1453,42 +1684,59 @@ class AgyCompletedWorkStore:
             non_claims = tuple()
         now = datetime.now(timezone.utc).isoformat()
         row_id = completed_work_id(normalized_packet)
-        gate_payload = gate.as_dict()
-        classification = gate.classification.value
-        evidence_retention = retain_completed_work_evidence(
-            row_id=row_id,
-            created_at=now,
-            updated_at=now,
-            packet=normalized_packet,
-            gate_payload=gate_payload,
-            classification=classification,
-            packet_classification=packet_classification_for(normalized_packet),
-            integration_classification=integration_classification_for(
-                classification, gate.proof_result
-            ),
-            evidence_root=self.evidence_dir,
-        )
-        values = (
-            row_id,
-            now,
-            now,
-            gate.agent,
-            gate.source_branch,
-            gate.source_path,
-            gate.base_branch,
-            classification,
-            1 if gate.eligible_for_merge else 0,
-            1 if gate.requires_clean_rebuild else 0,
-            gate.proof_result,
-            gate.proof_marker,
-            AGY_COMPLETED_WORK_MARKER,
-            AGY_COMPLETED_WORK_INGESTION_MARKER,
-            json.dumps(normalized_packet, sort_keys=True),
-            json.dumps(gate_payload, sort_keys=True),
-            json.dumps(list(non_claims), sort_keys=True),
-            json.dumps(evidence_retention, sort_keys=True),
-        )
+
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT * FROM agy_completed_work WHERE id = ?", (row_id,)
+            ).fetchone()
+            if existing is not None:
+                existing_row = row_from_sqlite(existing)
+                if _packets_equal(existing_row.packet, normalized_packet):
+                    conn.rollback()
+                    return existing_row
+                conn.rollback()
+                raise AgyCompletedWorkConflictError(
+                    f"deterministic completed-work ID conflict for '{row_id}': incoming packet differs from existing immutable row"
+                )
+
+            # Hold the writer lock through evidence retention and insertion so a
+            # conflicting packet cannot race to establish the shared bundle.
+            gate_payload = gate.as_dict()
+            classification = gate.classification.value
+            evidence_retention = retain_completed_work_evidence(
+                row_id=row_id,
+                created_at=now,
+                updated_at=now,
+                packet=normalized_packet,
+                gate_payload=gate_payload,
+                classification=classification,
+                packet_classification=packet_classification_for(normalized_packet),
+                integration_classification=integration_classification_for(
+                    classification, gate.proof_result
+                ),
+                evidence_root=self.evidence_dir,
+            )
+            values = (
+                row_id,
+                now,
+                now,
+                gate.agent,
+                gate.source_branch,
+                gate.source_path,
+                gate.base_branch,
+                classification,
+                1 if gate.eligible_for_merge else 0,
+                1 if gate.requires_clean_rebuild else 0,
+                gate.proof_result,
+                gate.proof_marker,
+                AGY_COMPLETED_WORK_MARKER,
+                AGY_COMPLETED_WORK_INGESTION_MARKER,
+                json.dumps(normalized_packet, sort_keys=True),
+                json.dumps(gate_payload, sort_keys=True),
+                json.dumps(list(non_claims), sort_keys=True),
+                json.dumps(evidence_retention, sort_keys=True),
+            )
             conn.execute(
                 """
                 INSERT INTO agy_completed_work (
@@ -1498,23 +1746,6 @@ class AgyCompletedWorkStore:
                     gate_marker, ingestion_marker, packet_json, gate_json,
                     non_claims_json, evidence_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    updated_at = excluded.updated_at,
-                    agent = excluded.agent,
-                    source_branch = excluded.source_branch,
-                    source_path = excluded.source_path,
-                    base_branch = excluded.base_branch,
-                    classification = excluded.classification,
-                    eligible_for_merge = excluded.eligible_for_merge,
-                    requires_clean_rebuild = excluded.requires_clean_rebuild,
-                    proof_result = excluded.proof_result,
-                    proof_marker = excluded.proof_marker,
-                    gate_marker = excluded.gate_marker,
-                    ingestion_marker = excluded.ingestion_marker,
-                    packet_json = excluded.packet_json,
-                    gate_json = excluded.gate_json,
-                    non_claims_json = excluded.non_claims_json,
-                    evidence_json = agy_completed_work.evidence_json
                 """,
                 values,
             )

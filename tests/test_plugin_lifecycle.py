@@ -28,6 +28,19 @@ from prismatic.plugins.lifecycle_manager import (
     _ALLOWED_TRANSITIONS,
 )
 
+# ── generic plugin lifecycle manager (Part A) test imports ──────────────
+import importlib
+
+import pytest
+
+from prismatic.core.registry import (
+    PluginLoader,
+    get_default_plugin_loader,
+    plugin_state_file,
+    set_default_plugin_loader,
+)
+from prismatic.interface.plugin import PluginContext, PluginValidationError
+
 
 class TestStateMachineTransitions(unittest.TestCase):
     """Verify that the state machine enforces valid transitions."""
@@ -484,3 +497,462 @@ class TestStateTransitionMatrix(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Generic plugin lifecycle manager — PluginLoader.attach / enable /
+# disable / unload with suspend/resume state (Part A).
+#
+# These tests exercise the contract in docs/plugin-lifecycle.md with a
+# tiny fixture plugin written to a tmp plugins dir. They are appended to
+# this file (rather than replacing it) so the sandbox-lifecycle tests
+# above keep running unchanged.
+# ─────────────────────────────────────────────────────────────────────
+
+_LIFECYCLE_FIXTURE_SEQ = 0
+
+
+def _lifecycle_fixture_plugin(tmp_path, *, name, extra_manifest=""):
+    """Write a tiny fixture plugin dir; return its paths and identifiers.
+
+    Each call uses a unique package/module name so import caching can
+    never leak plugin classes across tests.
+    """
+    global _LIFECYCLE_FIXTURE_SEQ
+    _LIFECYCLE_FIXTURE_SEQ += 1
+    seq = _LIFECYCLE_FIXTURE_SEQ
+    package = f"lifecycle_fixture_{seq}"
+    class_name = f"LifecycleFixture{seq}Plugin"
+    tool_name = f"{name}-tool"
+
+    plugin_py = (
+        "from __future__ import annotations\n"
+        "\n"
+        "from typing import Any, Dict, List\n"
+        "\n"
+        "from prismatic.interface.plugin import PluginContext, PrismaticPlugin\n"
+        "\n"
+        "\n"
+        f"class {class_name}(PrismaticPlugin):\n"
+        "    hook_calls: List = []\n"
+        "    resumed_with: List = []\n"
+        "    raise_on_suspend: bool = False\n"
+        "\n"
+        "    def on_init(self, context: PluginContext) -> None:\n"
+        "        self.context = context\n"
+        "\n"
+        "    def register_tools(self) -> List[Dict[str, Any]]:\n"
+        f"        return [{{\"name\": \"{tool_name}\","
+        ' "description": "lifecycle fixture tool"}]\n'
+        "\n"
+        "    def on_pre_pipeline(self, pipeline_id: str,\n"
+        "                        context: Dict[str, Any]) -> None:\n"
+        '        type(self).hook_calls.append(("on_pre_pipeline", pipeline_id))\n'
+        "\n"
+        "    def on_suspend(self) -> Dict[str, Any]:\n"
+        "        if type(self).raise_on_suspend:\n"
+        '            raise RuntimeError("boom in on_suspend")\n'
+        '        return {"marker": "suspended", "count": 7}\n'
+        "\n"
+        "    def on_resume(self, state: Dict[str, Any]) -> None:\n"
+        "        type(self).resumed_with.append(dict(state))\n"
+    )
+
+    manifest = (
+        'schema_version: "1.0.0"\n'
+        f'name: "{name}"\n'
+        'version: "0.3.1"\n'
+        'description: "lifecycle fixture plugin"\n'
+        f'entry_point: "{package}.plugin:{class_name}"\n'
+        'core_version_constraint: ">=0.1.0, <2.0.0"\n' + extra_manifest
+    )
+
+    plugin_dir = tmp_path / "plugins" / package
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.py").write_text(plugin_py, encoding="utf-8")
+    manifest_path = plugin_dir / "plugin-manifest.yaml"
+    manifest_path.write_text(manifest, encoding="utf-8")
+    return {
+        "name": name,
+        "package": package,
+        "class_name": class_name,
+        "tool_name": tool_name,
+        "manifest_path": manifest_path,
+        "plugin_dir": plugin_dir,
+    }
+
+
+def _lifecycle_plugin_class(fixture):
+    """Import the fixture plugin class and reset its class-level spies."""
+    module = importlib.import_module(f"{fixture['package']}.plugin")
+    cls = getattr(module, fixture["class_name"])
+    cls.hook_calls.clear()
+    cls.resumed_with.clear()
+    cls.raise_on_suspend = False
+    return cls
+
+
+def _lifecycle_context(tmp_path, config=None):
+    return PluginContext(
+        config=dict(config or {}),
+        db_connection=None,
+        state_dir=str(tmp_path),
+    )
+
+
+def _lifecycle_loader(tmp_path):
+    return PluginLoader(
+        core_version="0.2.0", plugins_dir=str(tmp_path / "plugins")
+    )
+
+
+@pytest.fixture(autouse=True)
+def _reset_default_plugin_loader():
+    """PluginLoader registers itself as the process default on init;
+    reset it after every test so loader instances never leak between
+    tests in this file."""
+    yield
+    set_default_plugin_loader(None)
+
+
+class TestGenericPluginLifecycle:
+    """Full attach → hook → disable → enable → unload → re-attach cycle."""
+
+    def test_full_lifecycle_cycle(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        fx = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-demo")
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+
+        # attach → returns the plugin name; loaded and enabled.
+        assert loader.attach(fx["manifest_path"], context=ctx) == "lifecycle-demo"
+        cls = _lifecycle_plugin_class(fx)
+        assert loader.plugin_status("lifecycle-demo") == {
+            "enabled": True,
+            "loaded": True,
+            "state_preserved": False,
+            "version": "0.3.1",
+        }
+
+        # Hook fires while the plugin is enabled.
+        loader.execute_hook("on_pre_pipeline", "pipe-1", {})
+        assert cls.hook_calls == [("on_pre_pipeline", "pipe-1")]
+
+        # disable → hook stops firing; state.json written with the
+        # suspend payload.
+        payload = loader.disable("lifecycle-demo")
+        assert payload["version"] == 1
+        assert payload["state"] == {"marker": "suspended", "count": 7}
+        assert payload["saved_at"]
+        loader.execute_hook("on_pre_pipeline", "pipe-2", {})
+        assert cls.hook_calls == [("on_pre_pipeline", "pipe-1")]
+
+        state_path = plugin_state_file("lifecycle-demo")
+        assert state_path.exists()
+        on_disk = json.loads(state_path.read_text(encoding="utf-8"))
+        assert on_disk["version"] == 1
+        assert on_disk["state"] == {"marker": "suspended", "count": 7}
+        assert on_disk["saved_at"] == payload["saved_at"]
+
+        status = loader.plugin_status("lifecycle-demo")
+        assert status["enabled"] is False
+        assert status["loaded"] is True
+        assert status["state_preserved"] is True
+
+        # enable → on_resume receives the exact preserved state; the
+        # hook bus dispatches to the plugin again.
+        loader.enable("lifecycle-demo")
+        assert cls.resumed_with[-1] == {"marker": "suspended", "count": 7}
+        loader.execute_hook("on_pre_pipeline", "pipe-3", {})
+        assert cls.hook_calls[-1] == ("on_pre_pipeline", "pipe-3")
+        assert loader.plugin_status("lifecycle-demo")["enabled"] is True
+
+        # unload → instance dropped from loaded_plugins; state file stays.
+        loader.unload("lifecycle-demo")
+        assert "lifecycle-demo" not in loader.loaded_plugins
+        assert state_path.exists()
+        status = loader.plugin_status("lifecycle-demo")
+        assert status["loaded"] is False
+        assert status["state_preserved"] is True
+        assert status["enabled"] is False
+
+        # attach again → instance back, tools NOT duplicated, state
+        # intact; enable() resumes with the original suspend payload.
+        loader.attach(fx["manifest_path"], context=ctx)
+        assert "lifecycle-demo" in loader.loaded_plugins
+        assert (
+            sum(1 for t in loader.registered_tools if t["name"] == fx["tool_name"])
+            == 1
+        )
+        loader.enable("lifecycle-demo")
+        assert cls.resumed_with[-1] == {"marker": "suspended", "count": 7}
+
+    def test_config_schema_valid_config_passes(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        extra = (
+            "config_schema:\n"
+            "  type: object\n"
+            "  properties:\n"
+            "    retries:\n"
+            "      type: integer\n"
+            "      minimum: 0\n"
+            "    mode:\n"
+            "      type: string\n"
+            "      enum: [fast, slow]\n"
+            "  required: [retries]\n"
+        )
+        fx = _lifecycle_fixture_plugin(
+            tmp_path, name="lifecycle-cfg", extra_manifest=extra
+        )
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        config = {"retries": 3, "mode": "fast"}
+        assert (
+            loader.attach(fx["manifest_path"], config=config, context=ctx)
+            == "lifecycle-cfg"
+        )
+        assert loader.plugin_configs["lifecycle-cfg"] == config
+        # The plugin sees its validated config under
+        # context.config["plugin_configs"][name].
+        plugin = loader.loaded_plugins["lifecycle-cfg"]
+        assert plugin.context.config["plugin_configs"]["lifecycle-cfg"] == config
+
+    def test_config_schema_invalid_config_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        extra = (
+            "config_schema:\n"
+            "  type: object\n"
+            "  properties:\n"
+            "    retries:\n"
+            "      type: integer\n"
+            "      minimum: 0\n"
+            "  required: [retries]\n"
+        )
+        fx = _lifecycle_fixture_plugin(
+            tmp_path, name="lifecycle-badcfg", extra_manifest=extra
+        )
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        with pytest.raises(PluginValidationError):
+            loader.attach(
+                fx["manifest_path"], config={"retries": -1}, context=ctx
+            )
+        assert "lifecycle-badcfg" not in loader.loaded_plugins
+
+    def test_config_schema_required_config_missing_raises(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        extra = (
+            "config_schema:\n"
+            "  type: object\n"
+            "  properties:\n"
+            "    retries:\n"
+            "      type: integer\n"
+            "  required: [retries]\n"
+        )
+        fx = _lifecycle_fixture_plugin(
+            tmp_path, name="lifecycle-reqcfg", extra_manifest=extra
+        )
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        with pytest.raises(PluginValidationError):
+            loader.attach(fx["manifest_path"], config=None, context=ctx)
+        assert "lifecycle-reqcfg" not in loader.loaded_plugins
+
+    def test_scan_uses_plugin_configs_from_context(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        extra = (
+            "config_schema:\n"
+            "  type: object\n"
+            "  properties:\n"
+            "    retries:\n"
+            "      type: integer\n"
+            "  required: [retries]\n"
+        )
+        fx = _lifecycle_fixture_plugin(
+            tmp_path, name="lifecycle-scan-cfg", extra_manifest=extra
+        )
+        ctx = _lifecycle_context(
+            tmp_path,
+            config={"plugin_configs": {"lifecycle-scan-cfg": {"retries": 1}}},
+        )
+        loader = _lifecycle_loader(tmp_path)
+        loader.scan_and_load_plugins(ctx)
+        assert "lifecycle-scan-cfg" in loader.loaded_plugins
+        assert loader.plugin_configs["lifecycle-scan-cfg"] == {"retries": 1}
+
+    def test_auto_enable_false_starts_disabled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        fx = _lifecycle_fixture_plugin(
+            tmp_path,
+            name="lifecycle-quiet",
+            extra_manifest="auto_enable: false\n",
+        )
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        loader.scan_and_load_plugins(ctx)
+        cls = _lifecycle_plugin_class(fx)
+
+        # Registered (instance loaded) but DISABLED at scan time.
+        assert "lifecycle-quiet" in loader.loaded_plugins
+        status = loader.plugin_status("lifecycle-quiet")
+        assert status["enabled"] is False
+        assert status["loaded"] is True
+
+        # Hook bus skips it until enable().
+        loader.execute_hook("on_pre_pipeline", "pipe-1", {})
+        assert cls.hook_calls == []
+
+        loader.enable("lifecycle-quiet")
+        # No state file existed → on_resume got {}.
+        assert cls.resumed_with[-1] == {}
+        loader.execute_hook("on_pre_pipeline", "pipe-2", {})
+        assert cls.hook_calls == [("on_pre_pipeline", "pipe-2")]
+
+    def test_enable_reloads_after_unload(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        fx = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-reload")
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        loader.attach(fx["manifest_path"], context=ctx)
+        cls = _lifecycle_plugin_class(fx)
+        first_instance = loader.loaded_plugins["lifecycle-reload"]
+
+        loader.unload("lifecycle-reload")
+        assert "lifecycle-reload" not in loader.loaded_plugins
+
+        # enable() re-loads the dropped instance (on_init fires again)
+        # and resumes with the preserved suspend state.
+        loader.enable("lifecycle-reload")
+        assert "lifecycle-reload" in loader.loaded_plugins
+        assert loader.loaded_plugins["lifecycle-reload"] is not first_instance
+        assert cls.resumed_with[-1] == {"marker": "suspended", "count": 7}
+        assert loader.plugin_status("lifecycle-reload")["enabled"] is True
+
+    def test_disable_isolates_on_suspend_failure(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        fx = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-flaky")
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        loader.attach(fx["manifest_path"], context=ctx)
+        cls = _lifecycle_plugin_class(fx)
+
+        cls.raise_on_suspend = True
+        try:
+            payload = loader.disable("lifecycle-flaky")
+        finally:
+            cls.raise_on_suspend = False
+
+        # A crashing on_suspend never breaks disable(): empty state is
+        # preserved and the plugin is still marked disabled.
+        assert payload["state"] == {}
+        assert plugin_state_file("lifecycle-flaky").exists()
+        assert loader.plugin_status("lifecycle-flaky")["enabled"] is False
+
+    def test_unknown_plugin_operations_raise(self, tmp_path):
+        loader = _lifecycle_loader(tmp_path)
+        with pytest.raises(PluginValidationError):
+            loader.enable("no-such-plugin")
+        with pytest.raises(PluginValidationError):
+            loader.disable("no-such-plugin")
+        with pytest.raises(PluginValidationError):
+            loader.unload("no-such-plugin")
+        assert loader.plugin_status("no-such-plugin") == {
+            "enabled": False,
+            "loaded": False,
+            "state_preserved": False,
+            "version": "",
+        }
+
+    def test_all_plugin_status(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        fx1 = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-a")
+        fx2 = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-b")
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        loader.attach(fx1["manifest_path"], context=ctx)
+        loader.attach(fx2["manifest_path"], context=ctx)
+        loader.disable("lifecycle-b")
+
+        statuses = loader.all_plugin_status()
+        assert set(statuses) == {"lifecycle-a", "lifecycle-b"}
+        assert statuses["lifecycle-a"] == {
+            "enabled": True,
+            "loaded": True,
+            "state_preserved": False,
+            "version": "0.3.1",
+        }
+        assert statuses["lifecycle-b"]["enabled"] is False
+        assert statuses["lifecycle-b"]["state_preserved"] is True
+
+
+class TestPluginLifecycleDashboard:
+    """Dashboard surfaces expose per-plugin enabled + state_preserved."""
+
+    def test_lifecycle_endpoint_merges_loader_status(
+        self, tmp_path, monkeypatch
+    ):
+        from fastapi.testclient import TestClient
+
+        from prismatic.gateway import server as gateway_server
+
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("PRISMATIC_PLUGINS_DIR", str(tmp_path / "plugins"))
+        fx = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-dash")
+        ctx = _lifecycle_context(tmp_path)
+        loader = _lifecycle_loader(tmp_path)
+        loader.attach(fx["manifest_path"], context=ctx)
+        loader.disable("lifecycle-dash")
+
+        client = TestClient(gateway_server.app)
+        resp = client.get("/api/plugins/lifecycle")
+        assert resp.status_code == 200
+        item = next(
+            p for p in resp.json()["plugins"] if p["name"] == "lifecycle-dash"
+        )
+        assert item["enabled"] is False
+        assert item["loaded"] is True
+        assert item["state_preserved"] is True
+        assert item["version"] == "0.3.1"
+        assert item["lifecycle"]["enabled"] is False
+
+        # Governance items carry the same operator-visible fields, with
+        # all pre-existing fields intact.
+        gov = client.get("/api/plugins/governance")
+        assert gov.status_code == 200
+        gitem = next(
+            p for p in gov.json()["plugins"] if p["name"] == "lifecycle-dash"
+        )
+        assert gitem["enabled"] is False
+        assert gitem["state_preserved"] is True
+        assert "governance" in gitem
+        assert "status" in gitem
+
+    def test_lifecycle_endpoint_without_loader_uses_disk_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        from fastapi.testclient import TestClient
+
+        from prismatic.gateway import server as gateway_server
+
+        monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("PRISMATIC_PLUGINS_DIR", str(tmp_path / "plugins"))
+        fx = _lifecycle_fixture_plugin(tmp_path, name="lifecycle-disk")
+        # Write a state file directly — no loader running in this process.
+        state_path = plugin_state_file("lifecycle-disk")
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps({"version": 1, "saved_at": "t", "state": {}}),
+            encoding="utf-8",
+        )
+        assert get_default_plugin_loader() is None
+
+        client = TestClient(gateway_server.app)
+        resp = client.get("/api/plugins/lifecycle")
+        assert resp.status_code == 200
+        item = next(
+            p for p in resp.json()["plugins"] if p["name"] == "lifecycle-disk"
+        )
+        assert item["state_preserved"] is True
+        assert item["loaded"] is False

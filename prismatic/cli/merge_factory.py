@@ -23,7 +23,7 @@ def _get_token() -> str:
     if os.path.exists(token_file_path):
         stat_info = os.stat(token_file_path)
         # Enforce mode 0600 or stricter (no group/other access)
-        if (stat_info.st_mode & 0o077) != 0:
+        if os.name != "nt" and (stat_info.st_mode & 0o077) != 0:
             raise PermissionError(
                 f"Token file {token_file_path} permissions are too open. Must be mode 0600 or stricter."
             )
@@ -33,11 +33,21 @@ def _get_token() -> str:
                 return t
 
     raise PermissionError(
-        "Authentication token not found. Please set PRISMATIC_BEARER_TOKEN or configure a mode-0600 token file at ~/.prismatic_token."
+        "No valid bearer token found. Set PRISMATIC_BEARER_TOKEN or provide a secure PRISMATIC_TOKEN_FILE."
     )
 
 
-def main(argv: Sequence[str]) -> int:
+def _get_lock_token(*, required: bool) -> str:
+    """Read the lock capability without exposing it in process arguments."""
+    token = os.environ.get("PRISMATIC_MERGE_LOCK_TOKEN", "").strip()
+    if required and len(token) < 32:
+        raise PermissionError(
+            "PRISMATIC_MERGE_LOCK_TOKEN must contain the acquisition token"
+        )
+    return token
+
+
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="prismatic merge-factory",
         description="Manage cohorts, leases, locks, and attestations",
@@ -250,6 +260,7 @@ def main(argv: Sequence[str]) -> int:
                     approval_attestation_id=args.approval_attestation_id,
                     ttl_seconds=args.ttl,
                     principal=p,
+                    acquisition_token=_get_lock_token(required=False),
                 )
                 print(f"Acquired lock: {res}")
             elif args.lock_cmd == "heartbeat":
@@ -264,11 +275,18 @@ def main(argv: Sequence[str]) -> int:
                     evidence_digest=args.evidence_digest,
                     approval_attestation_id=args.approval_attestation_id,
                     principal=p,
+                    acquisition_token=_get_lock_token(required=True),
                 )
                 print(f"Heartbeated lock: {res}")
             elif args.lock_cmd == "release":
                 p = get_authenticated_principal(_get_token())
-                store.release_lock(args.repository, args.target, args.issue_id, p)
+                store.release_lock(
+                    args.repository,
+                    args.target,
+                    args.issue_id,
+                    p,
+                    _get_lock_token(required=True),
+                )
                 print(f"Released lock for {args.repository}:{args.target}")
             else:
                 lock.print_help()

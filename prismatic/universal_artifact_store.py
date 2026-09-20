@@ -10,7 +10,10 @@ artifact receipts and proof logs.
 from __future__ import annotations
 
 import datetime
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import hashlib
 import json
 import math
@@ -51,7 +54,8 @@ class CrossProcessLock:
                 self.lock_file.parent.mkdir(parents=True, exist_ok=True)
                 flags = os.O_RDWR | os.O_CREAT
                 self._fd = os.open(str(self.lock_file), flags, 0o600)
-                fcntl.flock(self._fd, fcntl.LOCK_EX)
+                if fcntl is not None:
+                    fcntl.flock(self._fd, fcntl.LOCK_EX)
             except Exception:
                 self._thread_lock.release()
                 raise
@@ -63,7 +67,8 @@ class CrossProcessLock:
             self._ref_count -= 1
             if self._ref_count == 0 and self._fd is not None:
                 try:
-                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+                    if fcntl is not None:
+                        fcntl.flock(self._fd, fcntl.LOCK_UN)
                     os.close(self._fd)
                 except Exception:
                     pass

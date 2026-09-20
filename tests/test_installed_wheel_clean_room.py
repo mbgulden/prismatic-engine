@@ -12,6 +12,7 @@ Verifies that:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -48,6 +49,16 @@ def test_wheel_and_sdist_content_inspection(tmp_path: Path) -> None:
             "prismatic/shipped_plugins/pwp/plugin.py",
             "prismatic/shipped_plugins/prismatic_hello_world/plugin-manifest.yaml",
             "prismatic/shipped_plugins/prismatic_hello_world/plugin.py",
+            "prismatic/resources/antigravity/workspace/agents/skills.json",
+            "prismatic/resources/antigravity/workspace/agents/rules/prismatic-engine.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-agy-execution/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-agy-execution/templates/task.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-agy-execution/templates/implementation-plan.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-agy-execution/templates/result.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-context-discipline/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-engine-operations/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-evidence-and-review/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-worktree-safety/SKILL.md",
         ]
         for item in required_wheel_files:
             assert item in members, f"Wheel missing required file {item}"
@@ -78,21 +89,27 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
 
     venv_dir = tmp_path / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
-    venv_py = venv_dir / "bin" / "python"
-    venv_pip = venv_dir / "bin" / "pip"
+    bindir = "Scripts" if sys.platform == "win32" else "bin"
+    venv_py = venv_dir / bindir / ("python.exe" if sys.platform == "win32" else "python")
 
-    subprocess.run([str(venv_pip), "install", f"{wheel_path}[all]"], check=True)
+    subprocess.run([str(venv_py), "-m", "pip", "install", f"{wheel_path}[all]"], check=True)
 
     empty_cwd = tmp_path / "empty_cwd"
     empty_cwd.mkdir()
 
-    # Clean environment without PYTHONPATH or PRISMATIC_PLUGINS_DIR
+    # Clean environment without PYTHONPATH, PRISMATIC_PLUGINS_DIR, or auth overrides
     clean_env = {
         k: v
         for k, v in os.environ.items()
-        if k not in {"PYTHONPATH", "PRISMATIC_PLUGINS_DIR"}
+        if k not in {
+            "PYTHONPATH",
+            "PRISMATIC_PLUGINS_DIR",
+            "PRISMATIC_CONTROL_AUTH_FILE",
+            "PRISMATIC_CONTROL_KEY",
+            "PRISMATIC_NO_CONTROL_AUTH",
+        }
     }
-    clean_env["PATH"] = f"{venv_dir / 'bin'}:{clean_env.get('PATH', '')}"
+    clean_env["PATH"] = f"{venv_dir / bindir}{os.pathsep}{clean_env.get('PATH', '')}"
 
     # 1. Shipped plugin catalog includes and validates example-plugin
     cmd_cat = [
@@ -158,10 +175,42 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
         f"Policy block preview failed: {res_policy_block.stderr}\n{res_policy_block.stdout}"
     )
 
+    agy_contract = subprocess.run(
+        [str(venv_dir / "bin" / "prismatic"), "agy", "contract"],
+        cwd=empty_cwd,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    assert agy_contract.returncode == 0, agy_contract.stderr
+    contract = json.loads(agy_contract.stdout)
+    assert contract["transport"] == "tmux-durable-anchor"
+    assert contract["prompt_prefix"] == "/goal "
+    assert contract["runtime_deadline"] is None
+    assert contract["runtime_policy"] == "no-wall-clock-cap-progress-supervised"
+    registry_check = subprocess.run(
+        [
+            str(venv_py),
+            "-c",
+            "from importlib.resources import files; "
+            "import importlib; "
+            "p=files('prismatic.harnesses').joinpath('registry.json'); "
+            "assert p.is_file(); "
+            "assert importlib.import_module('prismatic.harnesses.agy_cli').AGYCLIHarness().name == 'agy-cli'; "
+            "assert importlib.import_module('prismatic.agy_activity').list_agy_activity_runs()['status'] == 'unavailable'",
+        ],
+        cwd=empty_cwd,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    assert registry_check.returncode == 0, registry_check.stderr
+
     smoke_env = {
         **clean_env,
         "PRISMATIC_EXPECT_INSTALLED_PREFIX": str(venv_dir),
         "HOME": str(tmp_path / "home"),
+        "PRISMATIC_NO_CONTROL_AUTH": "1",
     }
     public_smoke = subprocess.run(
         [str(venv_py), str(REPO_ROOT / "scripts/public_launch_smoke.py")],

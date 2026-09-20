@@ -56,11 +56,26 @@ def _print_github_provider(provider: ProviderReport) -> None:
     """Print the [GitHub] section for a single provider report."""
     print("\n[GitHub] Verifying GitHub API Connection...")
     print(f"  Credential Source: {provider.credential_source}")
+    print(
+        "  Role: "
+        + (
+            "REQUIRED BY LOCAL POLICY"
+            if provider.required
+            else "OPTIONAL TRANSPORT (not acceptance authority)"
+        )
+    )
     if provider.status == "disconnected":
         print("  Status: ✗ DISCONNECTED (No token discovered)")
         if provider.remediation:
             print(f"  Remediation: {provider.remediation}")
-        print("  Workflow Impact: AGY/Jules CLI workflow is BLOCKED.")
+        print(
+            "  Workflow Impact: "
+            + (
+                "BLOCKED by explicit local policy."
+                if provider.required
+                else "Hosted transport degraded; native verification remains available."
+            )
+        )
         return
     if provider.status == "auth_failed":
         print("  Status: ✗ API AUTHENTICATION FAILED")
@@ -68,7 +83,14 @@ def _print_github_provider(provider: ProviderReport) -> None:
             print(f"  Error Detail: {provider.error_detail}")
         if provider.api_message:
             print(f"  API Message: {provider.api_message}")
-        print("  Workflow Impact: AGY/Jules CLI workflow is BLOCKED.")
+        print(
+            "  Workflow Impact: "
+            + (
+                "BLOCKED by explicit local policy."
+                if provider.required
+                else "Hosted transport degraded; native verification remains available."
+            )
+        )
         return
     if provider.status != "connected":
         # unknown / n/a / skipped — print a minimal line and bail
@@ -77,9 +99,7 @@ def _print_github_provider(provider: ProviderReport) -> None:
 
     # Connected
     print("  Status: ✓ CONNECTED")
-    print(
-        f"  API User: @{provider.user} ({provider.user_name or 'N/A'})"
-    )
+    print(f"  API User: @{provider.user} ({provider.user_name or 'N/A'})")
     print(
         f"  Available Scopes: "
         f"{', '.join(provider.scopes) if provider.scopes else 'none'}"
@@ -103,10 +123,7 @@ def _print_github_provider(provider: ProviderReport) -> None:
         return
     if provider.repo_access_verified:
         perms = provider.repo_permissions or {}
-        p_str = (
-            f"push={perms.get('push', False)}, "
-            f"pull={perms.get('pull', False)}"
-        )
+        p_str = f"push={perms.get('push', False)}, pull={perms.get('pull', False)}"
         print(f"  Repo Access: ✓ VERIFIED ({p_str})")
     else:
         print("  Repo Access: ✗ FAILED to read repository info")
@@ -135,9 +152,25 @@ def _print_linear_provider(provider: ProviderReport) -> None:
         limit = rate_info.get("limit", 2500)
         consumed = rate_info.get("consumed", 0)
         pct = rate_info.get("utilization_pct", 0.0)
-        print(f"  Rate Limit: {remaining:.1f}/{limit} tokens remaining ({consumed} consumed last hour, {pct:.2f}% utilization)")
+        print(
+            f"  Rate Limit: {remaining:.1f}/{limit} tokens remaining ({consumed} consumed last hour, {pct:.2f}% utilization)"
+        )
     else:
         print("  Rate Limit: Unknown / not initialized")
+
+
+def _print_native_components(report: DoctorReport) -> None:
+    """Print provider-neutral required control-plane contracts."""
+
+    print("\n[Native Verification] Required provider-neutral components...")
+    print(f"  Acceptance Authority: {report.acceptance_authority}")
+    print(f"  Hosted CI Required: {str(report.hosted_ci_required).lower()}")
+    for component in report.native_components:
+        symbol = "✓" if component.status == "ok" else "✗"
+        print(
+            f"  {symbol} {component.name}: {component.status} "
+            f"[{component.role}] — {component.message}"
+        )
 
 
 def _print_capabilities(report: DoctorReport) -> None:
@@ -191,6 +224,7 @@ def run(args: Any) -> int:
         elif prov.name == "linear":
             _print_linear_provider(prov)
 
+    _print_native_components(report)
     _print_capabilities(report)
 
     print("\nDiagnostics complete.")

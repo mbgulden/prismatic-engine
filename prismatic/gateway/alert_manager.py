@@ -20,7 +20,6 @@ import json
 import logging
 import os
 import sqlite3
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -483,7 +482,7 @@ def create_alert_webhook_route(router: AlertRouter | None = None):
         from prismatic.gateway.alert_manager import create_alert_webhook_route
         app.include_router(create_alert_webhook_route())
     """
-    from fastapi import APIRouter, Response, Body
+    from fastapi import APIRouter, Body, Response
 
     alert_router = router or AlertRouter()
     api = APIRouter()
@@ -495,7 +494,6 @@ def create_alert_webhook_route(router: AlertRouter | None = None):
         Accepts a single alert or array of alerts in Alertmanager format.
         Each alert is routed through the severity-based routing tree.
         """
-        import urllib.request
 
         # Normalize to list
         alerts = body if isinstance(body, list) else [body]
@@ -554,7 +552,6 @@ def create_alert_webhook_route(router: AlertRouter | None = None):
         Accepts alert definitions and routes them through the real routing tree.
         Useful for testing Telegram/Slack/log sinks without waiting for real alerts.
         """
-        import urllib.request
 
         alerts = body if isinstance(body, list) else [body]
 

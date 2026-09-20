@@ -1,17 +1,21 @@
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import json
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import threading
 
 import pytest
+import prismatic.agy_completed_work as completed_work_module
 
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
     AGY_PACKET_NORMALIZATION_MARKER,
     GOVERNANCE_PROMOTION_DECISION_READ_MODEL_MARKER,
+    AgyCompletedWorkConflictError,
     AgyCompletedWorkStore,
     completed_work_id,
     ingest_completed_work_file,
@@ -318,6 +322,7 @@ def test_source_path_derivation_rejects_unsafe_artifact_paths(tmp_path):
     assert "missing packet fields: source_path" in row.gate["reasons"]
 
     traversal = canonical_agy_packet()
+    traversal["branch"] = "feature/agy-traversal-result"
     traversal["result_artifacts"] = [
         {"path": str(Path.home() / "work" / "prismatic-engine" / ".." / "secret.md")}
     ]
@@ -836,6 +841,7 @@ def test_promotion_decision_preserves_blocked_and_invalid_packet_state(tmp_path)
     blocked = packet()
     blocked["proof"]["result"] = "BLOCKED"
     malformed = packet()
+    malformed["source_branch"] = "feature/malformed-result"
     malformed["proof"]["result"] = "WHAT"
 
     blocked_promotion = store.ingest(blocked).as_dict()["promotion_decision"]
@@ -1166,3 +1172,119 @@ def test_existing_sqlite_schema_migrates_and_exposes_retention_state(tmp_path):
     assert legacy["evidence_retention"]["status"] == "unavailable"
     assert legacy["evidence_retention"]["historical_source_recovered"] is False
     assert legacy["evidence_retention"]["historical_log_recovered"] is False
+
+
+def test_exact_canonical_replay_creates_one_immutable_row(tmp_path):
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+    p = canonical_agy_packet()
+
+    first = store.ingest(p)
+    second = store.ingest(p)
+
+    assert first.id == second.id
+    assert first.created_at == second.created_at
+    assert first.updated_at == second.updated_at
+    assert len(store.list()) == 1
+
+
+def test_same_deterministic_id_with_different_packet_fails_atomically_and_leaves_db_unchanged(
+    tmp_path,
+):
+    db_path = tmp_path / "agy_completed_work.db"
+    evidence_dir = tmp_path / "evidence"
+    store = AgyCompletedWorkStore(db_path, evidence_dir=evidence_dir)
+
+    p1 = canonical_agy_packet()
+    first = store.ingest(p1)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        before_row = dict(
+            conn.execute(
+                "SELECT * FROM agy_completed_work WHERE id = ?", (first.id,)
+            ).fetchone()
+        )
+
+    manifest_path = Path(first.evidence_retention["manifest_path"])
+    before_manifest_bytes = manifest_path.read_bytes()
+
+    p2 = deepcopy(p1)
+    p2["verification"]["commands"] = ["python3 -m pytest -q tests/test_different.py"]
+
+    with pytest.raises(AgyCompletedWorkConflictError):
+        store.ingest(p2)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        after_row = dict(
+            conn.execute(
+                "SELECT * FROM agy_completed_work WHERE id = ?", (first.id,)
+            ).fetchone()
+        )
+
+    after_manifest_bytes = manifest_path.read_bytes()
+
+    assert before_row == after_row
+    assert before_manifest_bytes == after_manifest_bytes
+
+
+def test_trusted_agents_includes_kai_and_george(tmp_path):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+    kai_packet = packet()
+    kai_packet["agent"] = "kai"
+    kai_packet["source_branch"] = "feature/kai-canonical"
+
+    george_packet = packet()
+    george_packet["agent"] = "george"
+    george_packet["source_branch"] = "feature/george-canonical"
+
+    row_kai = store.ingest(kai_packet)
+    row_george = store.ingest(george_packet)
+
+    assert row_kai.classification == "merge_ready"
+    assert row_george.classification == "merge_ready"
+
+
+def test_concurrent_same_id_conflict_retains_only_winning_packet(tmp_path, monkeypatch):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+    first = packet()
+    first["result_summary"] = "first concurrent packet"
+    second = deepcopy(first)
+    second["result_summary"] = "second conflicting packet"
+    assert completed_work_id(first) == completed_work_id(second)
+
+    original_retain = completed_work_module.retain_completed_work_evidence
+    retained_packets = []
+    retained_lock = threading.Lock()
+
+    def recording_retain(**kwargs):
+        with retained_lock:
+            retained_packets.append(deepcopy(kwargs["packet"]))
+        return original_retain(**kwargs)
+
+    monkeypatch.setattr(
+        completed_work_module, "retain_completed_work_evidence", recording_retain
+    )
+    start = threading.Barrier(2)
+
+    def ingest(candidate):
+        start.wait(timeout=5)
+        try:
+            return ("row", store.ingest(candidate))
+        except AgyCompletedWorkConflictError:
+            return ("conflict", None)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result(timeout=10)
+            for future in (pool.submit(ingest, first), pool.submit(ingest, second))
+        ]
+
+    assert sorted(kind for kind, _ in results) == ["conflict", "row"]
+    winner = next(row for kind, row in results if kind == "row")
+    assert winner is not None
+    assert len(retained_packets) == 1
+    assert retained_packets[0] == winner.packet
+    assert store.get(winner.id).packet == winner.packet

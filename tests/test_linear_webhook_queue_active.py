@@ -1,16 +1,40 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import importlib
 import importlib.util
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+
+_TEST_LINEAR_SECRET = "test-linear-webhook-secret"
+
+
+def _linear_signature(body: bytes) -> str:
+    return hmac.new(
+        _TEST_LINEAR_SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+
+def _signed_linear_post(client: TestClient, url: str, payload: dict):
+    body = json.dumps(payload).encode()
+    return client.post(
+        url,
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "linear-signature": _linear_signature(body),
+        },
+    )
 
 
 def client_for_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_LINEAR_RATE_LIMIT_STATE", str(tmp_path / "linear_rate_limit_state.json"))
+    monkeypatch.setenv("PRISMATIC_LINEAR_WEBHOOK_SECRET", _TEST_LINEAR_SECRET)
     import prismatic.gateway.server as server
 
     server = importlib.reload(server)
@@ -42,8 +66,8 @@ def test_linear_webhook_persists_durable_queue_row_idempotently(tmp_path: Path, 
     client = client_for_state(tmp_path, monkeypatch)
     payload = fixture_payload()
 
-    first = client.post("/api/gateway/linear", json=payload)
-    second = client.post("/webhooks/linear", json=payload)
+    first = _signed_linear_post(client, "/api/gateway/linear", payload)
+    second = _signed_linear_post(client, "/webhooks/linear", payload)
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -73,7 +97,7 @@ def test_linear_webhook_persists_durable_queue_row_idempotently(tmp_path: Path, 
 def test_bounded_drain_transitions_one_fixture_without_live_linear(tmp_path: Path, monkeypatch):
     client = client_for_state(tmp_path, monkeypatch)
     payload = fixture_payload("evt-gro-test-drain")
-    client.post("/api/gateway/linear", json=payload)
+    _signed_linear_post(client, "/api/gateway/linear", payload)
 
     calls: list[str] = []
 
@@ -109,7 +133,7 @@ def test_bounded_drain_transitions_one_fixture_without_live_linear(tmp_path: Pat
 
 def test_retry_and_purge_are_real_queue_mutations(tmp_path: Path, monkeypatch):
     client = client_for_state(tmp_path, monkeypatch)
-    client.post("/api/gateway/linear", json=fixture_payload("evt-gro-test-mut"))
+    _signed_linear_post(client, "/api/gateway/linear", fixture_payload("evt-gro-test-mut"))
     item = client.get("/api/gateway/webhooks/queue").json()["items"][0]
 
     retry = client.post(f"/api/gateway/webhooks/queue/retry/{item['id']}").json()
@@ -131,7 +155,7 @@ def test_retry_and_purge_are_real_queue_mutations(tmp_path: Path, monkeypatch):
 
 def test_rate_limit_cooldown_defers_without_dispatch_attempt(tmp_path: Path, monkeypatch):
     client = client_for_state(tmp_path, monkeypatch)
-    client.post("/api/gateway/linear", json=fixture_payload("evt-gro-test-cooldown"))
+    _signed_linear_post(client, "/api/gateway/linear", fixture_payload("evt-gro-test-cooldown"))
 
     from prismatic.linear_rate_limit import LinearRateLimitState
 

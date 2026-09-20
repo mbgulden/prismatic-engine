@@ -518,12 +518,9 @@ Query all GRO issues with identifier, title, priority, state, labels, project, d
 Map each issue to its primary thread:
 
 - **Human Design Engine** — HD product, API, reports, SEO, marketing, revenue
-- **Active Oahu Tours Website** — site audit and Astro rebuild for activeoahutours.com
-- **Active Oahu Community Site** — site rebuild for activeoahu.com
-- **Your Hawaii Guide** — affiliate aggregator rebuild for yourhawaiiguide.com
-- **Active Oahu Media Library** — photo/video indexing, Google Tools integration, social pipeline, shop
-- **Hermes Agent Manager** — dashboard, plugins, swarm infrastructure, PTY, profiles
-- **Orchestration Router** — agent routing, dispatch, task intake, handoff contracts
+- **Web Properties & Storefronts** — headless portal builds, ecommerce, and performance optimization
+- **Digital Media & Asset Pipeline** — asset generation, video indexing, and automated publishing
+- **Prismatic Engine Hypervisor** — agent routing, dispatch, task intake, and verification contracts
 - **Sentinel ITAD** — IT asset logistics, resale, certifications
 - **Local GPU/LLM** — model serving, Qwen, Ollama, vLLM, benchmarks
 - **AI Consulting** — client SEO, consulting practice

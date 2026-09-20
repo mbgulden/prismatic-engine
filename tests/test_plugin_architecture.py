@@ -98,7 +98,7 @@ def test_plugin_interface_optional_methods_are_available() -> None:
 
 
 def test_live_plugin_catalog_exposes_pwp_and_media_capability_classes() -> None:
-    catalog = plugin_catalog(REPO_ROOT / "plugins")
+    catalog = plugin_catalog(get_shipped_plugins_dir())
     names = {item["name"] for item in catalog["plugins"]}
     assert "pwp-design-token-plugin" in names
     assert "asset-forge-3d" in catalog["media_capability_classes"]

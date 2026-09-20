@@ -1,0 +1,30 @@
+version: v1
+rules:
+  - id: tier-3-prod
+    match_paths: ["deploy/**", "systemd/**", "**/credentials*", "**/secrets/**"]
+    risk_tier: 3
+    required_witnesses: 2
+    notes: Production authority changes
+  - id: tier-2-auth
+    match_paths: ["prismatic/auth/**", "prismatic/migrations/**", "prismatic/**/sqlite*", "prismatic/gateway/auth*"]
+    risk_tier: 2
+    required_witnesses: 2
+    notes: Sensitive surfaces
+  - id: tier-2-git-mutation
+    match_paths: ["prismatic/review/**", "prismatic/merge_executor*", "prismatic/policy/**", "prismatic/review_factory/**"]
+    risk_tier: 2
+    required_witnesses: 2
+    notes: Git mutation + factory-self
+  - id: tier-0-docs
+    match_paths: ["docs/**", "*.md", "fixtures/**", "**/test_data/**"]
+    risk_tier: 0
+    deterministic_only: true
+    notes: Documentation and test data
+  - id: tier-0-generated
+    match_paths: ["**/generated/**", "**/*.pb.go", "**/schema_generated*"]
+    risk_tier: 0
+    deterministic_only: true
+    notes: Generated code
+default:
+  risk_tier: 1
+  witness_required: false

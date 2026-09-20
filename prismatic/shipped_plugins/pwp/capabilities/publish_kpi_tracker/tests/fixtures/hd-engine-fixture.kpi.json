@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0.0",
+  "name": "hde-funnel-fixture",
+  "owner": "ned",
+  "site_slug": "hd-engine-fixture",
+  "domain": "humandesignengine.com.test",
+  "description": "Lightweight canonical collection used by the pwp.publish_kpi_tracker tests.",
+  "tracking_property": "G-Q6TPL08VM7",
+  "expected_data_layer_events": ["hde_chart_generated", "hde_daily_work_cta_clicked"],
+  "ga4_recommended_events": ["select_item", "begin_checkout", "purchase"],
+  "metrics": {
+    "funnel_top.free_chart_generated_total": {
+      "id": "free_chart_generated_total",
+      "label": "Charts generated",
+      "source": "ga4",
+      "event": "hde_chart_generated",
+      "front_of_card": true
+    },
+    "funnel_buy_report.purchase_total": {
+      "id": "purchase_total",
+      "label": "Purchases",
+      "source": "stripe",
+      "event": "checkout.session.completed",
+      "filter": "metadata.funnel == report_checkout",
+      "front_of_card": true
+    },
+    "funnel_buy_report.buy_report_revenue_usd": {
+      "id": "buy_report_revenue_usd",
+      "label": "Revenue USD",
+      "source": "stripe",
+      "field": "amount_total",
+      "filter": "event == checkout.session.completed AND metadata.funnel == report_checkout",
+      "front_of_card": true
+    }
+  },
+  "share_targets": {},
+  "delivery_cadence": { "daily": {}, "weekly": {}, "monthly": {} }
+}

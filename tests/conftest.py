@@ -1,3 +1,43 @@
+"""Pytest conftest for tests at the repository root.
+
+RF-M3 (see GRO-4504) intentionally removed the auto-wrap pattern that
+previously installed a test-only wrapper on ``ReviewQueue.enqueue_completed_work``
+at conftest-load time. Tests that need to enqueue completed work now use
+``enqueue_with_defaults`` from ``prismatic.review_factory.testing`` explicitly.
+
+Why this conftest still exists
+------------------------------
+The file is preserved so that:
+
+1. The gateway autouse authentication fixture below has a place to live.
+2. Any future root-level pytest fixture declarations have a place to live.
+
+Gateway autouse authentication fixture
+--------------------------------------
+The ``authenticated_gateway_test_client`` autouse fixture (originally added in
+commit ``44ffe1c`` and stabilized across ``306b064`` / ``93de7b5``) supplies
+control credentials to legacy gateway HTTP tests that do not opt in to
+explicit credential setup. Without it, the ``control_authorization_middleware``
+returns 401 for any non-read, non-webhook request and a large set of gateway
+integration tests fail for an infrastructure reason unrelated to the test
+itself.
+
+RF-V1 hygiene commit (``tests: restore gateway auth autouse fixture for V3 HEAD``)
+restores this fixture after it was inadvertently dropped by commit ``994b592``
+(RF-R1/R2/R3) when the file was rewritten to install the RF enqueue wrapper.
+The two fixtures are orthogonal: the auth fixture supplies *gateway* test
+credentials; the RF-M3 helpers supply *review-factory* test bundles.
+
+Historical context (RF-R2, prior to RF-M3)
+------------------------------------------
+Before RF-M3, this conftest installed a wrapper at module-load time
+that filled in ``result_packet_path`` and ``result_packet_sha256``
+defaults for any test that called
+``ReviewQueue.enqueue_completed_work`` without supplying them. That
+auto-wrap was brittle (see commit ``5e334c1``: install-once sentinel
+fix) and is now removed.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +62,7 @@ if loaded is not None:
                 sys.modules.pop(name, None)
 
 
-_CONTROL_TEST_TOKEN = "prismatic-pytest-control-token"
+_CONTROL_TEST_TOKEN = "prisma...oken"
 _ORIGINAL_TESTCLIENT_REQUEST = TestClient.request
 
 

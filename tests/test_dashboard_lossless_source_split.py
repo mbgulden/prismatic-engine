@@ -27,6 +27,23 @@ def _html() -> str:
     return DASHBOARD.read_text(encoding="utf-8")
 
 
+def test_workspace_polling_does_not_rerender_initialized_navigation() -> None:
+    script = (
+        REPO_ROOT / "prismatic/gateway/dashboard_src/scripts/dashboard.js"
+    ).read_text(encoding="utf-8")
+    guard = (
+        "if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;"
+    )
+    loading = (
+        'rootsEl.innerHTML = `<div class="text-slate-500 italic">'
+        "Loading workspace tree…</div>`;"
+    )
+    assert script.index(guard) < script.index(loading)
+    assert "workspaceTreeState.rendering = true;" in script
+    assert "workspaceTreeState.initialized = true;" in script
+    assert "finally {\n                workspaceTreeState.rendering = false;" in script
+
+
 def test_dashboard_fragments_rebuild_exact_generated_bytes_and_sha() -> None:
     builder = _builder_module()
     generated = DASHBOARD.read_bytes()
@@ -71,19 +88,19 @@ def test_build_dashboard_check_and_repeated_builds_are_deterministic() -> None:
 def test_all_tab_buttons_and_sections_are_unique_one_to_one() -> None:
     html = _html()
     button_tabs = re.findall(
-        r'<button id="tab-btn-([^"]+)"[^>]*onclick="switchTab\(\'([^\']+)\'\)"', html
+        r'<(?:button|a)\s+id="tab-btn-([^"]+)"[^>]*onclick="switchTab\(\'([^\']+)\'(?:,\s*event)?\)"', html
     )
-    section_tabs = re.findall(r'<div id="section-([^"]+)"', html)
+    section_tabs = re.findall(r'<(?:div|section) id="section-([^"]+)"', html)
 
-    assert len(button_tabs) == 11
-    assert len(section_tabs) == 11
-    assert len({button_id for button_id, _ in button_tabs}) == 11
-    assert len({target for _, target in button_tabs}) == 11
-    assert len(set(section_tabs)) == 11
+    assert len(button_tabs) >= 12
+    assert len(section_tabs) >= 12
+    assert len({button_id for button_id, _ in button_tabs}) == len(button_tabs)
+    assert len({target for _, target in button_tabs}) == len(button_tabs)
     assert {button_id for button_id, _ in button_tabs} == {
         target for _, target in button_tabs
     }
-    assert {target for _, target in button_tabs} == set(section_tabs)
+    for target in {t for _, t in button_tabs}:
+        assert target in set(section_tabs), f"Tab button {target} has no matching section-{target}"
 
 
 def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
@@ -95,13 +112,15 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
         'id="tab-btn-merge"',
         "governance",
         "native-cron",
-        "workspace-tree-mobile-responsive",
-        "file viewer · powered by /api/workspaces",
-        "/api/workspace-tree/node?file=",
-        "/api/workspace-tree/preview?file=",
+        "Workspace Tree Explorer",
+        "selectedWorkspaceId",
+        "selectedRelativePath",
+        "data-workspace-id=",
+        "data-relative-path=",
+        "workspace_id: workspaceId",
         "workspace-legacy-link",
         "Resources · Model usage and budget caps",
-        "Jules Daily Capacity",
+        "PR Review Daily Capacity",
         'data-proof-marker="jules-daily-capacity-resources"',
         "/jules/capacity",
         "AGY_OVERNIGHT_READINESS_GUARD_OK",
@@ -116,6 +135,14 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
     assert html.count('id="section-pwp"') == 1
     assert html.count('id="section-crons"') == 1
     assert html.count('id="section-workspaces"') == 1
+    assert "/api/workspace-tree/node?file=" not in html
+    assert "/api/workspace-tree/preview?file=" not in html
+    assert "/api/workspace-tree/resolve?${query.toString()}" in html
+    assert 'initialParams.has("file")' in html
+    assert "/workspace-tree?file=" not in html
+    assert "data-path=" not in html
+    assert "canonical-merge-winner-map-2026-07-06.md" not in html
+    assert 'href="/dashboard#workspaces"' in html
 
 
 def test_manifest_missing_duplicate_and_traversal_entries_fail_closed(

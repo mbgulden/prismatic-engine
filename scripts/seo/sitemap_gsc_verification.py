@@ -25,7 +25,7 @@ def fetch_sitemap_urls(sitemap_url: str) -> list[str]:
 def main() -> int:
     outdir = state_dir("sitemap-gsc")
     ts = stamp()
-    sitemap_url = "https://activeoahutours.com/sitemap.xml"
+    sitemap_url = os.environ.get("PRISMATIC_SITEMAP_URL", f"{AOT_ORIGIN}/sitemap.xml")
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "property": AOT_GSC_PROPERTY,
@@ -43,24 +43,25 @@ def main() -> int:
 
     sitemap_entries = gsc.get("sitemap", [])
     matching = [entry for entry in sitemap_entries if entry.get("path") == sitemap_url]
-    active_oahu_urls = [u for u in local_urls if urlparse(u).netloc.endswith("activeoahutours.com")]
+    target_netloc = urlparse(AOT_ORIGIN).netloc
+    target_urls = [u for u in local_urls if urlparse(u).netloc == target_netloc or not urlparse(u).netloc]
     report.update({
         "success": True,
         "sitemap_url_count": len(local_urls),
-        "active_oahu_url_count": len(active_oahu_urls),
+        "target_url_count": len(target_urls),
         "gsc_sitemaps": sitemap_entries,
         "matching_gsc_sitemap": matching[0] if matching else None,
-        "local_urls_sample": active_oahu_urls[:100],
+        "local_urls_sample": target_urls[:100],
     })
     write_json(outdir / "latest_sitemap_gsc.json", report)
     write_json(outdir / f"{ts}_sitemap_gsc.json", report)
     md = [
-        "# AOT Sitemap / GSC Verification",
+        "# Sitemap / GSC Verification",
         "",
         f"- Property: `{AOT_GSC_PROPERTY}`",
         f"- Sitemap: {sitemap_url}",
         f"- Sitemap URLs fetched: {len(local_urls)}",
-        f"- Active Oahu URLs: {len(active_oahu_urls)}",
+        f"- Monitored Site URLs: {len(target_urls)}",
         f"- Found in GSC sitemap list: {'yes' if matching else 'no'}",
     ]
     if matching:

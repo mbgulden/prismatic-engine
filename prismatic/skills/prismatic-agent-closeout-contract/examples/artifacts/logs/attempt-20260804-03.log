@@ -1,0 +1,5 @@
+=== Prismatic Execution Log — Attempt 20260804-03 (ERROR) ===
+[2026-08-04T13:20:00Z] Task GRO-4457 initiated by agent:agy
+[2026-08-04T13:20:01Z] Running npm run build
+[2026-08-04T13:20:02Z] SyntaxError: Unexpected token ';' at src/index.ts:42:15
+[2026-08-04T13:20:02Z] Compilation failed with exit code 1.

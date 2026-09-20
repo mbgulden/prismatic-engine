@@ -19,10 +19,17 @@ on:
       - deploy-fresh
       - main
 
+# A new push kills the stale run instead of billing both.
+concurrency:
+  group: plugin-load-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify-plugins-load:
     name: Verify shipped plugins load
-    runs-on: ubuntu-latest
+    # Self-hosted webtop-hermes runner (free minutes; GitHub-hosted
+    # minutes are blocked by the account billing state).
+    runs-on: [self-hosted, linux, x64]
 
     steps:
       - uses: actions/checkout@v4

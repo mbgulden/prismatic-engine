@@ -208,29 +208,100 @@ def decide_dispatch(lane_hint: str | None, budget_tracker: LaneBudgetTracker | N
     )
 
 
-def build_supervisor_cmd(issue_id: str, lane: str, model: str,
-                         supervisor_path: str | None = None) -> list[str]:
-    """Build the argv for spawning a supervisor that uses the given model.
+def build_supervisor_cmd(
+    issue_id: str,
+    lane: str,
+    model: str,
+    supervisor_path: str | None = None,
+    python_executable: str | None = None,
+    expected_release_root: str | None = None,
+) -> list[str]:
+    """Build an exact single-issue supervisor command.
 
-    `supervisor_path` defaults to $PRISMATIC_SUPERVISOR_PATH if set.
-    Tests can pass a tmp path.
+    ``lane`` remains part of the curator's durable dispatch decision, but it is
+    intentionally not forwarded: curator agent lanes and supervisor scheduler
+    lanes are different contracts. Production can set
+    ``PRISMATIC_REQUIRE_PINNED_SUPERVISOR=1`` to require explicit interpreter,
+    supervisor, and release-root provenance instead of compatibility fallbacks.
     """
-    path = supervisor_path or os.environ.get("PRISMATIC_SUPERVISOR_PATH")
-    if not path:
-        # Final fallback: relative to PRISMATIC_HOME (defaults to ~).
+    del lane
+    if not isinstance(issue_id, str) or not issue_id or issue_id.startswith("-") or "\x00" in issue_id:
+        raise ValueError("issue_id must be a nonempty non-option string without NUL bytes")
+    if not isinstance(model, str) or not model or model.startswith("-") or "\x00" in model:
+        raise ValueError("model must be a nonempty non-option string without NUL bytes")
+
+    configured_path = supervisor_path or os.environ.get("PRISMATIC_SUPERVISOR_PATH")
+    configured_python = python_executable or os.environ.get("PRISMATIC_SUPERVISOR_PYTHON")
+    release_root = expected_release_root or os.environ.get("PRISMATIC_RELEASE_ROOT")
+    require_pinned = os.environ.get("PRISMATIC_REQUIRE_PINNED_SUPERVISOR") == "1"
+
+    if require_pinned and not (configured_path and configured_python and release_root):
+        raise RuntimeError(
+            "pinned supervisor dispatch requires path, interpreter, and release root"
+        )
+
+    if not configured_path:
         home = os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~")
-        path = os.path.join(home, ".hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py")
+        configured_path = os.path.join(
+            home,
+            ".hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py",
+        )
+    if not configured_python:
+        configured_python = "python3"
+
+    if release_root:
+        root_path = Path(release_root).expanduser()
+        supervisor_path_obj = Path(configured_path).expanduser()
+        if require_pinned and not root_path.is_absolute():
+            raise RuntimeError("pinned release root must be an absolute path")
+        if require_pinned and not supervisor_path_obj.is_absolute():
+            raise RuntimeError("pinned supervisor path must be an absolute path")
+        try:
+            root = root_path.resolve(strict=require_pinned)
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"pinned release root does not exist: {root_path}") from exc
+        if require_pinned and not root.is_dir():
+            raise RuntimeError(f"pinned release root is not a directory: {root}")
+        supervisor = supervisor_path_obj.resolve()
+        if not supervisor.is_relative_to(root):
+            raise RuntimeError(
+                f"supervisor path {supervisor} is outside expected release root {root}"
+            )
+        if require_pinned and not supervisor.is_file():
+            raise RuntimeError(
+                f"pinned supervisor path is not an existing regular file: {supervisor}"
+            )
+        configured_path = str(supervisor)
+
+    if require_pinned:
+        interpreter_path = Path(configured_python).expanduser()
+        if not interpreter_path.is_absolute():
+            raise RuntimeError("pinned interpreter must be an absolute path")
+        try:
+            interpreter = interpreter_path.resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"pinned interpreter does not exist: {interpreter_path}"
+            ) from exc
+        if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+            raise RuntimeError(
+                f"pinned interpreter is not an executable regular file: {interpreter}"
+            )
+        configured_python = str(interpreter)
+
     return [
-        "python3",
-        path,
-        "--issue", issue_id,
-        "--from-linear",
-        "--lane-mode", "auto",
-        "--active-project", "pwp",
-        "--backlog-age-days", "30",
-        "--jitter", "5-10",
-        "--backoff", "3-8",
-        "--max-concurrent", "2",
-        "--model", model,
-        "--lane", lane,
+        configured_python,
+        configured_path,
+        "--issue",
+        issue_id,
+        "--lane-mode",
+        "auto",
+        "--jitter",
+        "5-10",
+        "--backoff",
+        "3-8",
+        "--max-concurrent",
+        "2",
+        "--model",
+        model,
     ]

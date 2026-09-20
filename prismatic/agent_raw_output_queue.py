@@ -82,6 +82,8 @@ class RawAgentOutputRow:
     task_id: str | None
     source_event_id: str | None
     raw_text_or_artifact_path: str
+    raw_bytes_sha256: str | None
+    raw_bytes_length: int | None
     received_at: str
     normalization_status: str
     canonical_packet_id: str | None
@@ -99,6 +101,8 @@ class RawAgentOutputRow:
             "task_id": self.task_id,
             "source_event_id": self.source_event_id,
             "artifact_path": self.raw_text_or_artifact_path,
+            "raw_bytes_sha256": self.raw_bytes_sha256,
+            "raw_bytes_length": self.raw_bytes_length,
             "received_at": self.received_at,
             "normalization_status": self.normalization_status,
             "canonical_packet_id": self.canonical_packet_id,
@@ -205,6 +209,9 @@ class RawAgentOutputStore:
                     source_event_id TEXT,
                     raw_text_or_artifact_path TEXT NOT NULL,
                     raw_text TEXT NOT NULL,
+                    raw_bytes BLOB,
+                    raw_bytes_sha256 TEXT,
+                    raw_bytes_length INTEGER,
                     received_at TEXT NOT NULL,
                     normalization_status TEXT NOT NULL,
                     canonical_packet_id TEXT,
@@ -217,6 +224,19 @@ class RawAgentOutputStore:
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(agent_raw_output_queue)")
+            }
+            for name, declaration in (
+                ("raw_bytes", "BLOB"),
+                ("raw_bytes_sha256", "TEXT"),
+                ("raw_bytes_length", "INTEGER"),
+            ):
+                if name not in columns:
+                    conn.execute(
+                        f"ALTER TABLE agent_raw_output_queue ADD COLUMN {name} {declaration}"
+                    )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agent_raw_output_received_at ON agent_raw_output_queue(received_at DESC)"
             )
@@ -254,6 +274,7 @@ class RawAgentOutputStore:
         self,
         *,
         raw_text: str,
+        raw_bytes: bytes | None = None,
         agent: str | None = None,
         task_id: str | None = None,
         source_event_id: str | None = None,
@@ -262,10 +283,29 @@ class RawAgentOutputStore:
     ) -> RawAgentOutputRow:
         if not isinstance(raw_text, str) or not raw_text.strip():
             raise ValueError("raw_text is required")
+        if raw_bytes is not None:
+            if type(raw_bytes) is not bytes or not raw_bytes:
+                raise ValueError("raw_bytes must be nonempty exact bytes")
+            if len(raw_bytes) > max_raw_payload_bytes():
+                raise ValueError("raw_bytes exceeds configured limit")
+            if raw_bytes.decode("utf-8", errors="replace") != raw_text:
+                raise ValueError("raw_text does not exactly decode raw_bytes")
         received_at = datetime.now(timezone.utc).isoformat()
         storage_text, result = _safe_storage_text_and_result(
             raw_text, expected_agent=expected_agent or agent
         )
+        preserve_bytes = (
+            raw_bytes
+            if raw_bytes is not None
+            and result.repair_hint != "secret_like_content_detected"
+            else None
+        )
+        raw_bytes_sha256 = (
+            hashlib.sha256(preserve_bytes).hexdigest()
+            if preserve_bytes is not None
+            else None
+        )
+        raw_bytes_length = len(preserve_bytes) if preserve_bytes is not None else None
         raw_output_id = _raw_output_id(
             raw_text, agent=agent, task_id=task_id, source_event_id=source_event_id
         )
@@ -279,11 +319,12 @@ class RawAgentOutputStore:
                 """
                 INSERT INTO agent_raw_output_queue (
                     raw_output_id, agent, task_id, source_event_id,
-                    raw_text_or_artifact_path, raw_text, received_at,
+                    raw_text_or_artifact_path, raw_text, raw_bytes,
+                    raw_bytes_sha256, raw_bytes_length, received_at,
                     normalization_status, canonical_packet_id, rejection_reason,
                     repair_hint, rerun_allowed, rerun_requested,
                     rerun_requested_at, warnings_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
                 ON CONFLICT(raw_output_id) DO NOTHING
                 """,
                 (
@@ -293,6 +334,9 @@ class RawAgentOutputStore:
                     source_event_id,
                     locator,
                     storage_text,
+                    preserve_bytes,
+                    raw_bytes_sha256,
+                    raw_bytes_length,
                     received_at,
                     result.status.value,
                     result.canonical_packet_id,
@@ -302,6 +346,18 @@ class RawAgentOutputStore:
                     json.dumps(list(result.warnings), sort_keys=True),
                 ),
             )
+            stored_bytes = conn.execute(
+                """SELECT raw_bytes, raw_bytes_sha256, raw_bytes_length
+                FROM agent_raw_output_queue WHERE raw_output_id = ?""",
+                (raw_output_id,),
+            ).fetchone()
+            if preserve_bytes is not None and (
+                stored_bytes is None
+                or bytes(stored_bytes["raw_bytes"] or b"") != preserve_bytes
+                or stored_bytes["raw_bytes_sha256"] != raw_bytes_sha256
+                or stored_bytes["raw_bytes_length"] != raw_bytes_length
+            ):
+                raise ValueError("raw_output_id_conflict")
             conn.execute(
                 """INSERT OR IGNORE INTO agent_raw_output_delivery
                 (raw_output_id, status, retry_count, created_at, updated_at)
@@ -641,6 +697,8 @@ class RawAgentOutputStore:
             task_id=row["task_id"],
             source_event_id=row["source_event_id"],
             raw_text_or_artifact_path=row["raw_text_or_artifact_path"],
+            raw_bytes_sha256=row["raw_bytes_sha256"],
+            raw_bytes_length=row["raw_bytes_length"],
             received_at=row["received_at"],
             normalization_status=row["normalization_status"],
             canonical_packet_id=row["canonical_packet_id"],

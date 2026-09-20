@@ -313,6 +313,9 @@ class CICheck:
     conclusion: str
     head_sha: str
     details_url: str
+    provider_receipt_id: str = ""
+    provider_receipt_sha256: str = ""
+    provider_policy_sha256: str = ""
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         _final_class(cls)
@@ -326,23 +329,49 @@ class CICheck:
         url = _exact_str(self.details_url, "CI details_url")
         if not url.startswith("https://github.com/"):
             raise ManifestValidationError("CI details_url must be a GitHub URL")
+        receipt_fields = (
+            self.provider_receipt_id,
+            self.provider_receipt_sha256,
+            self.provider_policy_sha256,
+        )
+        if any(receipt_fields) and not all(receipt_fields):
+            raise ManifestValidationError(
+                "CI provider receipt id, receipt digest, and policy digest must be supplied together"
+            )
+        if all(receipt_fields):
+            _exact_str(self.provider_receipt_id, "CI provider_receipt_id")
+            _digest(self.provider_receipt_sha256, "CI provider_receipt_sha256")
+            _digest(self.provider_policy_sha256, "CI provider_policy_sha256")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "conclusion": self.conclusion,
             "details_url": self.details_url,
             "head_sha": self.head_sha,
             "name": self.name,
             "run_id": self.run_id,
         }
+        if self.provider_receipt_id:
+            data.update(
+                provider_receipt_id=self.provider_receipt_id,
+                provider_receipt_sha256=self.provider_receipt_sha256,
+                provider_policy_sha256=self.provider_policy_sha256,
+            )
+        return data
 
     @classmethod
     def from_dict(cls, value: Any) -> CICheck:
-        data = _strict_keys(
-            value,
-            {"name", "run_id", "conclusion", "head_sha", "details_url"},
-            "CI check",
-        )
+        if not isinstance(value, dict):
+            raise ManifestValidationError("CI check must be an object")
+        legacy_keys = {"name", "run_id", "conclusion", "head_sha", "details_url"}
+        receipt_keys = {
+            "provider_receipt_id",
+            "provider_receipt_sha256",
+            "provider_policy_sha256",
+        }
+        keys = set(value)
+        allowed = legacy_keys if keys == legacy_keys else legacy_keys | receipt_keys
+        data = _strict_keys(value, allowed, "CI check")
         return cls(**data)
 
 
@@ -980,11 +1009,14 @@ class MergeCandidateManifest:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_name, target)
-            directory_fd = os.open(target.parent, os.O_RDONLY)
             try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+                directory_fd = os.open(target.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except (PermissionError, OSError):
+                pass
         finally:
             try:
                 os.unlink(tmp_name)

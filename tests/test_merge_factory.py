@@ -327,6 +327,49 @@ def test_judge_attestations_and_transitions(store):
     assert val_post_repair["status"] == "REPAIR"
 
 
+def test_claimed_rf_executor_has_narrow_attestation_scope(store):
+    claimed = Principal(
+        "rf-claim:auth-123:standing-policy: tier-0", ["rf-merge-executor"]
+    )
+    approved = store.submit_attestation(
+        issue_id="GRO-RF-CLAIM",
+        decision="APPROVE_MERGE",
+        base_sha="base",
+        candidate_sha="candidate",
+        manifest_digest="manifest",
+        evidence_digest="evidence",
+        repository="repo",
+        target="main",
+        principal=claimed,
+    )
+    assert approved["reviewer"].startswith("rf-claim:auth-123:")
+
+    with pytest.raises(PermissionError, match="only append APPROVE_MERGE"):
+        store.submit_attestation(
+            issue_id="GRO-RF-CLAIM",
+            decision="REPAIR",
+            base_sha="base",
+            candidate_sha="candidate",
+            manifest_digest="manifest",
+            evidence_digest="evidence",
+            repository="repo",
+            target="main",
+            principal=claimed,
+        )
+    with pytest.raises(PermissionError):
+        store.submit_attestation(
+            issue_id="GRO-RF-FORGED",
+            decision="APPROVE_MERGE",
+            base_sha="base",
+            candidate_sha="candidate",
+            manifest_digest="manifest",
+            evidence_digest="evidence",
+            repository="repo",
+            target="main",
+            principal=Principal("not-a-claim", ["rf-merge-executor"]),
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # ── Merge Locks
 # ─────────────────────────────────────────────────────────────────────────
@@ -385,8 +428,34 @@ def test_merge_locks_and_bindings(store):
     )
     assert lock["lock_id"] == f"{repo}:{target}"
     assert lock["owner_principal"] == "agent:agy"
+    acquisition_token = lock["acquisition_token"]
+    assert acquisition_token
 
-    # Heartbeat lock with changed bindings: should release lock and raise error
+    # Shared principal/issue identity is not reentrant without the exact token.
+    with pytest.raises(BlockingIOError):
+        store.acquire_lock(
+            repository=repo,
+            target=target,
+            issue_id=issue,
+            base_sha=base,
+            candidate_sha=cand,
+            manifest_digest=manifest,
+            evidence_digest=evidence,
+            approval_attestation_id=attest_id,
+            ttl_seconds=60,
+            principal=agy_principal,
+        )
+    with pytest.raises(PermissionError):
+        store.release_lock(
+            repository=repo,
+            target=target,
+            issue_id=issue,
+            principal=agy_principal,
+            acquisition_token="wrong-token",
+        )
+    assert len(store.get_active_locks()) == 1
+
+    # Heartbeat with exact token but changed bindings invalidates the lock.
     with pytest.raises(ValueError):
         store.heartbeat_lock(
             repository=repo,
@@ -398,11 +467,175 @@ def test_merge_locks_and_bindings(store):
             evidence_digest=evidence,
             approval_attestation_id=attest_id,
             principal=agy_principal,
+            acquisition_token=acquisition_token,
         )
 
     # Check lock deleted
     active = store.get_active_locks()
     assert len(active) == 0
+
+
+def test_stale_lock_acquisition_token_cannot_control_replacement(store):
+    from datetime import datetime, timedelta, timezone
+
+    repo = "repo-stale-lock"
+    target = "main"
+    issue = "GRO-STALE-LOCK"
+    base = "base"
+    candidate = "candidate"
+    manifest = "manifest"
+    evidence = "evidence"
+    attestation = store.submit_attestation(
+        issue_id=issue,
+        decision="APPROVE_MERGE",
+        base_sha=base,
+        candidate_sha=candidate,
+        manifest_digest=manifest,
+        evidence_digest=evidence,
+        repository=repo,
+        target=target,
+        principal=george_principal,
+    )
+    common = dict(
+        repository=repo,
+        target=target,
+        issue_id=issue,
+        base_sha=base,
+        candidate_sha=candidate,
+        manifest_digest=manifest,
+        evidence_digest=evidence,
+        approval_attestation_id=attestation["attestation_id"],
+        principal=agy_principal,
+    )
+    lock_a = store.acquire_lock(ttl_seconds=60, **common)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE merge_lock SET expires_at = ? WHERE lock_id = ?",
+            (
+                (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                lock_a["lock_id"],
+            ),
+        )
+    lock_b = store.acquire_lock(ttl_seconds=60, **common)
+    assert lock_b["acquisition_token"] != lock_a["acquisition_token"]
+
+    with pytest.raises(PermissionError):
+        store.heartbeat_lock(acquisition_token=lock_a["acquisition_token"], **common)
+    with pytest.raises(PermissionError):
+        store.release_lock(
+            repository=repo,
+            target=target,
+            issue_id=issue,
+            principal=agy_principal,
+            acquisition_token=lock_a["acquisition_token"],
+        )
+    active = store.get_active_locks()
+    assert len(active) == 1
+    assert "acquisition_token" not in active[0]
+
+    store.release_lock(
+        repository=repo,
+        target=target,
+        issue_id=issue,
+        principal=agy_principal,
+        acquisition_token=lock_b["acquisition_token"],
+    )
+    assert store.get_active_locks() == []
+
+
+def test_lock_api_forwards_exact_capability_and_rejects_wrong_release(
+    store, monkeypatch
+):
+    import asyncio
+
+    from fastapi import HTTPException
+    from prismatic.api.routers import merge_factory as api
+
+    repo = "repo-api"
+    target = "main"
+    issue = "GRO-LOCK-API"
+    base = "base-api"
+    candidate = "candidate-api"
+    manifest = "manifest-api"
+    evidence = "evidence-api"
+    attestation = store.submit_attestation(
+        issue_id=issue,
+        decision="APPROVE_MERGE",
+        base_sha=base,
+        candidate_sha=candidate,
+        manifest_digest=manifest,
+        evidence_digest=evidence,
+        repository=repo,
+        target=target,
+        principal=george_principal,
+    )
+    monkeypatch.setattr(api, "MergeFactoryStore", lambda: store)
+
+    acquired = asyncio.run(
+        api.acquire_lock(
+            api.LockAcquireRequest(
+                repository=repo,
+                target=target,
+                issue_id=issue,
+                base_sha=base,
+                candidate_sha=candidate,
+                manifest_digest=manifest,
+                evidence_digest=evidence,
+                approval_attestation_id=attestation["attestation_id"],
+                ttl_seconds=60,
+            ),
+            agy_principal,
+        )
+    )
+    token = acquired["acquisition_token"]
+    assert len(token) >= 32
+
+    with pytest.raises(HTTPException) as wrong_release:
+        asyncio.run(
+            api.release_lock(
+                api.LockReleaseRequest(
+                    repository=repo,
+                    target=target,
+                    issue_id=issue,
+                    acquisition_token="0" * 32,
+                ),
+                agy_principal,
+            )
+        )
+    assert wrong_release.value.status_code == 403
+    assert len(store.get_active_locks()) == 1
+
+    heartbeat = asyncio.run(
+        api.heartbeat_lock(
+            api.LockHeartbeatRequest(
+                repository=repo,
+                target=target,
+                issue_id=issue,
+                base_sha=base,
+                candidate_sha=candidate,
+                manifest_digest=manifest,
+                evidence_digest=evidence,
+                approval_attestation_id=attestation["attestation_id"],
+                acquisition_token=token,
+            ),
+            agy_principal,
+        )
+    )
+    assert heartbeat["acquisition_token"] == token
+
+    released = asyncio.run(
+        api.release_lock(
+            api.LockReleaseRequest(
+                repository=repo,
+                target=target,
+                issue_id=issue,
+                acquisition_token=token,
+            ),
+            agy_principal,
+        )
+    )
+    assert released["status"] == "released"
+    assert store.get_active_locks() == []
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -595,6 +828,10 @@ def test_excessive_ttl(store):
 def test_installed_package_api_import_and_runtime(monkeypatch, tmp_path):
     # Set the state dir to temporary for api tests
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "PRISMATIC_MERGE_FACTORY_KEYS",
+        "factory-admin-secret-xyz:operator:admin:merge-factory-admin,ordinary;agy-agent-secret-123:agy:agent:agent,ordinary",
+    )
 
     # Import the FastAPI test client and server app
     from fastapi.testclient import TestClient
@@ -602,8 +839,11 @@ def test_installed_package_api_import_and_runtime(monkeypatch, tmp_path):
 
     client = TestClient(app)
 
-    # Ensure get policy returns default values (read-only, does not require token)
-    response = client.get("/api/v1/merge-factory/policy")
+    # Ensure get policy returns default values
+    response = client.get(
+        "/api/v1/merge-factory/policy",
+        headers={"Authorization": "Bearer " + "factory-admin-secret-xyz"},
+    )
     assert response.status_code == 200
     assert response.json()["stage_cap"] == 1
 
@@ -1006,12 +1246,21 @@ def test_cli_token_authentication(monkeypatch, tmp_path):
     rc = cli_main(["cohort", "add", "GRO-CLI-FILE", "1", "11"])
     assert rc == 0
 
-    # 4. Test authentication fails if token file has open permissions (e.g. 0644)
-    os.chmod(token_file, 0o644)
-    f_err = io.StringIO()
-    with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
-        rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
-    assert rc != 0
-    assert (
-        "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
-    )
+    # 4. Test authentication fails if token file has open permissions (e.g. 0644) on POSIX
+    if os.name != "nt":
+        os.chmod(token_file, 0o644)
+        f_err = io.StringIO()
+        with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
+            rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
+        assert rc != 0
+        assert (
+            "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
+        )
+
+
+def test_validate_candidate_receipt_integration(store, tmp_path):
+    candidate_sha = "a" * 40
+    # Before receipt exists -> should be invalid
+    res_empty = store.validate_candidate_receipt(candidate_sha, db_path=tmp_path / "rcpts.sqlite3")
+    assert res_empty["valid"] is False
+    assert "No active merge-eligible verification receipt" in res_empty["reason"]

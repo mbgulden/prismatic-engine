@@ -1,34 +1,99 @@
-        <div id="section-workspaces" class="hidden space-y-6">
+        <div id="section-workspaces" class="hidden space-y-6 max-w-full">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <span>Workspace Tree</span>
-                    <span class="text-[10px] text-slate-500 font-mono normal-case tracking-normal">navigable folder structure + file viewer · powered by /api/workspaces</span>
+                    <span class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                        Workspace Tree Explorer
+                    </span>
                 </h2>
-                <div class="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-4 xl:min-h-[640px] min-w-0 max-w-full overflow-hidden" data-proof-marker="workspace-tree-mobile-responsive">
-                    <section class="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden flex flex-col min-h-[360px] max-h-[52vh] xl:min-h-[640px] xl:max-h-none min-w-0 max-w-full">
-                        <div class="p-3 border-b border-slate-800 grid grid-cols-1 sm:flex sm:items-center sm:justify-between gap-3 min-w-0">
-                            <div>
-                                <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Folders</div>
-                                <div id="workspace-tree-status" class="text-[11px] text-slate-500 mt-1">Loading workspace roots…</div>
+
+                <!-- Dynamic Resizable Splitter Container -->
+                <div id="workspace-splitter-container" class="flex flex-col lg:flex-row gap-0 xl:min-h-[660px] min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70">
+                    
+                    <!-- Left Panel: Folder Tree Sidebar -->
+                    <section id="workspace-tree-sidebar" class="w-full lg:w-[380px] flex-shrink-0 flex flex-col min-h-[360px] max-h-[55vh] lg:max-h-none border-b lg:border-b-0 lg:border-r border-slate-800/80 overflow-hidden">
+                        <div class="p-3 border-b border-slate-800/80 space-y-2.5 bg-slate-900/40">
+                            <div class="flex items-center justify-between gap-2">
+                                <div>
+                                    <div class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                                        <span>Folders &amp; Files</span>
+                                    </div>
+                                    <div id="workspace-tree-status" class="text-[11px] text-slate-500 mt-0.5">Loading workspace roots…</div>
+                                </div>
+                                
+                                <div class="flex items-center gap-1.5">
+                                    <!-- Sort Dropdown -->
+                                    <div class="relative">
+                                        <button id="workspace-sort-btn" type="button" onclick="toggleWorkspaceSortMenu()" class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition shadow-sm">
+                                            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>
+                                            <span id="workspace-sort-label">Sort: Name</span>
+                                            <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                        </button>
+                                        <div id="workspace-sort-menu" class="hidden absolute right-0 mt-1.5 w-48 rounded-xl border border-slate-800 bg-slate-950 p-1.5 shadow-2xl z-50 text-xs backdrop-blur-md">
+                                            <div class="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Sort By</div>
+                                            <button onclick="setWorkspaceSort('name')" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-900 text-slate-300 flex items-center justify-between"><span>Name</span><span id="sort-check-name" class="text-slate-200 font-bold">✓</span></button>
+                                            <button onclick="setWorkspaceSort('date')" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-900 text-slate-300 flex items-center justify-between"><span>Date modified</span><span id="sort-check-date" class="hidden text-slate-200 font-bold">✓</span></button>
+                                            <button onclick="setWorkspaceSort('type')" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-900 text-slate-300 flex items-center justify-between"><span>Type</span><span id="sort-check-type" class="hidden text-slate-200 font-bold">✓</span></button>
+                                            <button onclick="setWorkspaceSort('size')" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-900 text-slate-300 flex items-center justify-between"><span>Size</span><span id="sort-check-size" class="hidden text-slate-200 font-bold">✓</span></button>
+                                            <div class="my-1 border-t border-slate-800"></div>
+                                            <div class="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Order</div>
+                                            <button onclick="setWorkspaceOrder('asc')" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-900 text-slate-300 flex items-center justify-between"><span>Ascending</span><span id="order-check-asc" class="text-slate-200 font-bold">✓</span></button>
+                                            <button onclick="setWorkspaceOrder('desc')" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-900 text-slate-300 flex items-center justify-between"><span>Descending</span><span id="order-check-desc" class="hidden text-slate-200 font-bold">✓</span></button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <a href="/workspace-tree" class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300">Open legacy view</a>
+                            
+                            <!-- Search Filter Input (Pixel-Perfect Vertically Centered SVG) -->
+                            <div class="search-icon-wrapper relative flex items-center min-w-0 w-full">
+                                <svg class="w-4 h-4 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+                                <input id="workspace-tree-search" type="text" placeholder="Filter folders &amp; files..." onkeyup="filterWorkspaceTreeNodes()" class="w-full rounded-lg border border-slate-800 bg-slate-950 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-slate-600 focus:outline-none font-mono" style="padding-left: 2.6rem !important;">
+                            </div>
                         </div>
-                        <div id="workspace-tree-roots" class="p-3 space-y-3 overflow-auto overscroll-contain flex-1 font-mono text-[11px] sm:text-xs touch-pan-y min-w-0 max-w-full break-words">
+                        <div id="workspace-tree-roots" class="p-3 space-y-3 overflow-auto overscroll-contain flex-1 font-mono text-[11px] sm:text-xs touch-pan-y min-w-0 max-w-full break-words select-none">
                             <div class="text-slate-500 italic">Loading workspace tree…</div>
                         </div>
                     </section>
-                    <section class="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden flex flex-col min-h-[420px] max-h-[72vh] xl:min-h-[640px] xl:max-h-none min-w-0 max-w-full">
-                        <div class="p-3 border-b border-slate-800 grid grid-cols-1 sm:flex sm:flex-wrap sm:items-start sm:justify-between gap-3 min-w-0">
-                            <div class="min-w-0">
-                                <div class="text-xs font-bold uppercase tracking-wider text-slate-400">File Viewer</div>
-                                <div id="workspace-preview-name" class="text-[11px] text-slate-500 mt-1 font-mono break-all">Select a file from the tree.</div>
+
+                    <!-- Draggable Resizable Splitter Handle -->
+                    <div id="workspace-splitter-handle" class="hidden lg:flex w-2 cursor-col-resize hover:bg-indigo-500/40 bg-slate-900 transition flex-shrink-0 items-center justify-center select-none border-r border-slate-800/80 group">
+                        <div class="w-0.5 h-8 bg-slate-700 group-hover:bg-indigo-400 rounded-full"></div>
+                    </div>
+
+                    <!-- Right Panel: File Preview & Metadata Inspection -->
+                    <section id="workspace-preview-panel" class="flex-1 flex flex-col min-h-[420px] max-h-[72vh] lg:max-h-none min-w-0 max-w-full overflow-hidden bg-slate-950/40">
+                        <div class="p-3 sm:p-4 border-b border-slate-800/80 bg-slate-900/40 flex flex-col gap-3 min-w-0">
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span id="workspace-preview-type-badge" class="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">File Viewer</span>
+                                        <span id="workspace-preview-scope" class="text-[11px] font-mono text-slate-400 truncate">No file selected</span>
+                                    </div>
+                                    <div id="workspace-preview-name" class="text-sm font-bold text-slate-200 mt-1 font-mono break-all">Select an entry from the tree.</div>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2 flex-shrink-0">
+                                    <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                        <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                                        Copy Link
+                                    </button>
+                                    <button id="workspace-download-btn" type="button" onclick="downloadWorkspaceFile()" title="Download file" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                        <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                                        Download
+                                    </button>
+                                    <a id="workspace-legacy-link" href="/workspace-tree" target="_blank" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                        <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                                        Open Raw
+                                    </a>
+                                </div>
                             </div>
-                            <div class="grid grid-cols-1 sm:flex sm:flex-wrap gap-2">
-                                <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="w-full sm:w-auto px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-500 text-[10px] font-bold uppercase tracking-wider">Copy Telegram Link</button>
-                                <a id="workspace-legacy-link" href="/workspace-tree" class="w-full sm:w-auto text-center px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-500 text-[10px] font-bold uppercase tracking-wider">Open Standalone</a>
+                            <!-- Detailed File Stats Bar -->
+                            <div id="workspace-preview-stats-bar" class="hidden flex flex-wrap items-center gap-4 text-xs font-mono text-slate-400 pt-2 border-t border-slate-800/60">
+                                <div class="flex items-center gap-1.5 text-emerald-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span id="stat-file-mtime">—</span></div>
+                                <div class="flex items-center gap-1.5 text-cyan-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h12a2 2 0 002-2V7M4 7h16M4 7l2-4h12l2 4"/></svg><span id="stat-file-size">—</span></div>
+                                <div class="flex items-center gap-1.5 text-indigo-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><span id="stat-file-lines">—</span></div>
                             </div>
                         </div>
-                        <pre id="workspace-file-preview" class="m-0 p-3 sm:p-4 overflow-auto overscroll-contain flex-1 text-[11px] sm:text-xs leading-relaxed text-slate-200 whitespace-pre-wrap break-words min-w-0 max-w-full"><code>Select a file from the Workspace Tree to preview it here.</code></pre>
+                        <pre id="workspace-file-preview" class="m-0 p-3 sm:p-4 overflow-auto overscroll-contain flex-1 text-[11px] sm:text-xs leading-relaxed text-slate-200 whitespace-pre-wrap break-words min-w-0 max-w-full font-mono bg-slate-950/80"><code>Select a file from the Workspace Tree on the left to preview content and metadata.</code></pre>
                     </section>
                 </div>
             </div>

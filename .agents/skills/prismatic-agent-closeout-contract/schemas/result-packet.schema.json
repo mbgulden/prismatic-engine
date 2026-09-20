@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PrismaticAgentCloseoutPacket",
+  "description": "Strict machine-readable schema for AGY agent task closeout packets in the Prismatic Engine (v0.2).",
+  "type": "object",
+  "required": [
+    "agent",
+    "STATUS",
+    "PRODUCER_STATUS",
+    "ACCEPTANCE_DECISION",
+    "TASK_ID",
+    "ATTEMPT_ID",
+    "BASE_HEAD",
+    "CANDIDATE_HEAD",
+    "CANDIDATE_TREE",
+    "CHANGED_PATHS",
+    "COMMAND",
+    "RESULT",
+    "LOG",
+    "LOG_SHA256",
+    "result_artifacts",
+    "SCOPE",
+    "merge_lane",
+    "risk_level",
+    "AD_HOC_OR_CANONICAL",
+    "PROOF_CLASSES",
+    "SIDE_EFFECTS",
+    "BLOCKERS",
+    "NOT_CLAIMING",
+    "NEXT_ACTION",
+    "MARKER"
+  ],
+  "properties": {
+    "agent": {
+      "type": "string",
+      "enum": ["agy"]
+    },
+    "STATUS": {
+      "type": "string",
+      "enum": ["PASS", "PARTIAL", "BLOCKED", "ERROR"]
+    },
+    "PRODUCER_STATUS": {
+      "type": "string",
+      "enum": ["PASS", "PARTIAL", "BLOCKED", "ERROR"]
+    },
+    "ACCEPTANCE_DECISION": {
+      "type": "string",
+      "enum": ["PENDING", "CLEAN", "REJECTED"]
+    },
+    "TASK_ID": {
+      "type": "string",
+      "pattern": "^GRO-[0-9]+$"
+    },
+    "ATTEMPT_ID": {
+      "type": "string",
+      "minLength": 1
+    },
+    "BASE_HEAD": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "CANDIDATE_HEAD": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "CANDIDATE_TREE": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "SOURCE_BRANCH": {
+      "type": "string",
+      "pattern": "^feature/.+"
+    },
+    "SOURCE_PATH": {
+      "type": "string",
+      "minLength": 1
+    },
+    "BASE_BRANCH": {
+      "type": "string",
+      "enum": ["main", "origin/main"]
+    },
+    "source_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "base_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "CHANGED_PATHS": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "COMMAND": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "RESULT": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "BLOCKED"]
+    },
+    "LOG": {
+      "type": "string",
+      "minLength": 1
+    },
+    "LOG_SHA256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "result_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+              "path": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "SCOPE": {
+      "type": "string",
+      "minLength": 1
+    },
+    "merge_lane": {
+      "type": "string",
+      "enum": ["dashboard-ui", "backend-api", "docs", "research", "mixed", "manual-review"]
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "AD_HOC_OR_CANONICAL": {
+      "type": "string",
+      "enum": ["ad-hoc targeted", "canonical suite"]
+    },
+    "PROOF_CLASSES": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["focused", "lint", "format", "build", "browser", "production"]
+      },
+      "minItems": 1
+    },
+    "SIDE_EFFECTS": {
+      "type": "object",
+      "required": ["push", "pr", "merge", "deploy", "linear_updated"],
+      "properties": {
+        "push": { "type": "boolean" },
+        "pr": { "type": "boolean" },
+        "merge": { "type": "boolean" },
+        "deploy": { "type": "boolean" },
+        "linear_updated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "BLOCKERS": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "NOT_CLAIMING": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "NEXT_ACTION": {
+      "type": "string",
+      "enum": ["merge-ready", "needs-fred-cleanup", "needs-human-review", "blocked", "superseded"]
+    },
+    "MARKER": {
+      "type": "string",
+      "enum": ["AGY_TASK_RESULT_PACKET_OK"]
+    }
+  },
+  "additionalProperties": false
+}

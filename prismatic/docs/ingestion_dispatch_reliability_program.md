@@ -53,7 +53,7 @@ A completed proof must include these evidence points in order:
 
 ## Operating notes
 
-- Ned-owned implementation stays in `scripts/`, `prismatic/`, `plugins/`, and repo documentation/specs.
-- Content, assets, designs, research, and active-oahu remain out of lane.
+- Executor-owned implementation stays in `scripts/`, `prismatic/`, `plugins/`, and repo documentation/specs.
+- Client repositories and staging mirrors remain out of lane.
 - Linear issue comments remain the source for lane-dequeue decisions; scanner output is the dispatch gate for scheduled cron pickup.
-- Finalization must use `~/.hermes/profiles/ned/scripts/finalize_task.sh` so commit, unlock, Linear transition, and evidence comment happen atomically.
+- Finalization must ensure atomic lock release, Linear transition, and evidence recording.

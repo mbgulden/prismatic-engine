@@ -110,7 +110,9 @@ def _build_loader_with_recording_plugin() -> PluginLoader:
     # Import the fixture plugin (it self-registers its class-level
     # ``events`` list).  ``pwp_hook_test_plugin`` is a *package*, so
     # its parent (``plugins/``) must be on sys.path.
-    plugins_root = _REPO_ROOT / "plugins"
+    plugins_root = _REPO_ROOT / "prismatic" / "shipped_plugins"
+    if not (plugins_root / "pwp_hook_test_plugin").exists():
+        plugins_root = _REPO_ROOT / "plugins"
     if str(plugins_root) not in sys.path:
         sys.path.insert(0, str(plugins_root))
     from pwp_hook_test_plugin.plugin import PWPHookTestPlugin

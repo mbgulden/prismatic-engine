@@ -1,0 +1,5 @@
+{
+  "pre_mutation_crontab_sha256": "8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680",
+  "post_rollback_crontab_sha256": "8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680",
+  "spool_file_sha256": "0dfbad53e1b5a8bfcdb891473fb54c9e36b462914f7ad04c5364567da8bc3c4c"
+}
