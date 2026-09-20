@@ -107,6 +107,20 @@ class BacklogImporter:
 
         return result
 
+    def ingest_completed_work_row(self, row: CompletedWorkRow) -> bool:
+        """Enqueue a single freshly-ingested completed-work row.
+
+        Used by ``AgyCompletedWorkStore.ingest()`` so completed work flows
+        into the review queue at closeout. Returns True when a new review
+        job was enqueued.
+        """
+        result = ImportResult()
+        try:
+            self._process_row(row, result)
+        except Exception as exc:
+            logger.warning("Import error for %s: %s", row.id, exc)
+        return result.enqueued == 1
+
     def _process_row(self, row: CompletedWorkRow, result: ImportResult) -> None:
         """Process a single CompletedWorkRow for import."""
         # Filter 1: integration classification
