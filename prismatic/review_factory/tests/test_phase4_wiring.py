@@ -15,8 +15,6 @@ Covers the loop-closing work:
 import hashlib
 import json
 import subprocess
-import sys
-import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,6 +97,7 @@ class FakeLinear:
         self.comments = []
         self.created = []
         self.labels_set = []
+        self.transitions = []
         FakeLinear.instances.append(self)
 
     def add_comment(self, ref, body):
@@ -126,6 +125,10 @@ class FakeLinear:
         self.labels_set.append((issue_id, label_ids))
         return True
 
+    def update_issue_state(self, issue_id, state_name="Done"):
+        self.transitions.append({"issue_id": issue_id, "state_name": state_name})
+        return {"ok": True, "issue": issue_id, "state": state_name}
+
 
 @pytest.fixture()
 def fake_linear(monkeypatch):
@@ -134,19 +137,6 @@ def fake_linear(monkeypatch):
         "prismatic.providers.tasks.linear.LinearTaskProvider", FakeLinear
     )
     return FakeLinear
-
-
-def _fake_linear_helpers(monkeypatch):
-    calls = []
-    mod = types.ModuleType("linear_helpers")
-
-    def update_issue_state(issue_id, state_name):
-        calls.append({"issue_id": issue_id, "state_name": state_name})
-        return {"ok": True}
-
-    mod.update_issue_state = update_issue_state
-    monkeypatch.setitem(sys.modules, "linear_helpers", mod)
-    return calls
 
 
 def _hooks(db, provider=None):
@@ -358,7 +348,6 @@ class TestMergeStage:
         self, queue, tmp_path, monkeypatch
     ):
         job_id = _merge_ready_job(queue, tier=0, task_id="GRO-1234")
-        transitions = _fake_linear_helpers(monkeypatch)
         hooks, provider = _hooks(queue.db)
 
         seen = {}
@@ -390,7 +379,7 @@ class TestMergeStage:
         entry = queue.db.find_audit_entry(job_id, "auto_merge_completed")
         assert entry is not None
         # Linear hook fired: Done transition + comment.
-        assert transitions == [{"issue_id": "GRO-1234", "state_name": "Done"}]
+        assert provider.transitions == [{"issue_id": "GRO-1234", "state_name": "Done"}]
         assert provider.comments and provider.comments[0][0] == "GRO-1234"
 
     def test_live_merge_failure_is_audited(self, queue, tmp_path, monkeypatch):
@@ -588,18 +577,34 @@ class TestLinearHooks:
             count = cur.fetchone()["n"]
         assert count == 1
 
-    def test_notify_merged_transitions_to_done(self, queue, monkeypatch):
+    def test_notify_merged_transitions_to_done(self, queue):
         job_id = _merge_ready_job(queue, tier=0, task_id="GRO-1234")
-        transitions = _fake_linear_helpers(monkeypatch)
         hooks, provider = _hooks(queue.db)
         job = queue.db.get_review_job(job_id)
         result = hooks.notify_merged(job, merge_sha="abc123def456")
         assert result.ok and result.action == "transitioned"
-        assert transitions == [{"issue_id": "GRO-1234", "state_name": "Done"}]
+        assert provider.transitions == [{"issue_id": "GRO-1234", "state_name": "Done"}]
         assert provider.comments and provider.comments[0][0] == "GRO-1234"
         assert "abc123def456"[:12] in provider.comments[0][1]
         entry = queue.db.find_audit_entry(job_id, "linear_merged_notified")
         assert entry is not None
+
+    def test_notify_merged_unconfigured_is_audited_once(self, queue):
+        job_id = _merge_ready_job(queue, tier=0, task_id="GRO-1234")
+        hooks = LinearReviewHooks(db=queue.db)  # real provider, no API key
+        job = queue.db.get_review_job(job_id)
+        first = hooks.notify_merged(job, merge_sha="abc123")
+        second = hooks.notify_merged(job, merge_sha="abc123")
+        assert first.action == "unconfigured"
+        assert second.action == "unconfigured"
+        with queue.db.transaction() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM review_factory_audit_log"
+                " WHERE review_job_id = ? AND action = ?",
+                (job_id, "linear_unconfigured"),
+            )
+            count = cur.fetchone()["n"]
+        assert count == 1
 
     def test_notify_merged_without_issue_is_audited(self, queue):
         job_id = _merge_ready_job(queue, tier=0, task_id="widget-9")
