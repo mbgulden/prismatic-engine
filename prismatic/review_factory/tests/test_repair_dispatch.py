@@ -166,7 +166,8 @@ def test_repair_dispatch_idempotent_per_job(tmp_path, isolated_state):
     assert first == second
     assert len(_queue_rows()) == 1
     dispatched = [
-        e for e in queue.db.list_audit_entries(limit=100)
+        e
+        for e in queue.db.list_audit_entries(limit=100)
         if e["review_job_id"] == job_id and e["action"] == "repair_dispatched"
     ]
     assert len(dispatched) == 1
@@ -185,9 +186,7 @@ def test_repair_dispatch_fallback_when_intake_missing(
     def _boom(**kwargs):
         raise RuntimeError("intake down")
 
-    monkeypatch.setattr(
-        ingestion_queue, "enqueue_multi_channel_task", _boom
-    )
+    monkeypatch.setattr(ingestion_queue, "enqueue_multi_channel_task", _boom)
 
     assert queue.dispatch_repair_task(job_id, failure_reason="x") is None
     assert _queue_rows() == []

@@ -97,8 +97,6 @@ def test_package_check_never_writes_to_readonly_archive(tmp_path):
     )
 
 
-
-
 def _review_required_manifest(job):
     """Build the REVIEW_REQUIRED manifest the verify stage would persist."""
     from prismatic.gateway.verification_daemon import _manifest_for_job
@@ -249,10 +247,7 @@ def test_repair_dispatch_failure_is_loud_not_silent(tmp_path, monkeypatch):
     assert "repair_dispatch_unavailable" in actions
 
 
-
-def test_verification_failure_audit_records_dispatch_outcome(
-    tmp_path, monkeypatch
-):
+def test_verification_failure_audit_records_dispatch_outcome(tmp_path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     queue = _queue(tmp_path)
@@ -273,9 +268,7 @@ def test_verification_failure_audit_records_dispatch_outcome(
     daemon._route_verification_failure(job, receipt)
     job = queue.db.get_review_job(job_id)
     assert job.state == ReviewJobState.REPAIR_REQUIRED.value
-    entries = {
-        e["action"]: e for e in queue.db.list_audit_entries(limit=50)
-    }
+    entries = {e["action"]: e for e in queue.db.list_audit_entries(limit=50)}
     assert "verification_failed" in entries
     assert "repair_dispatched" in entries
     assert "repair_dispatch_unavailable" not in entries
@@ -298,9 +291,10 @@ def test_quarantine_graph():
     ):
         assert src.can_transition_to(ReviewJobState.QUARANTINED), src
     # Terminal: nothing leaves quarantine without operator action.
-    assert ReviewJobState.QUARANTINED.valid_transitions()[
-        ReviewJobState.QUARANTINED.value
-    ] == []
+    assert (
+        ReviewJobState.QUARANTINED.valid_transitions()[ReviewJobState.QUARANTINED.value]
+        == []
+    )
 
 
 def test_poison_job_quarantined_after_max_failures(tmp_path):
@@ -340,9 +334,5 @@ def test_failure_count_survives_across_daemon_instances(tmp_path):
     assert job.consecutive_failures == 1
     assert restarted._is_poisoned(job) is False
     restarted._record_failure(job, stage="verify")
-    restarted._record_failure(
-        queue.lease_for_verification("worker-1"), stage="verify"
-    )
-    assert (
-        queue.db.get_review_job(job_id).state == ReviewJobState.QUARANTINED.value
-    )
+    restarted._record_failure(queue.lease_for_verification("worker-1"), stage="verify")
+    assert queue.db.get_review_job(job_id).state == ReviewJobState.QUARANTINED.value

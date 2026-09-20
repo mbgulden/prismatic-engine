@@ -716,9 +716,7 @@ class VerificationWorker:
             pkg_dir.mkdir(parents=True)
             shutil.copy2(init_file, pkg_dir / "__init__.py")
             args = [sys.executable, "-m", "py_compile", "prismatic/__init__.py"]
-            return self._execute_subproc(
-                "package", "package", args, cwd=Path(tmp)
-            )
+            return self._execute_subproc("package", "package", args, cwd=Path(tmp))
 
     def _execute_subproc(
         self,
