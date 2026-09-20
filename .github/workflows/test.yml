@@ -21,6 +21,7 @@ on:
     branches:
       - main
       - deploy-fresh
+  workflow_dispatch: {}
 
 # A new push kills the stale run instead of billing both.
 concurrency:
