@@ -741,7 +741,6 @@ class ReviewQueue:
         failure_reason: str = "",
         target_agent: str | None = None,
         extra_context: Optional[dict] = None,
-
         force: bool = False,
     ) -> Optional[str]:
         """Dispatch a repair task into the engine's multi-channel task intake.
@@ -787,7 +786,6 @@ class ReviewQueue:
             except Exception:
                 pass
 
-
         context = self._repair_context(
             review_job_id, job, failure_reason, extra_context
         )
@@ -796,8 +794,10 @@ class ReviewQueue:
             from prismatic.ingestion_queue import enqueue_multi_channel_task
 
             agent = (
-                target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred")
-            ).strip().lower()
+                (target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred"))
+                .strip()
+                .lower()
+            )
             if agent not in _REPAIR_DISPATCH_AGENTS:
                 logger.warning("unknown repair agent %r; falling back to fred", agent)
                 agent = "fred"
@@ -855,7 +855,6 @@ class ReviewQueue:
                 "llm_work_order": bool(
                     extra_context and extra_context.get("llm_work_order")
                 ),
-
             },
         )
         logger.info(
@@ -866,7 +865,10 @@ class ReviewQueue:
             attempt,
         )
         self._notify_linear_issue(
-            job, context, event_id, attempt=attempt,
+            job,
+            context,
+            event_id,
+            attempt=attempt,
             failure_reason=failure_reason,
         )
         emit_rf_event(
@@ -1180,8 +1182,12 @@ class ReviewQueue:
             job_id = job.review_job_id
             try:
                 self._redispatch_one(
-                    job, current, max_attempts,
-                    stall_timeout_seconds, backoff_base_seconds, summary,
+                    job,
+                    current,
+                    max_attempts,
+                    stall_timeout_seconds,
+                    backoff_base_seconds,
+                    summary,
                 )
             except Exception as exc:
                 logger.warning("redispatch failed for job %s: %s", job_id, exc)
@@ -1208,8 +1214,12 @@ class ReviewQueue:
             return False
 
     def _redispatch_one(
-        self, job, current: datetime, max_attempts: int,
-        stall_timeout_seconds: int, backoff_base_seconds: int,
+        self,
+        job,
+        current: datetime,
+        max_attempts: int,
+        stall_timeout_seconds: int,
+        backoff_base_seconds: int,
         summary: dict,
     ) -> None:
         job_id = job.review_job_id
@@ -1278,7 +1288,8 @@ class ReviewQueue:
                 )
                 logger.error(
                     "repair redispatch exhausted for job %s after %d attempts",
-                    job_id, attempts,
+                    job_id,
+                    attempts,
                 )
                 try:
                     from prismatic.review_factory.linear_hooks import (
@@ -1292,9 +1303,7 @@ class ReviewQueue:
                     logger.warning(
                         "linear exhaustion hook failed for %s: %s", job_id, exc
                     )
-                summary["exhausted"].append(
-                    {"job_id": job_id, "attempts": attempts}
-                )
+                summary["exhausted"].append({"job_id": job_id, "attempts": attempts})
             else:
                 summary["skipped"] += 1
             return
@@ -1326,9 +1335,7 @@ class ReviewQueue:
             self._audit_redispatch_no_task_id(
                 job_id, attempt=attempts + 1, max_attempts=max_attempts
             )
-            summary["failed"].append(
-                {"job_id": job_id, "attempt": attempts + 1}
-            )
+            summary["failed"].append({"job_id": job_id, "attempt": attempts + 1})
             return
         self.db.insert_audit_entry(
             actor="review-factory:repair-redispatch",
@@ -1372,8 +1379,7 @@ class ReviewQueue:
             },
         )
         logger.error(
-            "repair redispatch for job %s produced no intake task id "
-            "(attempt %d/%d)",
+            "repair redispatch for job %s produced no intake task id (attempt %d/%d)",
             job_id,
             attempt,
             max_attempts,

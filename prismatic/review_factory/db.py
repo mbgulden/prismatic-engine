@@ -540,9 +540,7 @@ class ReviewFactoryDB:
         where_params: list = [now_iso]
         tier_clause = ""
         if tiers:
-            tier_clause = " AND risk_tier IN ({})".format(
-                ", ".join(["?"] * len(tiers))
-            )
+            tier_clause = " AND risk_tier IN ({})".format(", ".join(["?"] * len(tiers)))
             where_params.extend(sorted(int(t) for t in tiers))
         exclude_clause = ""
         if exclude_job_ids:
@@ -562,9 +560,7 @@ class ReviewFactoryDB:
                               OR lease_expires_at < ?)
                          {tier_clause}{exclude_clause}
                        ORDER BY created_at ASC LIMIT 1
-                   )""".format(
-                    tier_clause=tier_clause, exclude_clause=exclude_clause
-                ),
+                   )""".format(tier_clause=tier_clause, exclude_clause=exclude_clause),
                 [worker_id, expiry] + where_params,
             )
             if cur.rowcount == 0:
@@ -1113,8 +1109,12 @@ class ReviewFactoryDB:
             required_witnesses=row["required_witnesses"],
             completed_witnesses=row["completed_witnesses"],
             consecutive_failures=row["consecutive_failures"],
-            repair_attempts=row["repair_attempts"] if "repair_attempts" in row.keys() else 0,
-            repair_last_dispatch_at=row["repair_last_dispatch_at"] if "repair_last_dispatch_at" in row.keys() else "",
+            repair_attempts=row["repair_attempts"]
+            if "repair_attempts" in row.keys()
+            else 0,
+            repair_last_dispatch_at=row["repair_last_dispatch_at"]
+            if "repair_last_dispatch_at" in row.keys()
+            else "",
             created_at=row["created_at"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
