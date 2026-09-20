@@ -18,7 +18,9 @@ def _load_pre_push_hook():
     return module
 
 
-def test_lock_module_uses_configured_lock_file_with_expanded_home(tmp_path, monkeypatch):
+def test_lock_module_uses_configured_lock_file_with_expanded_home(
+    tmp_path, monkeypatch
+):
     home = tmp_path / "home"
     repo = tmp_path / "repo"
     configured = home / ".prismatic" / "locks" / "swarm_locks.json"
@@ -31,6 +33,7 @@ def test_lock_module_uses_configured_lock_file_with_expanded_home(tmp_path, monk
     importlib.reload(lock_module)
 
     assert lock_module._configured_lock_file(repo) == configured
+
 
 def test_lock_module_expands_tilde_in_configured_lock_file(tmp_path, monkeypatch):
     home = tmp_path / "home"
@@ -48,12 +51,17 @@ def test_lock_module_expands_tilde_in_configured_lock_file(tmp_path, monkeypatch
     assert lock_module._configured_lock_file(repo) == home / ".prismatic" / "locks.json"
 
 
-def test_lock_module_falls_back_to_prismatic_home_without_repo_config(tmp_path, monkeypatch):
+def test_lock_module_falls_back_to_prismatic_home_without_repo_config(
+    tmp_path, monkeypatch
+):
     home = tmp_path / "home"
     monkeypatch.setenv("PRISMATIC_HOME", str(home))
     importlib.reload(lock_module)
 
-    assert lock_module._configured_lock_file(repo_root=None) == home / ".antigravity" / "swarm_locks.json"
+    assert (
+        lock_module._configured_lock_file(repo_root=None)
+        == home / ".antigravity" / "swarm_locks.json"
+    )
 
 
 def test_pre_push_hook_expands_tilde_in_configured_lock_file(tmp_path, monkeypatch):
@@ -71,7 +79,9 @@ def test_pre_push_hook_reads_configured_lock_file(tmp_path, monkeypatch):
     home = tmp_path / "home"
     lock_file = home / "custom" / "locks.json"
     lock_file.parent.mkdir(parents=True)
-    lock_file.write_text(json.dumps([{"filePath": "scripts/x.py", "agentId": "fred"}]), encoding="utf-8")
+    lock_file.write_text(
+        json.dumps([{"filePath": "scripts/x.py", "agentId": "fred"}]), encoding="utf-8"
+    )
     monkeypatch.setenv("PRISMATIC_HOME", str(home))
     hook = _load_pre_push_hook()
     config = {"locks": {"file": "${PRISMATIC_HOME}/custom/locks.json"}}
@@ -90,3 +100,26 @@ def test_pre_push_hook_falls_back_to_prismatic_home(tmp_path, monkeypatch):
 
     assert hook._configured_lock_file({}) == lock_file
     assert hook._read_locks({}) == []
+
+
+def test_lock_config_unexpanded_var_falls_back_to_portable_default(
+    tmp_path, monkeypatch
+):
+    """A ${VAR} that names an unset env var (stranger's laptop) must not create
+    a literal "${VAR}/..." directory: fall back to the portable default."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "PRISMATIC_ENGINE.yaml").write_text(
+        'locks:\n  file: "${DEFINITELY_UNSET_PRISMATIC_VAR_XYZ}/swarm_locks.json"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("DEFINITELY_UNSET_PRISMATIC_VAR_XYZ", raising=False)
+    monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path / "home"))
+    importlib.reload(lock_module)
+
+    expected = (
+        lock_module._default_prismatic_home() / ".antigravity" / "swarm_locks.json"
+    )
+    assert lock_module._configured_lock_file(repo) == expected
+    # No literal "${...}" directory was created in the repo.
+    assert not (repo / "${DEFINITELY_UNSET_PRISMATIC_VAR_XYZ}").exists()
