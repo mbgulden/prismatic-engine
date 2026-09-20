@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +11,7 @@ FIXTURE_DIR = ROOT / "tests" / "fixtures" / "handoff-contracts"
 
 def run_cli(fixture: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["python3", str(CLI), str(FIXTURE_DIR / fixture)],
+        [sys.executable, str(CLI), str(FIXTURE_DIR / fixture)],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,
@@ -28,7 +29,7 @@ def test_validate_handoff_contract_cli_accepts_pass_fixture() -> None:
 
 def test_validate_handoff_contract_cli_can_emit_json() -> None:
     result = subprocess.run(
-        ["python3", str(CLI), "--json", str(FIXTURE_DIR / "pass.json")],
+        [sys.executable, str(CLI), "--json", str(FIXTURE_DIR / "pass.json")],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,

@@ -120,7 +120,7 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
         "workspace_id: workspaceId",
         "workspace-legacy-link",
         "Resources · Model usage and budget caps",
-        "Jules Daily Capacity",
+        "PR Review Daily Capacity",
         'data-proof-marker="jules-daily-capacity-resources"',
         "/jules/capacity",
         "AGY_OVERNIGHT_READINESS_GUARD_OK",

@@ -3,8 +3,6 @@
 import pytest
 from prismatic.providers.llm import (
     AntigravityProvider,
-    BaseLLMProvider,
-    LLMMessage,
     LLMRequest,
     LLMResponse,
     MockProvider,
@@ -12,6 +10,12 @@ from prismatic.providers.llm import (
     OpenAIProvider,
     VLLMProvider,
     get_llm_provider,
+)
+
+
+requires_antigravity_binary = pytest.mark.skipif(
+    AntigravityProvider._resolve_binary() is None,
+    reason="requires the Antigravity (agy-bin/agy) binary on the host",
 )
 
 
@@ -82,12 +86,14 @@ def test_ollama_provider_offline_graceful_handling():
         p.generate(LLMRequest.from_prompt("Hello"))
 
 
+@requires_antigravity_binary
 def test_antigravity_provider_binary_resolution():
     binary = AntigravityProvider._resolve_binary()
     assert binary is not None
     assert "agy" in binary
 
 
+@requires_antigravity_binary
 def test_antigravity_provider_health_and_models():
     p = AntigravityProvider()
     assert p.check_health() is True
@@ -97,6 +103,7 @@ def test_antigravity_provider_health_and_models():
     assert any("gemini" in m for m in models)
 
 
+@requires_antigravity_binary
 def test_antigravity_provider_generate():
     p = AntigravityProvider(default_model="gemini-3.8-flash-high")
     req = LLMRequest.from_prompt("Respond with exactly: HELLO_PRISMATIC")
@@ -107,6 +114,7 @@ def test_antigravity_provider_generate():
     assert resp.usage.get("prompt_tokens", 0) > 0
 
 
+@requires_antigravity_binary
 def test_antigravity_provider_streaming():
     p = AntigravityProvider()
     req = LLMRequest.from_prompt("Respond with: ONE TWO THREE")

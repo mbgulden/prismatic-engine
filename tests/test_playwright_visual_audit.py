@@ -15,11 +15,37 @@ from pathlib import Path
 import pytest
 
 
+def _playwright_ready(repo_root: str) -> bool:
+    """Check the playwright npm package and its chromium browser are installed."""
+    node_bin = shutil.which("node") or shutil.which("node.exe")
+    if not node_bin:
+        return False
+    probe = (
+        "const { chromium } = require('playwright');"
+        "const fs = require('fs');"
+        "const exe = chromium.executablePath();"
+        "if (!fs.existsSync(exe)) { process.exit(2); }"
+    )
+    proc = subprocess.run(
+        [node_bin, "-e", probe],
+        capture_output=True,
+        cwd=repo_root,
+    )
+    return proc.returncode == 0
+
+
 def test_playwright_visual_audit_against_live_gateway(tmp_path):
     """Run Playwright visual audit against live Gateway server and verify 375px viewport."""
     node_bin = shutil.which("node") or shutil.which("node.exe")
     if not node_bin:
         pytest.skip("Node.js executable 'node' not found in system PATH")
+
+    repo_root = str(Path(__file__).parent.parent)
+    if not _playwright_ready(repo_root):
+        pytest.skip(
+            "playwright npm package and/or its chromium browser are not "
+            "installed (needs npm install + playwright browser download)"
+        )
 
     node_script = (
         Path(__file__).parent.parent / "scripts" / "visual_audit_playwright.js"
@@ -28,7 +54,6 @@ def test_playwright_visual_audit_against_live_gateway(tmp_path):
         pytest.skip("visual_audit_playwright.js not found")
 
     port = 9088
-    repo_root = str(Path(__file__).parent.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = repo_root
     env["PRISMATIC_PORT"] = str(port)

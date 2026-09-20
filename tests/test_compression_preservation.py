@@ -13,19 +13,31 @@ Verifies:
 import json
 import sqlite3
 import time
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 from prismatic.cli import run as cli_run
 from prismatic.fleet.manager import (
-    COMPRESSION_SYSTEM_PROMPT,
-    OPERATIONAL_STATE_TEMPLATE,
     PrismaticFleetManager,
     verify_and_anchor_compressed_summary,
 )
+
+
+def _mock_swarmlock_status(mock_locks_data):
+    """Patch ``httpx.Client`` at the class level for the swarmlock status call.
+
+    Patching only ``httpx.Client.get`` leaves real client construction in
+    place; in sandboxes whose proxy env vars httpx cannot parse, constructing
+    the client raises before the mocked method is ever reached. Patching the
+    class keeps the fixture hermetic everywhere.
+    """
+    client_cls = MagicMock()
+    client = client_cls.return_value.__enter__.return_value
+    client.get.return_value.status_code = 200
+    client.get.return_value.json.return_value = mock_locks_data
+    return patch("httpx.Client", client_cls)
 
 
 @pytest.fixture
@@ -168,10 +180,7 @@ def test_compression_50k_tokens_preserves_operational_state(mock_compression_env
         ],
     }
 
-    with patch("httpx.Client.get") as mock_get:
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = mock_locks_data
-
+    with _mock_swarmlock_status(mock_locks_data):
         # Execute check_and_compress_profile
         res = mgr.check_and_compress_profile(profile="test_agent")
 
@@ -248,10 +257,7 @@ def test_post_compression_verification_gate_fail_closed(mock_compression_env):
         ],
     }
 
-    with patch("httpx.Client.get") as mock_get:
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = mock_locks_data
-
+    with _mock_swarmlock_status(mock_locks_data):
         res = mgr.check_and_compress_profile(
             profile="test_agent",
             force=True,
@@ -299,10 +305,7 @@ def test_cooperative_summarizer_avoids_duplicate_anchor(mock_compression_env):
         "locks": [{"resource": "prismatic/fleet/manager.py", "holder": "test_agent", "task_id": "GRO-4852"}],
     }
 
-    with patch("httpx.Client.get") as mock_get:
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = mock_locks_data
-
+    with _mock_swarmlock_status(mock_locks_data):
         res = mgr.check_and_compress_profile(
             profile="test_agent",
             force=True,
@@ -362,10 +365,7 @@ def test_dry_run_mode_does_not_mutate_db(mock_compression_env):
         "locks": [{"resource": "prismatic/fleet/manager.py", "holder": "test_agent", "task_id": "GRO-4852"}],
     }
 
-    with patch("httpx.Client.get") as mock_get:
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = mock_locks_data
-
+    with _mock_swarmlock_status(mock_locks_data):
         res = mgr.check_and_compress_profile(profile="test_agent", dry_run=True)
 
     assert res["status"] == "DRY_RUN"
@@ -413,11 +413,8 @@ def test_cli_fleet_compress_execution(mock_compression_env, capsys):
         "locks": [{"resource": "prismatic/fleet/manager.py", "holder": "test_agent", "task_id": "GRO-4852"}],
     }
 
-    with patch("httpx.Client.get") as mock_get, \
+    with _mock_swarmlock_status(mock_locks_data), \
          patch.object(PrismaticFleetManager, "DEFAULT_HERMES_ROOT", env["hermes_root"]):
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = mock_locks_data
-
         exit_code = cli_run(["fleet", "compress", "test_agent", "--json"])
 
     assert exit_code == 0
