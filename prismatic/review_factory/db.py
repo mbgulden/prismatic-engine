@@ -302,6 +302,16 @@ class ReviewFactoryDB:
             self.conn.execute(
                 "ALTER TABLE review_jobs ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0"
             )
+        # Migration: review_jobs.repair_attempts / repair_last_dispatch_at
+        # persist the bounded repair re-dispatch budget on the job row (Phase 4).
+        if "repair_attempts" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN repair_attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        if "repair_last_dispatch_at" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN repair_last_dispatch_at TEXT NOT NULL DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
         )
@@ -468,6 +478,113 @@ class ReviewFactoryDB:
             cur.execute(
                 "UPDATE review_jobs SET consecutive_failures = 0 WHERE review_job_id = ?",
                 (review_job_id,),
+            )
+            return cur.rowcount > 0
+
+    def note_repair_dispatch(self, review_job_id: str, at_iso: str) -> int:
+        """Record a repair intake dispatch: bump attempts, stamp the time.
+
+        Returns the new attempt count. Backs the bounded re-dispatch budget.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET repair_attempts = repair_attempts + 1, "
+                "repair_last_dispatch_at = ? WHERE review_job_id = ?",
+                (at_iso, review_job_id),
+            )
+            row = cur.execute(
+                "SELECT repair_attempts FROM review_jobs WHERE review_job_id = ?",
+                (review_job_id,),
+            ).fetchone()
+            return int(row[0]) if row is not None else 0
+
+    def backfill_repair_dispatch(
+        self, review_job_id: str, attempts: int, at_iso: str
+    ) -> bool:
+        """Seed the re-dispatch budget from history (no new dispatch).
+
+        Used once for jobs dispatched before attempt tracking existed: the
+        audit log's most recent ``repair_dispatched`` entry supplies the
+        starting budget instead of firing a duplicate dispatch.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET repair_attempts = ?, "
+                "repair_last_dispatch_at = ? WHERE review_job_id = ?",
+                (attempts, at_iso, review_job_id),
+            )
+            return cur.rowcount > 0
+
+    def lease_merge_ready(
+        self,
+        worker_id: str,
+        lease_seconds: int = 600,
+        tiers: Optional[set] = None,
+        exclude_job_ids: Optional[set] = None,
+    ) -> Optional["ReviewJob"]:
+        """Lease one MERGE_READY job without changing its state.
+
+        Conditional claim: only unleased or expired-lease rows are taken, so
+        concurrent merge-stage workers cannot double-process a job. The
+        merge itself is additionally guarded by the executor's atomic
+        authorization claim.
+
+        ``tiers`` (when non-empty) restricts leasing to those risk tiers and
+        ``exclude_job_ids`` (when non-empty) skips specific jobs, so refused
+        jobs (tier 2/3, tiers not enabled for auto-merge, authorize-refused)
+        sit in MERGE_READY without lease churn.
+        """
+        now = datetime.now(timezone.utc)
+        expiry = (now + timedelta(seconds=lease_seconds)).isoformat()
+        now_iso = now.isoformat()
+        where_params: list = [now_iso]
+        tier_clause = ""
+        if tiers:
+            tier_clause = " AND risk_tier IN ({})".format(
+                ", ".join(["?"] * len(tiers))
+            )
+            where_params.extend(sorted(int(t) for t in tiers))
+        exclude_clause = ""
+        if exclude_job_ids:
+            exclude_clause = " AND review_job_id NOT IN ({})".format(
+                ", ".join(["?"] * len(exclude_job_ids))
+            )
+            where_params.extend(sorted(exclude_job_ids))
+        with self.transaction() as cur:
+            cur.execute(
+                """UPDATE review_jobs
+                   SET lease_owner = ?, lease_expires_at = ?
+                   WHERE review_job_id = (
+                       SELECT review_job_id FROM review_jobs
+                       WHERE state = 'merge_ready'
+                         AND (lease_owner = '' OR lease_owner IS NULL
+                              OR lease_expires_at IS NULL OR lease_expires_at = ''
+                              OR lease_expires_at < ?)
+                         {tier_clause}{exclude_clause}
+                       ORDER BY created_at ASC LIMIT 1
+                   )""".format(
+                    tier_clause=tier_clause, exclude_clause=exclude_clause
+                ),
+                [worker_id, expiry] + where_params,
+            )
+            if cur.rowcount == 0:
+                return None
+            row = cur.execute(
+                "SELECT * FROM review_jobs WHERE lease_owner = ? "
+                "AND lease_expires_at = ? LIMIT 1",
+                (worker_id, expiry),
+            ).fetchone()
+            return self._row_to_review_job(row) if row else None
+
+    def release_merge_lease(self, review_job_id: str, worker_id: str) -> bool:
+        """Release a merge lease, leaving the job MERGE_READY."""
+        with self.transaction() as cur:
+            cur.execute(
+                """UPDATE review_jobs
+                   SET lease_owner = '', lease_expires_at = ''
+                   WHERE review_job_id = ? AND state = 'merge_ready'
+                     AND lease_owner = ?""",
+                (review_job_id, worker_id),
             )
             return cur.rowcount > 0
 
@@ -996,6 +1113,8 @@ class ReviewFactoryDB:
             required_witnesses=row["required_witnesses"],
             completed_witnesses=row["completed_witnesses"],
             consecutive_failures=row["consecutive_failures"],
+            repair_attempts=row["repair_attempts"] if "repair_attempts" in row.keys() else 0,
+            repair_last_dispatch_at=row["repair_last_dispatch_at"] if "repair_last_dispatch_at" in row.keys() else "",
             created_at=row["created_at"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],

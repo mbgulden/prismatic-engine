@@ -43,7 +43,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -714,6 +713,26 @@ class ReviewQueue:
             new_changed_paths=new_changed_paths,
         )
 
+    def requeue_repaired_candidate(
+        self,
+        review_job_id: str,
+        new_candidate_commit: str,
+        new_candidate_tree: str = "",
+        new_changed_paths: Optional[list[str]] = None,
+    ) -> bool:
+        """Re-queue a repaired candidate for re-verification.
+
+        This is the entry point named in the repair task instructions handed
+        to repair agents. It consumes outstanding repair packets, swaps in the
+        new candidate, and returns the job to ``queued`` atomically.
+        """
+        return self.consume_repair(
+            review_job_id,
+            new_candidate_commit,
+            new_candidate_tree=new_candidate_tree,
+            new_changed_paths=new_changed_paths,
+        )
+
     # ── Repair dispatch (closes the review → rework loop) ─────────────
 
     def dispatch_repair_task(
@@ -721,6 +740,7 @@ class ReviewQueue:
         review_job_id: str,
         failure_reason: str = "",
         target_agent: str | None = None,
+        force: bool = False,
     ) -> Optional[str]:
         """Dispatch a repair task into the engine's multi-channel task intake.
 
@@ -737,7 +757,9 @@ class ReviewQueue:
 
         Idempotent per job: when a ``repair_dispatched`` audit entry already
         exists for the job, the recorded intake event id is returned without
-        enqueueing a second task.
+        enqueueing a second task — unless ``force=True`` (bounded re-dispatch
+        via ``redispatch_stalled_repairs``), which always enqueues a fresh
+        task and increments the job's repair-attempt budget.
 
         Returns the intake event id, or None when the intake is genuinely
         unavailable — in which case a loud ``repair_dispatch_unavailable``
@@ -747,14 +769,15 @@ class ReviewQueue:
         if not job:
             return None
 
-        existing = self.db.find_audit_entry(review_job_id, "repair_dispatched")
-        if existing:
-            try:
-                prior = json.loads(existing.get("details_json") or "{}")
-                if prior.get("intake_event_id"):
-                    return str(prior["intake_event_id"])
-            except Exception:
-                pass
+        if not force:
+            existing = self.db.find_audit_entry(review_job_id, "repair_dispatched")
+            if existing:
+                try:
+                    prior = json.loads(existing.get("details_json") or "{}")
+                    if prior.get("intake_event_id"):
+                        return str(prior["intake_event_id"])
+                except Exception:
+                    pass
 
         context = self._repair_context(review_job_id, job, failure_reason)
 
@@ -800,6 +823,9 @@ class ReviewQueue:
             return None
 
         event_id = str(row.get("event_id") or "")
+        attempt = self.db.note_repair_dispatch(
+            review_job_id, datetime.now(timezone.utc).isoformat()
+        )
         self.db.insert_audit_entry(
             actor="review-factory:repair-dispatch",
             action="repair_dispatched",
@@ -813,18 +839,28 @@ class ReviewQueue:
                 "candidate_commit": (job.candidate_commit or "")[:8],
                 "failure_reason": failure_reason,
                 "repair_packet_id": context["payload"].get("repair_packet_id"),
+                "attempt": attempt,
+                "forced_redispatch": bool(force),
             },
         )
         logger.info(
-            "repair task dispatched for job %s (task %s) as intake event %s",
+            "repair task dispatched for job %s (task %s) as intake event %s (attempt %d)",
             review_job_id,
             job.task_id,
             event_id,
+            attempt,
         )
-        self._notify_linear_issue(job, context, event_id)
+        self._notify_linear_issue(
+            job, context, event_id, attempt=attempt,
+            failure_reason=failure_reason,
+        )
         emit_rf_event(
             "review_factory.repair_dispatched",
-            {"review_job_id": review_job_id, "intake_event_id": event_id},
+            {
+                "review_job_id": review_job_id,
+                "intake_event_id": event_id,
+                "attempt": attempt,
+            },
         )
         return event_id
 
@@ -909,29 +945,37 @@ class ReviewQueue:
         return {"title": title, "payload": payload}
 
     def _notify_linear_issue(
-        self, job: ReviewJob, context: dict, intake_event_id: str
+        self,
+        job,
+        context: dict,
+        intake_event_id: str,
+        attempt: int = 1,
+        failure_reason: str = "",
     ) -> None:
-        """Best-effort comment on the linked Linear issue (visibility only)."""
-        task_id = (job.task_id or "").strip()
-        if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", task_id):
-            return
-        try:
-            from prismatic.providers.tasks.linear import LinearTaskProvider
+        """Wire a repair dispatch into Linear — loudly, never silently.
 
-            provider = LinearTaskProvider()
-            if not getattr(provider, "_api_key", ""):
-                return
-            reason = context["payload"].get("failure_reason") or "see review findings"
-            body = (
-                "Review Factory rejected the candidate for this issue "
-                f"(`{(job.candidate_commit or '')[:8]}`) and dispatched a repair "
-                f"task (`{intake_event_id}`) into the engine task intake.\n\n"
-                f"Reason: {reason}\n"
-                f"Review job: `{job.review_job_id}`"
+        Delegates to :class:`prismatic.review_factory.linear_hooks.LinearReviewHooks`:
+        the linked Linear issue gets a comment, or a new issue is created when
+        the job has none. Every outcome (including "Linear unconfigured") is an
+        audit entry; this method never raises.
+        """
+        try:
+            from prismatic.review_factory.linear_hooks import LinearReviewHooks
+
+            hooks = LinearReviewHooks(db=self.db)
+            hooks.notify_repair_required(
+                job,
+                failure_reason=failure_reason
+                or context["payload"].get("failure_reason", ""),
+                intake_event_id=intake_event_id,
+                attempt=attempt,
             )
-            provider.add_comment(task_id, body)
         except Exception as exc:
-            logger.warning("linear repair comment failed for %s: %s", task_id, exc)
+            logger.warning(
+                "linear repair notify failed for %s: %s",
+                getattr(job, "review_job_id", "?"),
+                exc,
+            )
 
     # ── Janitor ──────────────────────────────────────────────────────
 
@@ -948,6 +992,22 @@ class ReviewQueue:
             new_state = ReviewJobState.QUEUED
         elif job.state == ReviewJobState.REVIEWING.value:
             new_state = ReviewJobState.REVIEW_READY
+        elif job.state == ReviewJobState.MERGE_READY.value:
+            # Merge-stage lease: release via the dedicated path (the generic
+            # transition is a same-state no-op and would not clear the lease).
+            released = self.db.release_merge_lease(review_job_id, job.lease_owner)
+            if released:
+                self.db.insert_audit_entry(
+                    actor=actor,
+                    action="force_release_lease",
+                    review_job_id=review_job_id,
+                    client_ip=client_ip,
+                    details={
+                        "previous_state": job.state,
+                        "new_state": ReviewJobState.MERGE_READY.value,
+                    },
+                )
+            return released
         else:
             return False
 
@@ -1010,6 +1070,283 @@ class ReviewQueue:
     def pending_merges(self) -> list[ReviewJob]:
         """List all jobs waiting for merge authorization."""
         return self.db.list_review_jobs(state=ReviewJobState.MERGE_READY)
+
+    def lease_for_merge(
+        self,
+        worker_id: str,
+        lease_seconds: int = 600,
+        tiers: Optional[set] = None,
+        exclude_job_ids: Optional[set] = None,
+    ) -> Optional[ReviewJob]:
+        """Lease one MERGE_READY job for the merge stage (Phase 4).
+
+        The lease does not change job state — the merge stage decides
+        (dry-run / live / refuse) and the executor's atomic authorization
+        claim guards double execution. ``tiers`` restricts which risk tiers
+        may be leased and ``exclude_job_ids`` skips specific jobs, so
+        refused jobs stay MERGE_READY without hot-looping. Returns None
+        when no matching unleased MERGE_READY job exists.
+        """
+        return self.db.lease_merge_ready(
+            worker_id,
+            lease_seconds,
+            tiers=tiers,
+            exclude_job_ids=exclude_job_ids,
+        )
+
+    def release_merge_lease(self, review_job_id: str, worker_id: str) -> bool:
+        """Release a merge lease, leaving the job MERGE_READY."""
+        return self.db.release_merge_lease(review_job_id, worker_id)
+
+    # ── Bounded repair re-dispatch ───────────────────────────────────
+
+    def redispatch_stalled_repairs(
+        self,
+        *,
+        max_attempts: int = 3,
+        stall_timeout_seconds: int = 3600,
+        backoff_base_seconds: int = 900,
+        now: Optional[datetime] = None,
+    ) -> dict:
+        """Re-dispatch stalled repairs with bounded retries and backoff.
+
+        For each REPAIR_REQUIRED job:
+
+        - Jobs never dispatched get a first dispatch immediately (they are
+          already stalled by definition).
+        - Jobs dispatched before attempt tracking existed are backfilled from
+          the audit log's most recent ``repair_dispatched`` entry — no
+          duplicate dispatch, the backoff clock starts from the original.
+        - Otherwise, when ``attempts < max_attempts`` and the job has been
+          quiet for ``max(stall_timeout, backoff_base * 2**(attempts-1))``
+          since the last dispatch, a fresh repair task is force-dispatched
+          (exponential backoff).
+        - When ``attempts >= max_attempts``, the job FAILS LOUD: a
+          ``repair_redispatch_exhausted`` audit entry plus a Linear notice.
+          The job stays REPAIR_REQUIRED (visible, never silently dropped)
+          for operator action.
+        - When the intake call returns no task id, the attempt is audited
+          as ``repair_redispatch_no_task_id`` and reported under
+          ``failed`` — never as a successful redispatch.
+
+        Never raises: per-job errors are audit entries, and the summary is
+        returned for the caller's log.
+        """
+        current = now or datetime.now(timezone.utc)
+        summary: dict = {
+            "redispatched": [],
+            "exhausted": [],
+            "skipped": 0,
+            "failed": [],
+        }
+        try:
+            jobs = self.db.list_review_jobs(state=ReviewJobState.REPAIR_REQUIRED)
+        except Exception as exc:
+            logger.warning("redispatch scan failed: %s", exc)
+            return summary
+
+        for job in jobs:
+            job_id = job.review_job_id
+            try:
+                self._redispatch_one(
+                    job, current, max_attempts,
+                    stall_timeout_seconds, backoff_base_seconds, summary,
+                )
+            except Exception as exc:
+                logger.warning("redispatch failed for job %s: %s", job_id, exc)
+                try:
+                    self.db.insert_audit_entry(
+                        actor="review-factory:repair-redispatch",
+                        action="repair_redispatch_error",
+                        review_job_id=job_id,
+                        details={"error": str(exc)[:200]},
+                    )
+                except Exception:
+                    pass
+        return summary
+
+    @staticmethod
+    def _within_seconds(iso_ts: str, current: datetime, window_seconds: int) -> bool:
+        """True when an ISO timestamp is within ``window_seconds`` of now."""
+        try:
+            dt = datetime.fromisoformat((iso_ts or "").strip())
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (current - dt).total_seconds() < window_seconds
+        except Exception:
+            return False
+
+    def _redispatch_one(
+        self, job, current: datetime, max_attempts: int,
+        stall_timeout_seconds: int, backoff_base_seconds: int,
+        summary: dict,
+    ) -> None:
+        job_id = job.review_job_id
+        attempts = int(getattr(job, "repair_attempts", 0) or 0)
+        last_at = (getattr(job, "repair_last_dispatch_at", "") or "").strip()
+
+        if attempts == 0:
+            prior = self.db.find_audit_entry(job_id, "repair_dispatched")
+            if prior is not None:
+                # Dispatched before attempt tracking existed: backfill the
+                # budget from history instead of firing a duplicate.
+                ts = str(prior.get("timestamp") or "")
+                self.db.backfill_repair_dispatch(job_id, 1, ts)
+                self.db.insert_audit_entry(
+                    actor="review-factory:repair-redispatch",
+                    action="repair_dispatch_backfilled",
+                    review_job_id=job_id,
+                    details={"attempts": 1, "original_dispatch_at": ts},
+                )
+                summary["skipped"] += 1
+                return
+            # Never dispatched at all — but don't hammer a dead intake:
+            # a recent repair_dispatch_unavailable means back off.
+            unavailable = self.db.find_audit_entry(
+                job_id, "repair_dispatch_unavailable"
+            )
+            if unavailable is not None and self._within_seconds(
+                str(unavailable.get("timestamp") or ""),
+                current,
+                stall_timeout_seconds,
+            ):
+                summary["skipped"] += 1
+                return
+            # Never dispatched at all: first attempt now.
+            event_id = self.dispatch_repair_task(
+                job_id,
+                failure_reason="repair never dispatched; first attempt",
+                force=True,
+            )
+            if not event_id:
+                self._audit_redispatch_no_task_id(
+                    job_id, attempt=1, max_attempts=max_attempts
+                )
+                summary["failed"].append({"job_id": job_id, "attempt": 1})
+                return
+            summary["redispatched"].append(
+                {"job_id": job_id, "attempt": 1, "intake_event_id": event_id}
+            )
+            return
+
+        if attempts >= max_attempts:
+            if self.db.find_audit_entry(job_id, "repair_redispatch_exhausted") is None:
+                self.db.insert_audit_entry(
+                    actor="review-factory:repair-redispatch",
+                    action="repair_redispatch_exhausted",
+                    review_job_id=job_id,
+                    details={
+                        "attempts": attempts,
+                        "max_attempts": max_attempts,
+                        "note": (
+                            "repair redispatch budget exhausted; job remains "
+                            "REPAIR_REQUIRED for operator action — never "
+                            "silently dropped"
+                        ),
+                    },
+                )
+                logger.error(
+                    "repair redispatch exhausted for job %s after %d attempts",
+                    job_id, attempts,
+                )
+                try:
+                    from prismatic.review_factory.linear_hooks import (
+                        LinearReviewHooks,
+                    )
+
+                    LinearReviewHooks(db=self.db).notify_repair_exhausted(
+                        job, attempts=attempts
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "linear exhaustion hook failed for %s: %s", job_id, exc
+                    )
+                summary["exhausted"].append(
+                    {"job_id": job_id, "attempts": attempts}
+                )
+            else:
+                summary["skipped"] += 1
+            return
+
+        wait_seconds = max(
+            stall_timeout_seconds, backoff_base_seconds * (2 ** (attempts - 1))
+        )
+        try:
+            last_dt = datetime.fromisoformat(last_at)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            quiet_seconds = (current - last_dt).total_seconds()
+        except Exception:
+            quiet_seconds = float("inf")
+        if quiet_seconds < wait_seconds:
+            summary["skipped"] += 1
+            return
+
+        event_id = self.dispatch_repair_task(
+            job_id,
+            failure_reason=(
+                f"repair attempt {attempts} produced no repaired candidate "
+                f"within {int(quiet_seconds)}s; redispatching "
+                f"(attempt {attempts + 1}/{max_attempts})"
+            ),
+            force=True,
+        )
+        if not event_id:
+            self._audit_redispatch_no_task_id(
+                job_id, attempt=attempts + 1, max_attempts=max_attempts
+            )
+            summary["failed"].append(
+                {"job_id": job_id, "attempt": attempts + 1}
+            )
+            return
+        self.db.insert_audit_entry(
+            actor="review-factory:repair-redispatch",
+            action="repair_redispatched",
+            review_job_id=job_id,
+            details={
+                "attempt": attempts + 1,
+                "max_attempts": max_attempts,
+                "quiet_seconds": int(quiet_seconds),
+                "intake_event_id": event_id,
+            },
+        )
+        summary["redispatched"].append(
+            {
+                "job_id": job_id,
+                "attempt": attempts + 1,
+                "intake_event_id": event_id,
+            }
+        )
+
+    def _audit_redispatch_no_task_id(
+        self, job_id: str, *, attempt: int, max_attempts: int
+    ) -> None:
+        """Record a redispatch whose intake call returned no task id.
+
+        Never reported as a successful redispatch: the intake produced no
+        task, so the job is still stalled and stays REPAIR_REQUIRED for the
+        next pass (or exhaustion).
+        """
+        self.db.insert_audit_entry(
+            actor="review-factory:repair-redispatch",
+            action="repair_redispatch_no_task_id",
+            review_job_id=job_id,
+            details={
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "note": (
+                    "repair task intake returned no task id; NOT counted "
+                    "as a successful redispatch"
+                ),
+            },
+        )
+        logger.error(
+            "repair redispatch for job %s produced no intake task id "
+            "(attempt %d/%d)",
+            job_id,
+            attempt,
+            max_attempts,
+        )
 
     def active_reviews(self) -> list[ReviewJob]:
         """List all jobs currently being reviewed (leased)."""
