@@ -33,7 +33,7 @@ dependencies = [
     "packaging>=23.0",
     "pytest>=8.0",
     "pyyaml>=6.0",
-    "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@main",
+    "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@392b858ecfb2fca416426adadece933938584994",
     "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -42,7 +42,7 @@ http = ["requests>=2.31"]
 redis = ["redis>=5.0"]
 gateway = ["fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.27", "websockets>=12.0"]
 primitives = [
-    "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@main",
+    "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@392b858ecfb2fca416426adadece933938584994",
     "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@main",
     "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@main",
     "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@main",
