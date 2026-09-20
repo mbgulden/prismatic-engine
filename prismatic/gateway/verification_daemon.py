@@ -6,7 +6,10 @@ the Gateway server:
     QUEUED --lease_for_verification--> VERIFYING --RF-2 verify--> REVIEW_READY
     REVIEW_READY --lease_for_review--> REVIEWING --RF-3 heuristic--> verdict
         CLEAN (witnesses met) --> MERGE_READY   (no merge authority in this phase)
-        REPAIR_REQUIRED       --> repair task dispatched to task_admission
+        REPAIR_REQUIRED       --> repair dispatch attempted; when no automated
+                                  repair dispatcher is wired, an explicit
+                                  repair_dispatch_unavailable audit entry is
+                                  recorded so the job never sits silently
         REJECTED              --> terminal, visible on the dashboard
 
 No LLMs, no network model calls: this loop is entirely deterministic. The
@@ -118,6 +121,11 @@ class VerificationWorkerDaemon:
     queued jobs, runs immutable verification (RF-2), then the heuristic
     review (RF-3), and submits verdicts. Clean work with enough witnesses
     advances to MERGE_READY; nothing in this phase executes a merge.
+
+    Jobs that fail infrastructure stages ``max_consecutive_failures`` times in
+    a row (default 3) are moved to the terminal QUARANTINED state with an
+    audit entry instead of being re-leased forever. The failure count is
+    persisted on the job row, so a daemon restart cannot wipe poison memory.
     """
 
     def __init__(
@@ -200,15 +208,20 @@ class VerificationWorkerDaemon:
         """Lease and process one job. Returns True when work was attempted."""
         job = self.queue.lease_for_verification(self.worker_id)
         if job is not None:
-            if self._is_poisoned(job.review_job_id):
-                self.queue.force_release_lease(job.review_job_id, actor=self.worker_id)
+            if self._is_poisoned(job):
+                # Poison: quarantine instead of re-leasing forever.
+                self._quarantine_job(
+                    job, stage="lease", failures=job.consecutive_failures or 0
+                )
                 return False
             self._run_verification_stage(job)
             return True
         job = self.queue.lease_for_review(self.reviewer_id)
         if job is not None:
-            if self._is_poisoned(job.review_job_id):
-                self.queue.force_release_lease(job.review_job_id, actor=self.reviewer_id)
+            if self._is_poisoned(job):
+                self._quarantine_job(
+                    job, stage="lease", failures=job.consecutive_failures or 0
+                )
                 return False
             self._run_review_stage(job)
             return True
@@ -267,6 +280,15 @@ class VerificationWorkerDaemon:
             lease_owner="",
             lease_expires_at="",
         )
+        repair_dispatched = None
+        if moved:
+            repair_dispatched = self.queue.dispatch_repair_task(
+                job_id,
+                failure_reason=(
+                    f"verification checks failed (receipt {receipt.receipt_id}, "
+                    f"classification {receipt.classification})"
+                ),
+            )
         self.queue.db.insert_audit_entry(
             actor=f"daemon:{self.worker_id}",
             action="verification_failed",
@@ -275,16 +297,9 @@ class VerificationWorkerDaemon:
                 "receipt_id": receipt.receipt_id,
                 "classification": receipt.classification,
                 "moved_to_repair": bool(moved),
+                "repair_dispatched": bool(repair_dispatched),
             },
         )
-        if moved:
-            self.queue.dispatch_repair_task(
-                job_id,
-                failure_reason=(
-                    f"verification checks failed (receipt {receipt.receipt_id}, "
-                    f"classification {receipt.classification})"
-                ),
-            )
         self._clear_failures(job_id)
         logger.info("verification failed for job %s -> repair_required", job_id)
 
@@ -312,10 +327,24 @@ class VerificationWorkerDaemon:
                 )
                 return
             pr_url = self._pr_url_for_job(job)
-            decision, _updated_manifest, _repair = self.reviewer.review(
+            decision, updated_manifest, _repair = self.reviewer.review(
                 job, manifest, receipt, pr_url=pr_url
             )
             new_state = self.queue.submit_verdict(job_id, decision, self.reviewer_id)
+            # Persist the CLEAN manifest once the job is merge-ready so the
+            # manifest digest chain continues into Phase 4 (the merge executor
+            # binds the CLEAN manifest from the DB). While more witnesses are
+            # outstanding the job returns to REVIEW_READY and the
+            # REVIEW_REQUIRED manifest stays in place, so the next reviewer
+            # can still record theirs (record_review only accepts
+            # REVIEW_REQUIRED manifests).
+            if new_state == ReviewJobState.MERGE_READY.value and (
+                getattr(updated_manifest, "state", None) is PromotionState.CLEAN
+            ):
+                if not self.queue.db.update_job_manifest(
+                    job_id, updated_manifest.canonical_json()
+                ):
+                    logger.error("clean manifest persist failed for job %s", job_id)
             self._clear_failures(job_id)
             logger.info(
                 "reviewed job %s -> %s (verdict %s)",
@@ -417,10 +446,16 @@ class VerificationWorkerDaemon:
             self._last_janitor = now
 
     # ── Failure tracking ─────────────────────────────────────────────
+    # Consecutive-failure counts are persisted on the job row
+    # (review_jobs.consecutive_failures), not just in memory, so a daemon
+    # restart cannot wipe poison memory. After ``max_consecutive_failures``
+    # (default 3) consecutive infrastructure failures the job is moved to the
+    # terminal QUARANTINED state with an audit entry -- never re-leased
+    # forever.
 
     def _record_failure(self, job: ReviewJob, *, stage: str) -> None:
         job_id = job.review_job_id
-        count = self._failures.get(job_id, 0) + 1
+        count = self.queue.db.increment_job_failures(job_id)
         self._failures[job_id] = count
         logger.warning(
             "job %s failure %d/%d at stage %s",
@@ -429,6 +464,9 @@ class VerificationWorkerDaemon:
             self.max_consecutive_failures,
             stage,
         )
+        if count >= self.max_consecutive_failures:
+            self._quarantine_job(job, stage=stage, failures=count)
+            return
         try:
             self.queue.force_release_lease(job_id, actor=self.worker_id)
         except Exception as exc:
@@ -436,9 +474,45 @@ class VerificationWorkerDaemon:
 
     def _clear_failures(self, job_id: str) -> None:
         self._failures.pop(job_id, None)
+        try:
+            self.queue.db.reset_job_failures(job_id)
+        except Exception as exc:
+            logger.warning("failure-count reset failed for job %s: %s", job_id, exc)
 
-    def _is_poisoned(self, job_id: str) -> bool:
-        return self._failures.get(job_id, 0) >= self.max_consecutive_failures
+    def _is_poisoned(self, job: ReviewJob) -> bool:
+        return (job.consecutive_failures or 0) >= self.max_consecutive_failures
+
+    def _quarantine_job(self, job: ReviewJob, *, stage: str, failures: int) -> None:
+        """Move a poison job to the terminal QUARANTINED state.
+
+        Quarantine is visible (audit entry ``job_quarantined``) and terminal:
+        the job leaves the lease/retry loop and waits for operator attention.
+        """
+        job_id = job.review_job_id
+        moved = self.queue.db.update_review_job_state(
+            job_id,
+            ReviewJobState.QUARANTINED,
+            lease_owner="",
+            lease_expires_at="",
+        )
+        self.queue.db.insert_audit_entry(
+            actor=f"daemon:{self.worker_id}",
+            action="job_quarantined",
+            review_job_id=job_id,
+            details={
+                "stage": stage,
+                "consecutive_failures": failures,
+                "max_consecutive_failures": self.max_consecutive_failures,
+                "moved": bool(moved),
+            },
+        )
+        self._failures.pop(job_id, None)
+        logger.error(
+            "job %s quarantined after %d consecutive failures at stage %s",
+            job_id,
+            failures,
+            stage,
+        )
 
 
 # Module-level singleton for the Gateway server lifecycle.
@@ -453,3 +527,20 @@ def instance() -> VerificationWorkerDaemon:
         if _daemon is None:
             _daemon = VerificationWorkerDaemon()
         return _daemon
+
+
+# ── Module-level lifecycle shims ─────────────────────────────────────
+# server.py imports these names (the pre-#454 daemon API). They delegate to
+# the process-wide singleton above so the gateway can boot.
+
+
+def start_verification_daemon() -> VerificationWorkerDaemon:
+    """Start the singleton verification daemon (idempotent)."""
+    daemon = instance()
+    daemon.start()
+    return daemon
+
+
+def stop_verification_daemon() -> None:
+    """Stop the singleton verification daemon."""
+    instance().stop()
