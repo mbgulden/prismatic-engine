@@ -21,7 +21,6 @@ import argparse
 import asyncio
 from contextlib import asynccontextmanager
 import hashlib
-import hmac as _hmac
 import html
 import json
 import logging
@@ -262,6 +261,20 @@ async def _publish_webhook_auth_failed(source: str) -> None:
             )
     except Exception as exc:
         logger.warning("webhook auth-failed bus publish failed: %s", exc)
+
+
+async def _record_webhook_auth_failure(
+    source: str, reason: str, remote: str | None = None
+) -> None:
+    """Log a rejected webhook delivery: audit ledger + redacted bus event.
+
+    Best-effort — logging never breaks the request path and never carries
+    secret material (only the machine-readable reason code).
+    """
+    from prismatic.gateway.webhook_auth import record_ledger_auth_failure
+
+    record_ledger_auth_failure(source, reason, remote=remote)
+    await _publish_webhook_auth_failed(source)
 
 
 def _linear_state_is_terminal(state: dict | None) -> bool:
@@ -5582,38 +5595,31 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     """Receive GitHub webhook events. Verifies HMAC-SHA256 via X-Hub-Signature-256
     and publishes to the in-process event bus.
 
+    Fail-closed: deliveries are rejected (401) when no signing secret is
+    configured, when the signature header is missing, or when the signature
+    is invalid. Rejections are written to the audit ledger. GitHub signs the
+    exact raw request body with HMAC-SHA256 ("sha256=<hex>" format).
+
     Per opus-event-driven-real-plan.md Phase 1.
     """
+    from prismatic.gateway.webhook_auth import verify_vendor_hmac
+
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
     _webhook_counters["github_received"] += 1
-    if signature:
-        secrets = get_github_secrets()
-        if not secrets:
-            logger.warning("GitHub webhook skipped: secret not set")
-            return {"status": "skipped", "reason": "no-secret"}
-        # GitHub signs the exact raw request body with HMAC-SHA256. The
-        # ``X-Hub-Signature-256`` header name is not part of the signed bytes.
-        # See GitHub's webhook-validation contract.
-        signed_payload = body
-        # GitHub sends "sha256=<hex>"; compare_digest needs raw hex on both sides.
-        sig_hex = (
-            signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
+    # GitHub sends "sha256=<hex>"; compare_digest needs raw hex on both sides.
+    sig_hex = (
+        signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
+    )
+    auth_ok, auth_reason = verify_vendor_hmac(
+        body, sig_hex or None, get_github_secrets()
+    )
+    if not auth_ok:
+        _webhook_counters["github_auth_failed"] += 1
+        await _record_webhook_auth_failure("github", auth_reason)
+        return JSONResponse(
+            {"status": "auth-failed", "reason": auth_reason}, status_code=401
         )
-        expected = None
-        for secret in secrets:
-            candidate = _hmac.new(
-                secret.encode(), signed_payload, hashlib.sha256
-            ).hexdigest()
-            if _hmac.compare_digest(candidate, sig_hex):
-                expected = candidate
-                break
-        if expected is None:
-            _webhook_counters["github_auth_failed"] += 1
-            await _publish_webhook_auth_failed("github")
-            from fastapi.responses import JSONResponse
-
-            return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
         event = json.loads(body) if body else {}
     except Exception:
@@ -5640,26 +5646,27 @@ async def github_webhook(request: Request) -> dict[str, Any]:
 async def linear_webhook(request: Request) -> dict[str, Any]:
     """Receive Linear webhook events. Validates HMAC and publishes to bus.
 
+    Fail-closed: deliveries are rejected (401) when no signing secret is
+    configured, when the signature header is missing, or when the signature
+    is invalid. Rejections are written to the audit ledger. Linear signs the
+    exact raw request body; the hex digest arrives in ``linear-signature``.
+
     Per opus-event-driven-real-plan.md Phase 1.
     """
+    from prismatic.gateway.webhook_auth import verify_vendor_hmac
+
     body = await request.body()
     signature = request.headers.get("linear-signature", "")
     _webhook_counters["linear_received"] += 1
-    if signature:
-        secrets = get_linear_secrets()
-        if secrets:
-            expected = None
-            for secret in secrets:
-                candidate = _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-                if _hmac.compare_digest(candidate, signature):
-                    expected = candidate
-                    break
-            if expected is None:
-                _webhook_counters["linear_auth_failed"] += 1
-                await _publish_webhook_auth_failed("linear")
-                from fastapi.responses import JSONResponse
-
-                return JSONResponse({"status": "auth-failed"}, status_code=401)
+    auth_ok, auth_reason = verify_vendor_hmac(
+        body, signature or None, get_linear_secrets()
+    )
+    if not auth_ok:
+        _webhook_counters["linear_auth_failed"] += 1
+        await _record_webhook_auth_failure("linear", auth_reason)
+        return JSONResponse(
+            {"status": "auth-failed", "reason": auth_reason}, status_code=401
+        )
     try:
         event = json.loads(body) if body else {}
     except Exception:
