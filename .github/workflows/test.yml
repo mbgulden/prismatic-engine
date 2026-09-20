@@ -12,12 +12,22 @@ on:
 
 jobs:
   test:
-    name: test py${{ matrix.python-version }}
+    name: test py${{ matrix.python-version }} ${{ matrix.test-shard }}
     runs-on: ubuntu-latest
+    # Bound the whole job well below the 6h default so a stalled suite fails
+    # fast instead of the runner being reclaimed by GitHub infra mid-run.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # Split the unit tests across two runners per Python version.
+        # Evidence (runs 35485916531, 35482029608): the single unsharded
+        # ~2200-test process was killed by runner infra ("The runner has
+        # received a shutdown signal") at arbitrary points/times, consistent
+        # with host resource reclamation. Sharding halves the per-runner
+        # load and isolates a kill to one shard.
+        test-shard: ["tests", "review-factory"]
 
     steps:
       - name: Checkout Repository
@@ -94,9 +104,36 @@ jobs:
         run: |
           python scripts/validate_okf_docs.py
 
-      - name: Run Unit Tests
+      # Resource snapshot before the suite: evidence for diagnosing any
+      # future runner kills ("shutdown signal") as memory vs disk.
+      - name: Runner resource snapshot (before unit tests)
         run: |
-          python -m pytest tests/ prismatic/review_factory/tests/
+          echo "--- df -h ---"
+          df -h
+          echo "--- free -m ---"
+          free -m
+          echo "--- nproc ---"
+          nproc
+
+      - name: Run Unit Tests (${{ matrix.test-shard }})
+        # A hung shard fails with a clear timeout instead of the runner
+        # being reclaimed after indefinite silence. The unsharded suite
+        # was heading for ~40+ min (35% in ~14.5 min on run 35485916531).
+        timeout-minutes: 45
+        run: |
+          if [ "${{ matrix.test-shard }}" = "tests" ]; then
+            python -m pytest tests/
+          else
+            python -m pytest prismatic/review_factory/tests/
+          fi
+
+      - name: Runner resource snapshot (after unit tests)
+        if: always()
+        run: |
+          echo "--- df -h ---"
+          df -h
+          echo "--- free -m ---"
+          free -m
 
       - name: Setup Mock Git Hooks (Required by Canary Integration Tests)
         run: |
