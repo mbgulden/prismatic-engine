@@ -20,6 +20,7 @@ addresses, credentials, or OS-specific locations:
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import time
@@ -46,6 +47,54 @@ from swarmsaga.core.unwinder import TopologicalUnwinder
 from swarmsaga.journal.engine import JournalEngine
 
 logger = logging.getLogger("prismatic.hypervisor")
+
+
+async def _lease_heartbeat(
+    tx_id: str,
+    resource: str,
+    lock_id: str,
+    agent_id: str,
+    ttl_seconds: float,
+    renew_fn: Callable[..., bool],
+) -> None:
+    """Renew a SwarmLock lease until cancelled.
+
+    Runs at ttl/3 intervals so a single missed beat never loses the lease. A
+    failed renewal is fail-loud, not fail-silent: the lease is gone and
+    exclusivity can no longer be assumed. The transaction is *not* aborted —
+    aborting mid-commit would be worse — but the loss is logged at CRITICAL
+    so it cannot be missed.
+    """
+    interval = min(max(ttl_seconds / 3.0, 0.1), 30.0)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            renewed = renew_fn(
+                lock_id=lock_id, holder=agent_id, ttl_seconds=ttl_seconds
+            )
+        except Exception as exc:
+            logger.warning("Transaction %s lease heartbeat errored: %s", tx_id, exc)
+            continue
+        if not renewed:
+            logger.critical(
+                "Transaction %s lost its SwarmLock lease on %s mid-flight; "
+                "exclusivity is no longer guaranteed",
+                tx_id,
+                resource,
+            )
+            return
+
+
+async def _stop_heartbeat(task: Optional["asyncio.Task"]) -> None:
+    """Cancel a lease-heartbeat task; never raises."""
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.debug("Lease heartbeat shutdown error: %s", exc)
 
 
 def _require_non_empty_str(name: str, value: Any) -> str:
@@ -247,6 +296,33 @@ class PrismaticHypervisor:
                 f"StaleReadConflict: Resource {resource} version {current_version} != expected {expected_version}"
             )
 
+        # Step 1b: Lease heartbeat. A transaction body that outlives its TTL
+        # would silently lose exclusivity; renew the lease until the
+        # transaction ends. swarmlock owns the lease state (renew_lock is the
+        # renewal primitive) — the kernel only schedules the heartbeat, and
+        # degrades gracefully when the installed swarmlock predates renew_lock.
+        heartbeat_task = None
+        renew_fn = getattr(self.lock_engine, "renew_lock", None)
+        if not callable(renew_fn):
+            logger.warning(
+                "Transaction %s: lock_engine has no renew_lock(); leases cannot "
+                "be renewed, so transactions longer than ttl_seconds=%.1f may "
+                "lose exclusivity",
+                tx_id,
+                ttl_seconds,
+            )
+        else:
+            heartbeat_task = asyncio.create_task(
+                _lease_heartbeat(
+                    tx_id=tx_id,
+                    resource=resource,
+                    lock_id=lock_id,
+                    agent_id=agent_id,
+                    ttl_seconds=ttl_seconds,
+                    renew_fn=renew_fn,
+                )
+            )
+
         # Step 2: Initialize Saga Journal & Merkle DAG Span (SwarmSaga & SwarmLedger).
         # Everything acquired from here on is released if setup fails before the
         # transaction body runs (the finally below only covers post-yield).
@@ -297,6 +373,7 @@ class PrismaticHypervisor:
             # Setup failed after the lease was granted: release everything we
             # hold, then re-raise. Without this the SwarmLock lease leaks until
             # its TTL expires and the resource looks busy to everyone else.
+            await _stop_heartbeat(heartbeat_task)
             try:
                 self.lock_engine.release_lock(
                     lock_id=lock_id, holder=agent_id, resource=res_key
@@ -456,6 +533,9 @@ class PrismaticHypervisor:
             raise
 
         finally:
+            # The heartbeat ends with the transaction: stop renewing before
+            # releasing the lease, so we never renew a lease we just gave up.
+            await _stop_heartbeat(heartbeat_task)
             # Release Held Leases. A release failure must never mask the
             # transaction's own error; but on an otherwise successful
             # transaction it is surfaced, because a silently leaked lease
