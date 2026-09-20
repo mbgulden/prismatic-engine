@@ -42,6 +42,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -75,6 +77,36 @@ _LEASE_DURATIONS = {
 }
 
 _REVIEWER_CAP = 3  # max concurrent read-only reviewers
+
+# Agents the dispatcher can resolve for repair work (mirrors
+# prismatic.dispatcher.ASSIGNED_AGENT_KNOWN_AGENTS).
+_REPAIR_DISPATCH_AGENTS = {"kai", "fred", "agy", "george"}
+
+# Env override for the repair target agent.
+_REPAIR_AGENT_ENV = "RF_REPAIR_AGENT"
+
+
+def _decision_failure_summary(decision) -> str:
+    """One-line summary of a review decision's findings for repair dispatch."""
+    try:
+        findings = json.loads(decision.findings or "[]")
+    except Exception:
+        findings = []
+    bits = []
+    for finding in findings[:5]:
+        if isinstance(finding, dict):
+            bits.append(
+                str(
+                    finding.get("message")
+                    or finding.get("detail")
+                    or finding.get("check")
+                    or ""
+                )
+            )
+        else:
+            bits.append(str(finding))
+    summary = "; ".join(b for b in bits if b)
+    return summary[:500] or f"verdict {decision.verdict}"
 
 
 def _utcnow() -> datetime:
@@ -528,6 +560,12 @@ class ReviewQueue:
                 producer_id=decision.reviewer_id,
             )
             self.db.insert_repair_packet(packet)
+            # Close the loop: hand the rework to the engine's task intake
+            # so a fix is produced and the job can be re-verified.
+            self.dispatch_repair_task(
+                review_job_id,
+                failure_reason=_decision_failure_summary(decision),
+            )
             return ReviewJobState.REPAIR_REQUIRED.value
 
         if verdict == ReviewVerdict.REJECTED:
@@ -676,45 +714,224 @@ class ReviewQueue:
             new_changed_paths=new_changed_paths,
         )
 
-    def dispatch_repair_task(
-        self, review_job_id: str, failure_reason: str = ""
-    ) -> Optional[str]:
-        """Attempt to dispatch a repair task for a job that needs rework.
+    # ── Repair dispatch (closes the review → rework loop) ─────────────
 
-        No automated repair dispatcher is currently wired:
-        ``prismatic.task_admission`` exposes no repair-submission entry point
-        (``TaskAdmissionStore.admit`` is the authenticated external
-        task-admission API -- it requires a full admission payload with task
-        files, worktree and policy -- not a repair callback). Until a real
-        repair consumer exists, this records an explicit, operator-visible
-        ``repair_dispatch_unavailable`` audit entry on the job so a
-        ``repair_required`` job never sits silently, and returns None.
+    def dispatch_repair_task(
+        self,
+        review_job_id: str,
+        failure_reason: str = "",
+        target_agent: str | None = None,
+    ) -> Optional[str]:
+        """Dispatch a repair task into the engine's multi-channel task intake.
+
+        Wires Review Factory rejections into the existing producer intake
+        (``prismatic.ingestion_queue.enqueue_multi_channel_task``) — the same
+        durable queue that Telegram / AGY-CLI / Hub-UI / Linear tasks enter,
+        drained by ``prismatic.dispatcher`` and visible on the dashboard.
+
+        The enqueued repair task carries the review job id, the Linear task
+        id, the verdict receipt, and the repair packet id, so a fix can be
+        re-verified. After repairing, the worker re-queues the job via
+        ``ReviewQueue().requeue_repaired_candidate(review_job_id,
+        new_candidate_commit, new_candidate_tree)``.
+
+        Idempotent per job: when a ``repair_dispatched`` audit entry already
+        exists for the job, the recorded intake event id is returned without
+        enqueueing a second task.
+
+        Returns the intake event id, or None when the intake is genuinely
+        unavailable — in which case a loud ``repair_dispatch_unavailable``
+        audit entry is recorded (last-resort fallback, never silent).
         """
         job = self.db.get_review_job(review_job_id)
         if not job:
             return None
+
+        existing = self.db.find_audit_entry(review_job_id, "repair_dispatched")
+        if existing:
+            try:
+                prior = json.loads(existing.get("details_json") or "{}")
+                if prior.get("intake_event_id"):
+                    return str(prior["intake_event_id"])
+            except Exception:
+                pass
+
+        context = self._repair_context(review_job_id, job, failure_reason)
+
+        try:
+            from prismatic.ingestion_queue import enqueue_multi_channel_task
+
+            agent = (
+                target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred")
+            ).strip().lower()
+            if agent not in _REPAIR_DISPATCH_AGENTS:
+                logger.warning("unknown repair agent %r; falling back to fred", agent)
+                agent = "fred"
+            row = enqueue_multi_channel_task(
+                identifier=f"RF-REPAIR-{review_job_id[:8]}",
+                channel="review-factory",
+                target_agent=agent,
+                title=context["title"],
+                affected_paths=list(job.changed_paths),
+                depends_on=[job.task_id] if job.task_id else None,
+                priority=1,
+                raw_payload=context["payload"],
+            )
+        except Exception as exc:
+            self.db.insert_audit_entry(
+                actor="review-factory:repair-dispatch",
+                action="repair_dispatch_unavailable",
+                review_job_id=review_job_id,
+                details={
+                    "failure_reason": failure_reason,
+                    "task_id": job.task_id,
+                    "candidate_commit": (job.candidate_commit or "")[:8],
+                    "error": str(exc)[:200],
+                    "note": "task intake unavailable; operator action required",
+                },
+            )
+            logger.warning(
+                "repair dispatch failed for job %s (task %s): %s -- "
+                "operator action required",
+                review_job_id,
+                job.task_id,
+                exc,
+            )
+            return None
+
+        event_id = str(row.get("event_id") or "")
         self.db.insert_audit_entry(
             actor="review-factory:repair-dispatch",
-            action="repair_dispatch_unavailable",
+            action="repair_dispatched",
             review_job_id=review_job_id,
             details={
-                "failure_reason": failure_reason,
+                "intake_event_id": event_id,
+                "identifier": row.get("identifier"),
+                "channel": "review-factory",
+                "target_agent": agent,
                 "task_id": job.task_id,
                 "candidate_commit": (job.candidate_commit or "")[:8],
-                "note": (
-                    "no automated repair dispatcher is wired; "
-                    "operator action required"
-                ),
+                "failure_reason": failure_reason,
+                "repair_packet_id": context["payload"].get("repair_packet_id"),
             },
         )
-        logger.warning(
-            "repair dispatch unavailable for job %s (task %s): %s -- "
-            "operator action required",
+        logger.info(
+            "repair task dispatched for job %s (task %s) as intake event %s",
             review_job_id,
             job.task_id,
-            failure_reason,
+            event_id,
         )
-        return None
+        self._notify_linear_issue(job, context, event_id)
+        emit_rf_event(
+            "review_factory.repair_dispatched",
+            {"review_job_id": review_job_id, "intake_event_id": event_id},
+        )
+        return event_id
+
+    def _repair_context(
+        self, review_job_id: str, job: ReviewJob, failure_reason: str
+    ) -> dict:
+        """Build the repair title + payload handed to the task intake."""
+        decisions = self.db.get_decisions_for_job(review_job_id)
+        latest = decisions[-1] if decisions else None
+        verdict, reviewer_id, receipt_id = "", "", ""
+        findings: list = []
+        if latest is not None:
+            verdict = latest.verdict or ""
+            reviewer_id = latest.reviewer_id or ""
+            receipt_id = latest.receipt_id or ""
+            try:
+                findings = json.loads(latest.findings or "[]")
+            except Exception:
+                findings = []
+        packets = self.db.get_unconsumed_repairs(job.candidate_tree or "")
+        packet_id = packets[0].packet_id if packets else ""
+
+        lines = [
+            f"Review Factory repair for job {review_job_id} "
+            f"(task {job.task_id or 'n/a'}).",
+            f"Repository: {job.repository or 'n/a'}",
+            f"Rejected candidate: {(job.candidate_commit or '')[:12]} "
+            f"(tree {(job.candidate_tree or '')[:12]})",
+            f"Verdict: {verdict or 'n/a'} by {reviewer_id or 'n/a'}; "
+            f"receipt {receipt_id or 'n/a'}",
+            f"Reason: {failure_reason or 'see findings'}",
+            "",
+            "Findings:",
+        ]
+        if findings:
+            for finding in findings[:20]:
+                if isinstance(finding, dict):
+                    lines.append(
+                        "- [{}] {}: {}".format(
+                            finding.get("severity", "?"),
+                            finding.get("check") or finding.get("code") or "finding",
+                            finding.get("message") or finding.get("detail") or "",
+                        ).rstrip()
+                    )
+                else:
+                    lines.append(f"- {finding}")
+        else:
+            lines.append("- (no structured findings recorded)")
+        lines += [
+            "",
+            "Repair instructions:",
+            "1. Fix the findings above in the repository worktree.",
+            "2. Push the fix as a new commit (do NOT force-push the rejected candidate).",
+            "3. Re-queue the job for re-verification:",
+            "   from prismatic.review_factory.queue import ReviewQueue",
+            "   ReviewQueue().requeue_repaired_candidate(",
+            f"       {review_job_id!r}, new_candidate_commit, new_candidate_tree)",
+        ]
+        label = job.task_id or job.repository or review_job_id[:8]
+        title = f"REPAIR: fix rejected candidate for {label}"
+        payload = {
+            "kind": "review-factory-repair",
+            "review_job_id": review_job_id,
+            "task_id": job.task_id,
+            "repository": job.repository,
+            "base_commit": job.base_commit,
+            "candidate_commit": job.candidate_commit,
+            "candidate_tree": job.candidate_tree,
+            "verdict": verdict,
+            "reviewer_id": reviewer_id,
+            "receipt_id": receipt_id,
+            "failure_reason": failure_reason,
+            "findings": findings,
+            "repair_packet_id": packet_id,
+            "title": title,
+            "description": "\n".join(lines),
+            "requeue": {
+                "method": "ReviewQueue.requeue_repaired_candidate",
+                "review_job_id": review_job_id,
+            },
+        }
+        return {"title": title, "payload": payload}
+
+    def _notify_linear_issue(
+        self, job: ReviewJob, context: dict, intake_event_id: str
+    ) -> None:
+        """Best-effort comment on the linked Linear issue (visibility only)."""
+        task_id = (job.task_id or "").strip()
+        if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", task_id):
+            return
+        try:
+            from prismatic.providers.tasks.linear import LinearTaskProvider
+
+            provider = LinearTaskProvider()
+            if not getattr(provider, "_api_key", ""):
+                return
+            reason = context["payload"].get("failure_reason") or "see review findings"
+            body = (
+                "Review Factory rejected the candidate for this issue "
+                f"(`{(job.candidate_commit or '')[:8]}`) and dispatched a repair "
+                f"task (`{intake_event_id}`) into the engine task intake.\n\n"
+                f"Reason: {reason}\n"
+                f"Review job: `{job.review_job_id}`"
+            )
+            provider.add_comment(task_id, body)
+        except Exception as exc:
+            logger.warning("linear repair comment failed for %s: %s", task_id, exc)
 
     # ── Janitor ──────────────────────────────────────────────────────
 

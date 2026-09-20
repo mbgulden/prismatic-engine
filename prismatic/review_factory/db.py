@@ -1126,3 +1126,17 @@ class ReviewFactoryDB:
                 (limit,),
             )
             return [dict(r) for r in cur.fetchall()]
+
+    def find_audit_entry(
+        self, review_job_id: str, action: str
+    ) -> dict[str, Any] | None:
+        """Return the most recent audit entry for a job+action, or None."""
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "SELECT * FROM review_factory_audit_log "
+                "WHERE review_job_id = ? AND action = ? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (review_job_id, action),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
