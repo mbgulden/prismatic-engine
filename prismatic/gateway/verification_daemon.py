@@ -5,12 +5,26 @@ the Gateway server:
 
     QUEUED --lease_for_verification--> VERIFYING --RF-2 verify--> REVIEW_READY
     REVIEW_READY --lease_for_review--> REVIEWING --RF-3 heuristic--> verdict
-        CLEAN (witnesses met) --> MERGE_READY   (no merge authority in this phase)
+        CLEAN (witnesses met) --> MERGE_READY   (merge stage: Phase 4)
         REPAIR_REQUIRED       --> repair dispatch attempted; when no automated
                                   repair dispatcher is wired, an explicit
                                   repair_dispatch_unavailable audit entry is
                                   recorded so the job never sits silently
         REJECTED              --> terminal, visible on the dashboard
+
+Phase 4 merge staging: MERGE_READY jobs are processed by an optional
+``MergeStage`` (default None = observe-only, jobs wait for a human). When
+configured, tier 0/1 jobs can dry-run or live-merge under the standing-policy
+actor; tier 2/3 NEVER auto-merge (fail closed). Stalled repairs are
+re-dispatched with bounded retries and exponential backoff; exhausted jobs
+fail loudly via audit + Linear and stay visible.
+
+No LLMs, no network model calls: this loop is entirely deterministic. The
+optional LLM deep-review stage (Phase 3) slots in as an advisory, default-off
+step between the heuristic review and submit_verdict; per standing policy it
+can never downgrade a deterministic result.
+
+The daemon also runs the stale-lease janitor on a schedule.
 
 No LLMs, no network model calls: this loop is entirely deterministic. The
 optional LLM deep-review stage (Phase 3) slots in as an advisory, default-off
@@ -47,6 +61,11 @@ from prismatic.review_factory.models import (
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.reviewer import ReviewerCapability
 from prismatic.review_factory.verifier import VerificationWorker
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from prismatic.review_factory.merge_stage import MergeStage
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +155,9 @@ class VerificationWorkerDaemon:
         repo_path: str | Path | None = None,
         janitor_interval_seconds: float = 300.0,
         max_consecutive_failures: int = 3,
+        merge_stage: Optional["MergeStage"] = None,
+        redispatch_interval_seconds: float = 900.0,
+        redispatch_max_attempts: int = 3,
     ):
         self.poll_interval_seconds = poll_interval_seconds
         self.worker_id = worker_id
@@ -143,6 +165,11 @@ class VerificationWorkerDaemon:
         self.repo_path = _resolve_repo_path(repo_path)
         self.janitor_interval_seconds = janitor_interval_seconds
         self.max_consecutive_failures = max_consecutive_failures
+        # Phase 4: merge authority staging. None (the default) keeps the
+        # daemon observe-only — MERGE_READY jobs are never leased.
+        self.merge_stage = merge_stage
+        self.redispatch_interval_seconds = redispatch_interval_seconds
+        self.redispatch_max_attempts = redispatch_max_attempts
         self.queue = ReviewQueue()
         self.worker = VerificationWorker(repo_path=self.repo_path)
         self.reviewer = ReviewerCapability(reviewer_id=self.reviewer_id)
@@ -151,6 +178,12 @@ class VerificationWorkerDaemon:
         self._lock = threading.Lock()
         self._failures: dict[str, int] = {}
         self._last_janitor: Optional[datetime] = None
+        self._last_redispatch: Optional[datetime] = None
+        # Jobs refused by authorize_merge are never re-leased for merge by
+        # this daemon instance; they stay MERGE_READY for a human. (The
+        # state machine has no forced transition out of MERGE_READY, so
+        # they can sit there indefinitely without hot-looping.)
+        self._merge_authorize_refused: set[str] = set()
 
     def start(self) -> None:
         """Start the background thread (idempotent)."""
@@ -186,6 +219,13 @@ class VerificationWorkerDaemon:
             "last_janitor_at": (
                 self._last_janitor.isoformat() if self._last_janitor else None
             ),
+            "merge_stage_enabled": self.merge_stage is not None
+            and self.merge_stage.config.enabled,
+            "last_redispatch_at": (
+                self._last_redispatch.isoformat()
+                if self._last_redispatch
+                else None
+            ),
         }
 
     # ── Main loop ────────────────────────────────────────────────────
@@ -200,6 +240,7 @@ class VerificationWorkerDaemon:
             try:
                 did_work = self._pump_once()
                 self._maybe_run_janitor()
+                self._maybe_redispatch_repairs()
             except Exception as exc:  # never let the loop die
                 logger.warning("verification daemon pump error: %s", exc)
             time.sleep(0 if did_work else self.poll_interval_seconds)
@@ -225,7 +266,79 @@ class VerificationWorkerDaemon:
                 return False
             self._run_review_stage(job)
             return True
+        if self._merge_leasing_allowed():
+            job = self.queue.lease_for_merge(
+                self.worker_id,
+                tiers=set(self.merge_stage.config.live_tiers),
+                exclude_job_ids=self._merge_authorize_refused,
+            )
+            if job is not None:
+                self._run_merge_stage(job)
+                return True
         return False
+
+    def _merge_leasing_allowed(self) -> bool:
+        """True only when the merge stage may lease MERGE_READY jobs.
+
+        Merge authority is inert by default: no leasing at all when the
+        stage is unconfigured, when merge authority is disabled, or when
+        no tiers are enabled in PRISMATIC_RF_MERGE_LIVE_TIERS. MERGE_READY
+        jobs then simply wait for a human instead of being leased and
+        released on every pump (hot loop).
+        """
+        stage = self.merge_stage
+        return (
+            stage is not None
+            and bool(stage.config.enabled)
+            and bool(stage.config.live_tiers)
+        )
+
+    # ── Merge stage (RF-4, Phase 4) ──────────────────────────────────
+
+    def _run_merge_stage(self, job: ReviewJob) -> None:
+        """Run one merge-stage decision; always release the lease after."""
+        job_id = job.review_job_id
+        try:
+            result = self.merge_stage.process(job)
+            logger.info(
+                "merge stage for job %s -> %s", job_id, result.action
+            )
+            if result.action == "authorize_failed":
+                # authorize_merge refused this job deterministically; never
+                # re-lease it for merge (it stays MERGE_READY, visible).
+                self._merge_authorize_refused.add(job_id)
+        except Exception as exc:
+            logger.error("merge stage error for job %s: %s", job_id, exc)
+        finally:
+            try:
+                self.queue.release_merge_lease(job_id, self.worker_id)
+            except Exception as exc:
+                logger.warning(
+                    "merge lease release failed for job %s: %s", job_id, exc
+                )
+
+    # ── Repair re-dispatch (bounded retries) ─────────────────────────
+
+    def _maybe_redispatch_repairs(self) -> None:
+        now = datetime.now(timezone.utc)
+        if self._last_redispatch is not None and (
+            now - self._last_redispatch
+        ) < timedelta(seconds=self.redispatch_interval_seconds):
+            return
+        try:
+            summary = self.queue.redispatch_stalled_repairs(
+                max_attempts=self.redispatch_max_attempts,
+            )
+            if (
+                summary.get("redispatched")
+                or summary.get("exhausted")
+                or summary.get("failed")
+            ):
+                logger.info("repair redispatch pass: %s", summary)
+        except Exception as exc:
+            logger.warning("repair redispatch pass failed: %s", exc)
+        finally:
+            self._last_redispatch = now
 
     # ── Verification stage (RF-2) ────────────────────────────────────
 

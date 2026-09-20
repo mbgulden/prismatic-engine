@@ -87,7 +87,12 @@ class ReviewJobState(enum.Enum):
             S.REJECTED.value: [],  # terminal
             S.QUARANTINED.value: [],  # terminal (poison jobs; manual recovery)
             S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value, S.REPAIR_REQUIRED.value],
-            S.MERGE_AUTHORIZED.value: [S.MERGING.value],
+            # A dry-run authorization (or any unused authorization) may be
+            # stood down back to MERGE_READY: the spent auth row is marked
+            # consumed and the audit trail records the outcome. This is the
+            # ONLY way back -- it keeps dry runs repeatable and never
+            # strands a job.
+            S.MERGE_AUTHORIZED.value: [S.MERGING.value, S.MERGE_READY.value],
             S.MERGING.value: [S.MERGED.value, S.MERGE_VERIFICATION_FAILED.value],
             S.MERGED.value: [],  # terminal
             S.MERGE_VERIFICATION_FAILED.value: [],  # terminal (manual recovery)
@@ -207,6 +212,13 @@ class ReviewJob:
     # Persisted on the row so a daemon restart cannot wipe poison memory;
     # reset to zero on any successful stage completion.
     consecutive_failures: int = 0
+
+    # Repair dispatch attempts (bounded re-dispatch with backoff).
+    # repair_attempts counts intake dispatches; repair_last_dispatch_at is the
+    # ISO timestamp of the most recent one. Both persist on the row so a
+    # daemon restart cannot lose the retry budget.
+    repair_attempts: int = 0
+    repair_last_dispatch_at: str = ""
 
     # Timestamps
     created_at: str = field(default_factory=_utcnow_iso)
