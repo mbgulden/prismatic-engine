@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,6 +57,7 @@ def main() -> int:
 
     head = _git(repo, "rev-parse", "HEAD")
     tree = _git(repo, "rev-parse", f"{head}^{{tree}}")
+    diff_ok = True
     try:
         base = _git(repo, "merge-base", args.base, "HEAD")
         changed = [
@@ -68,6 +68,13 @@ def main() -> int:
     except subprocess.CalledProcessError:
         print(f"WARNING: could not diff {args.base}...HEAD; using empty change set")
         changed = []
+        diff_ok = False
+
+    if diff_ok and not changed:
+        # Push-to-main runs diff the merge commit against itself (HEAD == base),
+        # so there is nothing to verify. Skip cleanly instead of failing.
+        print("GATE SKIP: no files changed between base and HEAD; nothing to verify")
+        return 0
 
     print(f"candidate: {head}")
     print(f"tier: {args.tier}, changed files: {len(changed)}")

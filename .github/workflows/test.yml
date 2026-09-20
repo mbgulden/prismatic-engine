@@ -1,7 +1,8 @@
 name: test
 
-# PR gate: fast smoke on GitHub-hosted (~2 min) + the review factory
-# verifier on the self-hosted webtop-hermes runner (free minutes).
+# PR gate: fast smoke (~2 min) + the review factory verifier, both on
+# the self-hosted webtop-hermes runner (free minutes; GitHub-hosted
+# minutes are blocked by the account billing state).
 #
 # What changed (Sep 2026): the old 8-job matrix (4 Python versions x 2 shards,
 # up to 70 min/run, fired on both push AND pull_request) burned ~1,840 of
@@ -30,7 +31,8 @@ concurrency:
 jobs:
   smoke:
     name: smoke (ruff lint)
-    runs-on: ubuntu-latest
+    # Self-hosted webtop-hermes runner (free minutes).
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - name: Checkout Repository
