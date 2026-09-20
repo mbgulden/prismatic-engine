@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, Body, BackgroundTasks, Header
+from fastapi import APIRouter, HTTPException, Query, Body, BackgroundTasks, Header, Request
 
 logger = logging.getLogger(__name__)
 
@@ -537,10 +537,37 @@ def export_workspace_project(payload: Dict[str, Any] = Body(...)) -> Dict[str, A
 
 
 # --- Inbound Webhook Handlers ---
+#
+# First-party integrations sign deliveries with the Prismatic generic scheme:
+#   X-Prismatic-Signature: t=<unix_ts>,v1=<hmac_sha256_hex("ts.raw_body")>
+# Secrets: PRISMATIC_WEBHOOK_SECRET (+ _SECONDARY for rotation).
+# Fail-closed: unsigned / invalid / stale deliveries are rejected (401) and
+# written to the audit ledger. See docs/webhook-signing.md.
+
 
 @pwp_router.post("/webhooks/zapier")
-def zapier_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+async def zapier_webhook_listener(request: Request) -> Dict[str, Any]:
     """Receive live inbound Zapier webhook events per site workspace."""
+    from prismatic.gateway.webhook_auth import (
+        SIGNATURE_HEADER,
+        verify_delivery,
+    )
+    from prismatic.gateway.server import _record_webhook_auth_failure
+
+    body = await request.body()
+    auth_ok, auth_reason = verify_delivery(
+        body, request.headers.get(SIGNATURE_HEADER)
+    )
+    if not auth_ok:
+        await _record_webhook_auth_failure("zapier", auth_reason)
+        raise HTTPException(
+            status_code=401,
+            detail={"status": "auth-failed", "reason": auth_reason},
+        )
+    try:
+        payload = json.loads(body) if body else {}
+    except Exception:
+        raise HTTPException(status_code=400, detail={"status": "bad-payload"})
     st = load_pwp_studio_state()
     slug = payload.get("site_slug") or st.get("active_workspace", "prismatic-core")
     event_type = payload.get("event", "lead_captured")
@@ -558,8 +585,28 @@ def zapier_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, An
 
 
 @pwp_router.post("/webhooks/stripe")
-def stripe_webhook_listener(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+async def stripe_webhook_listener(request: Request) -> Dict[str, Any]:
     """Receive live inbound Stripe checkout session webhooks."""
+    from prismatic.gateway.webhook_auth import (
+        SIGNATURE_HEADER,
+        verify_delivery,
+    )
+    from prismatic.gateway.server import _record_webhook_auth_failure
+
+    body = await request.body()
+    auth_ok, auth_reason = verify_delivery(
+        body, request.headers.get(SIGNATURE_HEADER)
+    )
+    if not auth_ok:
+        await _record_webhook_auth_failure("pwp-stripe", auth_reason)
+        raise HTTPException(
+            status_code=401,
+            detail={"status": "auth-failed", "reason": auth_reason},
+        )
+    try:
+        payload = json.loads(body) if body else {}
+    except Exception:
+        raise HTTPException(status_code=400, detail={"status": "bad-payload"})
     st = load_pwp_studio_state()
     slug = payload.get("site_slug") or st.get("active_workspace", "prismatic-core")
     amount = payload.get("amount_total", 12900)
