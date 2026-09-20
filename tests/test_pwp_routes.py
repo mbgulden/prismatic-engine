@@ -105,7 +105,32 @@ def test_pwp_credentials_and_provision_routes() -> None:
     assert any(s["domain"] == "client-test.com" for s in resp_kpi.json()["sites"])
 
 
-def test_pwp_multi_property_and_gap_routes() -> None:
+def test_pwp_multi_property_and_gap_routes(monkeypatch) -> None:
+    # Signed webhook deliveries (fail-closed): the gateway requires the
+    # Prismatic generic scheme for /api/pwp/webhooks/*.
+    import hashlib as _hashlib
+    import hmac as _hmac_module
+    import json as _json
+    import time as _time
+
+    secret = "test-pwp-webhook-secret"
+    monkeypatch.setenv("PRISMATIC_WEBHOOK_SECRET", secret)
+
+    def _signed_zapier_post(payload: dict):
+        body = _json.dumps(payload).encode()
+        ts = int(_time.time())
+        mac = _hmac_module.new(
+            secret.encode(), f"{ts}.".encode() + body, _hashlib.sha256
+        ).hexdigest()
+        return client.post(
+            "/api/pwp/webhooks/zapier",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Prismatic-Signature": f"t={ts},v1={mac}",
+            },
+        )
+
     # Workspaces
     resp_ws = client.get("/api/pwp/workspaces")
     assert resp_ws.status_code == 200
@@ -117,7 +142,7 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     assert "scaffold" in resp_exp.json()
 
     # Webhooks
-    resp_zap = client.post("/api/pwp/webhooks/zapier", json={"site_slug": "prismatic-core", "event": "lead_captured"})
+    resp_zap = _signed_zapier_post({"site_slug": "prismatic-core", "event": "lead_captured"})
     assert resp_zap.status_code == 200
     assert resp_zap.json()["ok"] is True
 
