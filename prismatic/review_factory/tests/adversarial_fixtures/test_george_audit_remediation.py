@@ -6,11 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
-from prismatic.review_factory.models import (
-    VerificationReceipt,
-    ReviewDecision,
-    ReviewJobState,
-)
+from prismatic.review_factory.models import VerificationReceipt
 from prismatic.review_factory.merge_executor import MergeExecutor
 
 
