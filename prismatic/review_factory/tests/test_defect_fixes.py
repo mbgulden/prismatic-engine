@@ -215,19 +215,46 @@ def test_review_required_manifest_kept_while_witnesses_outstanding(tmp_path):
 # ── Fix 4: loud repair-dispatch failure ──────────────────────────────
 
 
-def test_repair_dispatch_failure_is_loud_not_silent(tmp_path):
-    # Regression: dispatch_repair_task imported a nonexistent
-    # `submit_task` from prismatic.task_admission, caught the ImportError,
-    # and returned None with only a log warning -- repair_required jobs
-    # just sat there.
+def test_repair_dispatch_wired_into_task_intake(tmp_path, monkeypatch):
+    # Repair dispatch is wired into the engine's multi-channel task intake:
+    # a rejected job produces a real, visible intake task (not a silent
+    # dead end), with an audit entry recording the intake event id.
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     queue = _queue(tmp_path)
     job_id = _enqueue(queue, completed_work_id="cw-defect-repair")
+    event_id = queue.dispatch_repair_task(job_id, failure_reason="checks failed")
+    assert event_id and event_id.startswith("evt_review-factory_")
+    actions = [e["action"] for e in queue.db.list_audit_entries(limit=50)]
+    assert "repair_dispatched" in actions
+    assert "repair_dispatch_unavailable" not in actions
+
+
+def test_repair_dispatch_failure_is_loud_not_silent(tmp_path, monkeypatch):
+    # Last-resort fallback: when the intake itself is unavailable, the
+    # failure is recorded as an explicit audit entry -- never silent.
+    import prismatic.ingestion_queue as ingestion_queue
+
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+
+    def _boom(**kwargs):
+        raise RuntimeError("intake down")
+
+    monkeypatch.setattr(ingestion_queue, "enqueue_multi_channel_task", _boom)
+    queue = _queue(tmp_path)
+    job_id = _enqueue(queue, completed_work_id="cw-defect-repair-fallback")
     assert queue.dispatch_repair_task(job_id, failure_reason="checks failed") is None
     actions = [e["action"] for e in queue.db.list_audit_entries(limit=50)]
     assert "repair_dispatch_unavailable" in actions
 
 
-def test_verification_failure_audit_records_dispatch_outcome(tmp_path):
+
+def test_verification_failure_audit_records_dispatch_outcome(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     queue = _queue(tmp_path)
     job_id = _enqueue(queue, completed_work_id="cw-defect-repair-2")
     daemon = _daemon_for_queue(tmp_path, queue)
@@ -250,7 +277,13 @@ def test_verification_failure_audit_records_dispatch_outcome(tmp_path):
         e["action"]: e for e in queue.db.list_audit_entries(limit=50)
     }
     assert "verification_failed" in entries
-    assert "repair_dispatch_unavailable" in entries
+    assert "repair_dispatched" in entries
+    assert "repair_dispatch_unavailable" not in entries
+    import json as _json
+
+    failed_details = _json.loads(entries["verification_failed"]["details_json"])
+    assert failed_details["moved_to_repair"] is True
+    assert failed_details["repair_dispatched"] is True
 
 
 # ── Fix 5: poison quarantine ─────────────────────────────────────────
