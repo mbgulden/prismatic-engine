@@ -1,7 +1,5 @@
 """Phase 1 wiring tests: daemon manifest construction, transition graph, intake hook."""
 
-import pytest
-
 from prismatic.agy_completed_work import CompletedWorkRow
 from prismatic.gateway.verification_daemon import _manifest_for_job
 from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
