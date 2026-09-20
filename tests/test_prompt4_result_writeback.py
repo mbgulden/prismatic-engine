@@ -4,6 +4,30 @@ from pathlib import Path
 import sqlite3
 import subprocess
 
+import pytest
+
+
+def _origin_main_sha() -> str | None:
+    """Resolve origin/main in the checkout running the tests, if present.
+
+    CI checkouts have an origin remote; local snapshots may not.
+    """
+    repo = Path.cwd().resolve()
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(repo), "rev-parse", "origin/main^{commit}"],
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+requires_origin_main = pytest.mark.skipif(
+    _origin_main_sha() is None,
+    reason="requires a git checkout with an origin/main ref "
+    "(present in CI checkouts; absent in local snapshots)",
+)
+
 
 def canonical_agy_result_text() -> str:
     marker = "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
@@ -23,7 +47,7 @@ def canonical_agy_result_text() -> str:
         "source_path": str(repo),
         "base_branch": "origin/main",
         "source_commit_sha": git_value("rev-parse", "HEAD^{commit}"),
-        "base_commit_sha": git_value("rev-parse", "origin/main^{commit}"),
+        "base_commit_sha": _origin_main_sha() or "0" * 40,
         "changed_files": changed,
         "result_summary": "canonical completed-work fixture",
         "verification_lane": "ad-hoc targeted",
@@ -82,6 +106,7 @@ def make_db(path: Path, log_path: Path):
     con.close()
 
 
+@requires_origin_main
 def test_terminal_agy_packet_is_reconciled_when_comment_writeback_was_missed(
     tmp_path, monkeypatch
 ):
@@ -118,6 +143,7 @@ def test_terminal_agy_packet_is_reconciled_when_comment_writeback_was_missed(
     assert events and events[0][0][2] == "WORK_RESULT_PACKET"
 
 
+@requires_origin_main
 def test_terminal_agy_packet_reconciliation_is_idempotent_when_marker_exists(
     tmp_path, monkeypatch
 ):

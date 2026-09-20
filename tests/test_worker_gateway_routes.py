@@ -3,9 +3,21 @@
 import pytest
 from fastapi.testclient import TestClient
 from prismatic.gateway.server import app
-from prismatic.gateway.routes.worker import get_queue_manager, set_queue_manager
+from prismatic.gateway.routes.worker import set_queue_manager
 from prismatic.worker.queue import WorkerQueueManager
 from prismatic.worker.daemon import WorkerDaemon
+
+
+def _agy_harness_available() -> bool:
+    from prismatic.worker.harness import AgyHarnessRunner
+
+    return AgyHarnessRunner().is_available()
+
+
+requires_agy_harness = pytest.mark.skipif(
+    not _agy_harness_available(),
+    reason="requires the AGY CLI binary on the host",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +198,7 @@ def test_worker_daemon_full_loop():
     assert matching[0]["result"]["exit_code"] == 0
 
 
+@requires_agy_harness
 def test_agy_harness_runner_execution():
     from prismatic.worker.harness import AgyHarnessRunner
     from prismatic.worker.protocol import WorkerJob
@@ -208,6 +221,7 @@ def test_agy_harness_runner_execution():
     assert result.artifacts.get("conversation_id") != ""
 
 
+@requires_agy_harness
 def test_worker_daemon_execute_agy_job():
     from prismatic.worker.daemon import WorkerDaemon
     from prismatic.worker.protocol import WorkerJob

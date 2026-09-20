@@ -920,6 +920,8 @@ def test_monkeypatched_mutation_tripwires(monkeypatch) -> None:
 
     systemctl, DB, network, or production-file writes are attempted.
     """
+    if shutil.which("crontab") is None:
+        pytest.skip("crontab binary not installed in this environment")
     orig_run = subprocess.run
 
     def guarded_run(*args, **kwargs):

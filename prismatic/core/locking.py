@@ -283,18 +283,27 @@ class SwarmLockManager:
             logger.error(f"Error releasing lock for {resource_id}: {e}")
             return False
 
-    def heartbeat(self, resource_id: str, agent_id: str) -> bool:
-        """Refresh heartbeat for an active lock."""
+    def heartbeat(
+        self, resource_id: str, agent_id: str, ttl_ms: int | None = None
+    ) -> bool:
+        """Refresh heartbeat for an active lock.
+
+        ``ttl_ms`` optionally overrides this renewal's lease extension; when
+        omitted or non-positive the manager's configured stale TTL applies.
+        """
         try:
             lease = self._sw.get_lease(resource_id)
             if lease is None or lease.holder != agent_id:
                 return False
 
+            extend_seconds = self._stale_ttl_ms / 1000.0
+            if ttl_ms and ttl_ms > 0:
+                extend_seconds = ttl_ms / 1000.0
             renew_req = RenewRequest(
                 lease_id=lease.lease_id,
                 resource=resource_id,
                 holder=agent_id,
-                extend_seconds=self._stale_ttl_ms / 1000.0,
+                extend_seconds=extend_seconds,
             )
             self._sw.renew(renew_req)
             SwarmLockManager._record_audit_event(

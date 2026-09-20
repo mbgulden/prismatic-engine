@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,12 +44,18 @@ def test_browser_code_uses_transient_bearer_and_clears_it() -> None:
     assert 'headers["Idempotency-Key"] = idempotencyKey' in script
     assert 'tokenInput.value = ""' in script
     assert "finally" in script
-    assert (
-        "localStorage.setItem"
-        not in script[script.index("function taskAdmissionValue") :]
-    )
-    assert "sessionStorage" not in script[script.index("function taskAdmissionValue") :]
-    assert "console.log" not in script[script.index("function taskAdmissionValue") :]
+    tail = script[script.index("function taskAdmissionValue") :]
+    # The bearer token itself must never be persisted: no storage write in the
+    # token-handling region may reference the token. Unrelated UI preferences
+    # (e.g. a UI-mode toggle) may use localStorage for non-secret values.
+    for match in re.finditer(
+        r"(?:localStorage|sessionStorage)\.setItem\(([^)]*)\)", tail
+    ):
+        assert "token" not in match.group(1).lower(), (
+            f"bearer token persisted to storage: {match.group(0)}"
+        )
+    assert "sessionStorage" not in tail
+    assert "console.log" not in tail
 
 
 def test_rendered_proof_is_bounded_and_never_renders_token() -> None:

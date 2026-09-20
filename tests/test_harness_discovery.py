@@ -3,11 +3,38 @@
 import pytest
 from fastapi.testclient import TestClient
 from prismatic.gateway.server import app
-from prismatic.harnesses.discovery import HarnessDiscoveryManager, DiscoveredHarness
+from prismatic.harnesses.discovery import HarnessDiscoveryManager
 from prismatic.worker.harness import HermesProfileRunner
 from prismatic.worker.protocol import WorkerJob
 
 
+def _has_antigravity() -> bool:
+    return bool(HarnessDiscoveryManager().discover_antigravity())
+
+
+def _has_hermes_profiles() -> bool:
+    return bool(HarnessDiscoveryManager().discover_hermes_profiles())
+
+
+def _has_hermes_binary() -> bool:
+    return HermesProfileRunner().is_available()
+
+
+requires_antigravity = pytest.mark.skipif(
+    not _has_antigravity(),
+    reason="requires a host with the Antigravity (agy) binary installed",
+)
+requires_hermes_profiles = pytest.mark.skipif(
+    not _has_hermes_profiles(),
+    reason="requires a host with Hermes profiles installed",
+)
+requires_hermes_binary = pytest.mark.skipif(
+    not _has_hermes_binary(),
+    reason="requires the hermes binary on PATH",
+)
+
+
+@requires_antigravity
 def test_harness_discovery_manager_antigravity():
     mgr = HarnessDiscoveryManager()
     harnesses = mgr.discover_antigravity()
@@ -21,6 +48,7 @@ def test_harness_discovery_manager_antigravity():
     assert first.status == "online"
 
 
+@requires_hermes_profiles
 def test_harness_discovery_manager_hermes():
     mgr = HarnessDiscoveryManager()
     harnesses = mgr.discover_hermes_profiles()
@@ -34,6 +62,7 @@ def test_harness_discovery_manager_hermes():
     assert "review" in george_h.tags
 
 
+@requires_hermes_binary
 def test_hermes_profile_runner_execution(monkeypatch):
     import subprocess
     runner = HermesProfileRunner()
@@ -66,6 +95,7 @@ def test_hermes_profile_runner_execution(monkeypatch):
     assert result.artifacts["profile"] == "george"
 
 
+@requires_hermes_binary
 def test_hermes_profile_runner_gateway_socket_dispatch(monkeypatch):
     runner = HermesProfileRunner()
 
@@ -96,6 +126,8 @@ def test_hermes_profile_runner_gateway_socket_dispatch(monkeypatch):
     assert result.artifacts["streamed_to"] == "telegram:8190664947"
 
 
+@requires_antigravity
+@requires_hermes_profiles
 def test_gateway_harnesses_endpoints():
     client = TestClient(app)
 

@@ -96,11 +96,11 @@ def test_normalize_project_license_rejects_subclasses_without_key_hooks() -> Non
 
 def test_current_repository_license_metadata_is_supported() -> None:
     pyproject = smoke.load_pyproject()
-    assert type(pyproject["project"]["license"]) is str
-    assert (
-        smoke.normalize_project_license(pyproject["project"]["license"])
-        == "AGPL-3.0-only"
-    )
+    license_value = pyproject["project"]["license"]
+    # normalize_project_license documents the supported forms: a plain string
+    # or {"text": ...} (PEP 621). The repo currently uses the table form.
+    assert type(license_value) in (str, dict)
+    assert smoke.normalize_project_license(license_value) == "AGPL-3.0-only"
 
 
 def test_metadata_check_accepts_string_license() -> None:

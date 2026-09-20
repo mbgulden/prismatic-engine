@@ -303,6 +303,10 @@ def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int
                 f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
                 f"for local task {task.id}: {preflight.reason}"
             )
+            # Fail closed: a blocked/manual-review task must not proceed to
+            # affinity checks or launching. The task stays blocked in the
+            # queue until the handoff packet is fixed.
+            continue
         # Validate node affinity if specified
         task_meta = getattr(task, "metadata", None)
         if isinstance(task_meta, dict):
@@ -1378,6 +1382,20 @@ def _build_dynamic_agent_config() -> dict[str, dict[str, Any]]:
             }
     except Exception:
         pass
+
+    # Dispatch lanes for registered launchers that discovery does not cover
+    # (jules/codex use external binaries configured via JULES_PATH/CODEX_PATH
+    # and have mode-switch transitions registered in dispatch_once).
+    for agent_id, exe in (("jules", JULES_PATH), ("codex", CODEX_PATH)):
+        if agent_id not in config:
+            config[agent_id] = {
+                "executable": exe,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": f"{agent_id} — external agent launcher",
+                "harness": agent_id,
+            }
 
     if not config:
         config = {
