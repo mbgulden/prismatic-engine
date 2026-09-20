@@ -828,6 +828,10 @@ def test_excessive_ttl(store):
 def test_installed_package_api_import_and_runtime(monkeypatch, tmp_path):
     # Set the state dir to temporary for api tests
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "PRISMATIC_MERGE_FACTORY_KEYS",
+        "factory-admin-secret-xyz:operator:admin:merge-factory-admin,ordinary;agy-agent-secret-123:agy:agent:agent,ordinary",
+    )
 
     # Import the FastAPI test client and server app
     from fastapi.testclient import TestClient
@@ -835,8 +839,11 @@ def test_installed_package_api_import_and_runtime(monkeypatch, tmp_path):
 
     client = TestClient(app)
 
-    # Ensure get policy returns default values (read-only, does not require token)
-    response = client.get("/api/v1/merge-factory/policy")
+    # Ensure get policy returns default values
+    response = client.get(
+        "/api/v1/merge-factory/policy",
+        headers={"Authorization": "Bearer " + "factory-admin-secret-xyz"},
+    )
     assert response.status_code == 200
     assert response.json()["stage_cap"] == 1
 
@@ -1239,12 +1246,21 @@ def test_cli_token_authentication(monkeypatch, tmp_path):
     rc = cli_main(["cohort", "add", "GRO-CLI-FILE", "1", "11"])
     assert rc == 0
 
-    # 4. Test authentication fails if token file has open permissions (e.g. 0644)
-    os.chmod(token_file, 0o644)
-    f_err = io.StringIO()
-    with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
-        rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
-    assert rc != 0
-    assert (
-        "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
-    )
+    # 4. Test authentication fails if token file has open permissions (e.g. 0644) on POSIX
+    if os.name != "nt":
+        os.chmod(token_file, 0o644)
+        f_err = io.StringIO()
+        with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
+            rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
+        assert rc != 0
+        assert (
+            "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
+        )
+
+
+def test_validate_candidate_receipt_integration(store, tmp_path):
+    candidate_sha = "a" * 40
+    # Before receipt exists -> should be invalid
+    res_empty = store.validate_candidate_receipt(candidate_sha, db_path=tmp_path / "rcpts.sqlite3")
+    assert res_empty["valid"] is False
+    assert "No active merge-eligible verification receipt" in res_empty["reason"]

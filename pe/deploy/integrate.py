@@ -126,17 +126,23 @@ class AtomicDeployRunner:
 
     @classmethod
     def _atomic_symlink_swap(cls, target_dir: Path, symlink_path: Path) -> None:
-        """Atomic symlink swap using temporary symlink and atomic rename/replace."""
+        """Atomic symlink swap using temporary symlink or cross-platform fallback."""
         temp_symlink = symlink_path.parent / f".tmp_symlink_{uuid.uuid4().hex[:8]}"
         try:
-            # Create temp symlink pointing to target_dir
             if temp_symlink.exists() or temp_symlink.is_symlink():
                 temp_symlink.unlink()
 
-            os.symlink(target_dir, temp_symlink)
-
-            # Atomic replace
-            os.replace(temp_symlink, symlink_path)
+            try:
+                os.symlink(target_dir, temp_symlink)
+                os.replace(temp_symlink, symlink_path)
+            except OSError:
+                # Windows non-admin fallback (WinError 1314)
+                if symlink_path.exists() or symlink_path.is_symlink():
+                    if symlink_path.is_dir() and not symlink_path.is_symlink():
+                        shutil.rmtree(symlink_path)
+                    else:
+                        symlink_path.unlink()
+                shutil.copytree(target_dir, symlink_path)
         finally:
             if temp_symlink.exists() or temp_symlink.is_symlink():
                 try:

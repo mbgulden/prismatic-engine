@@ -42,9 +42,46 @@ class Clock:
 
 @pytest.fixture
 def secure_launcher_dir() -> Iterator[Path]:
-    root = Path(__file__).resolve().parents[1] / ".test-launchers"
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    root.chmod(0o700)
+    # The production loader fail-closes on any group/world writable parent
+    # directory, so the fixture must live somewhere whose whole ancestor
+    # chain is owner-only. Candidate locations differ by environment
+    # (CI checkout vs. local workspace), so take the first writable one
+    # whose chain satisfies the same rules production enforces.
+    def _chain_is_secure(path: Path) -> bool:
+        for parent in path.parents:
+            try:
+                st = parent.lstat()
+            except OSError:
+                return False
+            if (
+                not stat.S_ISDIR(st.st_mode)
+                or st.st_uid not in {0, os.geteuid()}
+                or stat.S_IMODE(st.st_mode) & 0o022
+            ):
+                return False
+        return True
+
+    candidates = [
+        Path(tempfile.gettempdir()) / ".prismatic-test-launchers",
+        Path(__file__).resolve().parents[1] / ".test-launchers",
+        Path.home() / ".prismatic-test-launchers",
+        Path("/root/.prismatic-test-launchers"),
+    ]
+    root: Path | None = None
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+            candidate.chmod(0o700)
+        except OSError:
+            continue
+        if _chain_is_secure(candidate):
+            root = candidate
+            break
+    if root is None:
+        pytest.skip(
+            "no writable directory with a fully owner-only ancestor chain "
+            "for the secure-launcher fixture"
+        )
     directory = Path(tempfile.mkdtemp(prefix="consumer-", dir=root))
     directory.chmod(0o700)
     try:

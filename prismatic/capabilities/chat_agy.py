@@ -26,9 +26,12 @@ Design contract:
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, asdict, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -94,20 +97,128 @@ class ChatAGYCapability:
             "and no OAuth token at any known location."
         )
 
-    def list_sessions(self) -> list[dict[str, Any]]:
-        """Return the list of known AGY chat sessions.
+    @classmethod
+    def _get_brain_dirs(cls) -> list[Path]:
+        if "AGY_BRAIN_DIR" in os.environ:
+            p = Path(os.environ["AGY_BRAIN_DIR"]).expanduser()
+            return [p] if p.is_dir() else []
+        candidates = [
+            Path("~/.gemini/antigravity-cli/brain").expanduser(),
+            Path("~/.antigravity/brain").expanduser(),
+        ]
+        return [c for c in candidates if c and c.is_dir()]
 
-        v0.1 contract: returns an empty list. The live data path
-        (file-based session index or AGY CLI ``sessions list``) is
-        not yet wired. This is by design — we ship the typed shape
-        and gateway endpoint first, then layer in the live data
-        in a follow-up without changing the API.
-        """
-        return []
+    def list_sessions(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return the list of known AGY chat sessions discovered from local brain archives."""
+        brain_dirs = self._get_brain_dirs()
+        if not brain_dirs:
+            return []
+
+        entries: list[tuple[float, Path]] = []
+        for bdir in brain_dirs:
+            try:
+                for entry in bdir.iterdir():
+                    if entry.is_dir() and not entry.name.startswith("."):
+                        try:
+                            entries.append((entry.stat().st_mtime, entry))
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+
+        entries.sort(key=lambda item: item[0], reverse=True)
+
+        sessions: list[dict[str, Any]] = []
+        for mtime_ts, entry in entries[:limit]:
+            mtime = datetime.fromtimestamp(mtime_ts, timezone.utc).isoformat()
+            try:
+                ctime_ts = entry.stat().st_ctime
+                ctime = datetime.fromtimestamp(ctime_ts, timezone.utc).isoformat()
+            except OSError:
+                ctime = mtime
+
+            label = None
+            turn_count = 0
+            transcript_file = entry / ".system_generated" / "logs" / "transcript.jsonl"
+            if transcript_file.exists():
+                try:
+                    with open(transcript_file, "r", encoding="utf-8", errors="ignore") as f:
+                        first_line = f.readline()
+                        if first_line:
+                            turn_count = 1 + sum(1 for _ in f)
+                            try:
+                                first_data = json.loads(first_line)
+                                raw_content = first_data.get("content") or ""
+                                clean = re.sub(r"<[^>]+>", " ", raw_content).strip()
+                                label = clean[:80] if clean else None
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            session = ChatSession(
+                id=entry.name,
+                agent="agy",
+                status="completed",
+                started_at=ctime,
+                last_event_at=mtime,
+                label=label or entry.name,
+            )
+            data = session.to_dict()
+            data["turn_count"] = turn_count
+            sessions.append(data)
+
+        return sessions
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
-        """Return a single AGY chat session by id, or None if not found.
+        """Return a single AGY chat session by id with full metadata, or None if not found."""
+        clean_id = session_id.strip()
+        for bdir in self._get_brain_dirs():
+            cand = bdir / clean_id
+            if cand.is_dir():
+                try:
+                    mtime = datetime.fromtimestamp(cand.stat().st_mtime, timezone.utc).isoformat()
+                    ctime = datetime.fromtimestamp(cand.stat().st_ctime, timezone.utc).isoformat()
+                except OSError:
+                    mtime = ""
+                    ctime = ""
 
-        v0.1 contract: returns None for any id (no live data yet).
-        """
+                label = None
+                turn_count = 0
+                transcript_file = cand / ".system_generated" / "logs" / "transcript.jsonl"
+                first_prompt = ""
+                last_response = ""
+                if transcript_file.exists():
+                    try:
+                        with open(transcript_file, "r", encoding="utf-8", errors="ignore") as f:
+                            lines = f.readlines()
+                            turn_count = len(lines)
+                            if lines:
+                                try:
+                                    first_data = json.loads(lines[0])
+                                    first_prompt = re.sub(r"<[^>]+>", " ", first_data.get("content") or "").strip()[:200]
+                                    label = first_prompt[:80]
+                                except Exception:
+                                    pass
+                                try:
+                                    last_data = json.loads(lines[-1])
+                                    last_response = (last_data.get("content") or "")[:200]
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                return {
+                    "id": clean_id,
+                    "agent": "agy",
+                    "status": "completed",
+                    "started_at": ctime,
+                    "last_event_at": mtime,
+                    "label": label or clean_id,
+                    "turn_count": turn_count,
+                    "first_prompt": first_prompt,
+                    "last_response": last_response,
+                    "session_path": str(cand),
+                }
+
         return None

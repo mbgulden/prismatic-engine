@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 import urllib.error
 from typing import Any
@@ -27,6 +28,11 @@ from .base import TaskProvider, Issue
 
 # ── GraphQL endpoint ────────────────────────────────────────────
 LINEAR_API_URL = "https://api.linear.app/graphql"
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 
 class LinearTaskProvider(TaskProvider):
@@ -145,6 +151,122 @@ class LinearTaskProvider(TaskProvider):
         if node is None:
             return None
         return self._node_to_issue(node)
+
+    def create_issue(
+        self,
+        team_id: str,
+        title: str,
+        description: str = "",
+        label_names: list[str] | None = None,
+    ) -> Issue | None:
+        """Create an issue on a team.
+
+        ``team_id`` may be the team key (e.g. "GRO", as in ``LINEAR_TEAM_ID``)
+        or the team UUID; it is resolved to the UUID before the mutation.
+        Label names are resolved to IDs (created when missing) so callers
+        can pass human-readable names.
+        """
+        team_uuid = self._resolve_team_id(team_id)
+        if not team_uuid:
+            return None
+        label_ids: list[str] = []
+        for name in label_names or []:
+            label_id = self.get_label_id(name, team_id=team_uuid)
+            if label_id:
+                label_ids.append(label_id)
+        query = """
+        mutation IssueCreate(
+          $teamId: String!, $title: String!, $description: String,
+          $labelIds: [String!]
+        ) {
+          issueCreate(input: {
+            teamId: $teamId, title: $title,
+            description: $description, labelIds: $labelIds
+          }) {
+            success
+            issue {
+              id identifier title description
+              state { name }
+              labels { nodes { name } }
+              team { name }
+            }
+          }
+        }
+        """
+        variables = {
+            "teamId": team_uuid,
+            "title": title,
+            "description": description,
+            "labelIds": label_ids or None,
+        }
+        data = self._graphql_data(query, variables)
+        if data is None:
+            return None
+        payload = data.get("issueCreate", {})
+        if not payload.get("success"):
+            return None
+        node = payload.get("issue")
+        if node is None:
+            return None
+        return self._node_to_issue(node)
+
+    def get_label_id(
+        self, label_name: str, team_id: str | None = None
+    ) -> str | None:
+        """Resolve a label name to its ID, creating it when missing."""
+        # NOTE: Linear has no direct "label by name" lookup; list team
+        # labels and match client-side.
+        scope = self._resolve_team_id(team_id)
+        if not scope:
+            return None
+        list_query = """
+        query TeamLabels($teamId: String!) {
+          team(id: $teamId) {
+            labels { nodes { id name } }
+          }
+        }
+        """
+        data = self._graphql_data(list_query, {"teamId": scope})
+        nodes = (data or {}).get("team", {}).get("labels", {}).get("nodes", [])
+        for node in nodes:
+            if node.get("name") == label_name:
+                return node.get("id")
+        create = """
+        mutation LabelCreate($name: String!, $teamId: String!) {
+          issueLabelCreate(input: { name: $name, teamId: $teamId }) {
+            success
+            issueLabel { id }
+          }
+        }
+        """
+        created = self._graphql_data(
+            create, {"name": label_name, "teamId": scope}
+        )
+        payload = (created or {}).get("issueLabelCreate", {})
+        if payload.get("success"):
+            return (payload.get("issueLabel") or {}).get("id")
+        return None
+
+    def _resolve_team_id(self, team_id: str | None = None) -> str | None:
+        """Resolve a team key (e.g. "GRO") or UUID to the team UUID."""
+        raw = (team_id or self._team_id or "").strip()
+        if not raw:
+            return None
+        if _UUID_RE.fullmatch(raw):
+            return raw
+        query = """
+        query TeamByKey($key: String!) {
+          teams(filter: { key: { eq: $key } }) {
+            nodes { id key }
+          }
+        }
+        """
+        data = self._graphql_data(query, {"key": raw})
+        nodes = (data or {}).get("teams", {}).get("nodes", [])
+        for node in nodes:
+            if node.get("key") == raw and node.get("id"):
+                return node["id"]
+        return None
 
     # ── GraphQL transport ──────────────────────────────────────
 

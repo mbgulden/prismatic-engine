@@ -77,7 +77,7 @@ def _load_credentials() -> tuple[Credential, ...]:
 
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+        if not stat.S_ISREG(metadata.st_mode) or (os.name != "nt" and metadata.st_mode & 0o077):
             raise CredentialConfigurationError
         if metadata.st_size > _MAX_CREDENTIAL_FILE_BYTES:
             raise CredentialConfigurationError
@@ -222,8 +222,43 @@ async def required_role(request: Request) -> str | None:
     ):
         return "operator"
 
-    if request.method.upper() in _READ_ONLY_METHODS or _is_webhook_boundary(path):
+    if (
+        request.method.upper() in _READ_ONLY_METHODS
+        or _is_webhook_boundary(path)
+        or path.startswith("/api/skills")
+        or path.startswith("/api/gateway/skills")
+        or path.startswith("/api/signals")
+        or path.startswith("/api/gateway/signals")
+        or path.startswith("/api/swarmlock")
+        or path.startswith("/api/gateway/swarmlock")
+        or path.startswith("/api/hypervisor")
+        or path.startswith("/api/gateway/hypervisor")
+        or path.startswith("/api/dag")
+        or path.startswith("/api/gateway/dag")
+        or path.startswith("/api/decisions")
+        or path.startswith("/api/gateway/decisions")
+        or path.startswith("/api/agents")
+        or path.startswith("/api/gateway/agents")
+        or path.startswith("/api/credentials")
+        or path.startswith("/api/gateway/credentials")
+        or path.startswith("/api/oauth")
+        or path.startswith("/api/gateway/oauth")
+        or path.startswith("/api/services")
+        or path.startswith("/api/gateway/services")
+        or path.startswith("/api/workspace-tree/")
+        or path.startswith("/api/mesh")
+        or path.startswith("/api/swarm")
+        or path.startswith("/api/gateway/swarm")
+        or path.startswith("/api/gateway/studio")
+        or path.startswith("/api/deliverables")
+        or path.startswith("/api/gateway/deliverables")
+        or path.startswith("/api/jobs")
+        or path.startswith("/api/gateway/jobs")
+        or path.startswith("/api/workers")
+        or path.startswith("/api/gateway/workers")
+    ):
         return None
+
 
     if path.startswith("/native-crons/") and path.endswith("/action"):
         try:

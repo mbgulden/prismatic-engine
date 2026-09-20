@@ -1,0 +1,53 @@
+name: auto-update-prs
+
+# Keeps every open PR merge-ready while multiple PRs flow through the pipe.
+# Whenever main moves (or a PR opens/updates), any open PR behind main gets
+# main merged into it via the GitHub update-branch API, then CI re-runs on
+# the fresh base. No force-push, no rebase, no human step.
+# If a PR has real merge conflicts, update-branch fails and the PR is left
+# alone with a warning in the log for a human (or a repair packet) to fix.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-behind-prs:
+    name: merge main into behind PRs
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - name: Update PR branches
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: open, base: main, per_page: 100,
+            });
+            core.info(`Found ${prs.length} open PR(s) targeting main.`);
+            let updated = 0, skipped = 0, conflicted = 0;
+            for (const pr of prs) {
+              const cmp = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `main...${pr.head.sha}`,
+              });
+              if (cmp.data.behind_by === 0) { skipped++; continue; }
+              try {
+                await github.rest.pulls.updateBranch({
+                  owner, repo, pull_number: pr.number,
+                });
+                core.info(`PR #${pr.number} ("${pr.title}"): merged main in (${cmp.data.behind_by} behind).`);
+                updated++;
+              } catch (e) {
+                // 422 = merge conflict or unmergeable; leave for human/agent.
+                core.warning(`PR #${pr.number} ("${pr.title}"): could not update — ${e.message}`);
+                conflicted++;
+              }
+            }
+            core.info(`Done: ${updated} updated, ${skipped} already current, ${conflicted} conflicted.`);

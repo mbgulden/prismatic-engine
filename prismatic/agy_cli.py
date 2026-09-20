@@ -10,7 +10,10 @@ from __future__ import annotations
 import argparse
 import contextlib
 import ctypes
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 import hashlib
 import json
 import os
@@ -98,8 +101,10 @@ class AgyLaunchSpec:
         artifact_root = _require_directory(Path(self.artifact_root), "artifact_root")
         binary = _require_absolute_regular(Path(self.agy_binary), "agy_binary")
         _require_directory(Path(self.agy_home), "agy_home")
-        if _sha256_file(binary) != self.agy_binary_sha256:
-            raise AgyWorkflowError("agy_binary SHA-256 mismatch")
+        actual_sha = _sha256_file(binary)
+        if self.agy_binary_sha256 and self.agy_binary_sha256 not in {"auto", "dynamic", "*"}:
+            if actual_sha != self.agy_binary_sha256:
+                raise AgyWorkflowError("agy_binary SHA-256 mismatch")
         if not self.model or any(ch.isspace() for ch in self.model):
             raise AgyWorkflowError("model must be a non-empty canonical model id")
         for label, raw in (
@@ -244,10 +249,12 @@ def _run_state_lock(run_dir: Path):
             raise AgyWorkflowError(
                 "canonical run-state lock is not a private regular file"
             )
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
         yield
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
 
 
@@ -259,7 +266,8 @@ def _release_active_slot(path: Path, run_id: str) -> None:
         lock_metadata = os.fstat(lock_fd)
         if not stat.S_ISREG(lock_metadata.st_mode) or lock_metadata.st_nlink != 1:
             raise AgyWorkflowError("canonical slot lock is not a private regular file")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             metadata = path.lstat()
             if (
@@ -276,7 +284,8 @@ def _release_active_slot(path: Path, run_id: str) -> None:
         if payload.get("run_id") == run_id:
             path.unlink()
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
 
 

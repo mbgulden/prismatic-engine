@@ -15,6 +15,15 @@
       "path": "shell/02_main_open.html"
     },
     {
+      "path": "tabs/studio.html"
+    },
+    {
+      "path": "tabs/assets.html"
+    },
+    {
+      "path": "tabs/pulse.html"
+    },
+    {
       "path": "tabs/dashboard.html"
     },
     {
@@ -39,6 +48,9 @@
       "path": "tabs/signals.html"
     },
     {
+      "path": "tabs/swarmproof.html"
+    },
+    {
       "path": "tabs/plugins.html"
     },
     {
@@ -49,6 +61,9 @@
     },
     {
       "path": "tabs/quota.html"
+    },
+    {
+      "path": "tabs/settings.html"
     },
     {
       "path": "shell/03_script_open.html"

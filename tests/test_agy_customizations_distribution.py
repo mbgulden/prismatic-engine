@@ -6,8 +6,42 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _base_interpreter_has_dependencies() -> bool:
+    """Check the child venv can see project dependencies via system site.
+
+    The test installs the wheel with ``--no-deps`` into a fresh venv created
+    with ``--system-site-packages``, so dependencies must be importable from
+    the *base* interpreter's site-packages. When pytest itself runs inside a
+    virtualenv, the child venv inherits the base interpreter's site-packages
+    — not the virtualenv's — and the import fails. CI runs on a non-venv
+    interpreter whose site-packages carry the dependencies.
+    """
+    if sys.prefix == sys.base_prefix:
+        return True
+    base_python = Path(sys.base_prefix) / "bin" / "python3"
+    if not base_python.exists():
+        return False
+    proc = subprocess.run(
+        [str(base_python), "-c", "import swarmlock"],
+        capture_output=True,
+    )
+    return proc.returncode == 0
+
+
+requires_base_site_dependencies = pytest.mark.skipif(
+    not _base_interpreter_has_dependencies(),
+    reason=(
+        "needs project dependencies importable from the base interpreter's "
+        "site-packages (true on CI's non-venv interpreter; this sandbox runs "
+        "pytest inside a virtualenv whose base lacks them)"
+    ),
+)
 
 
 def _run(
@@ -23,6 +57,7 @@ def _run(
     )
 
 
+@requires_base_site_dependencies
 def test_noneditable_wheel_manages_agy_bundle_from_empty_cwd(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()

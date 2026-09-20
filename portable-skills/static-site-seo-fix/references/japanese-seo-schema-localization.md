@@ -16,8 +16,8 @@ RIGHT: ドライバッグ (dry bag — once)
 
 ### Keyword-stuffed titles
 ```
-WRONG: オアフ ビーチ チェア レンタル、ノース ショア オアフ、ライエ近く、PCC、ハウウラ、ハワイ
-RIGHT: オアフ島ビーチチェア・レンタル | アクティブ・オアフ・ツアーズ
+WRONG: ビーチ チェア レンタル、エリア近く、ハワイ
+RIGHT: ビーチチェア・レンタル | グローバル・トラベル
 ```
 
 ### English-left touristType
@@ -38,12 +38,12 @@ Japanese pages should have Japanese og:title but English twitter:title (Twitter 
   "@type": "TouristTrip",
   "name": "[CLEAN JAPANESE TITLE — no keyword stuffing]",
   "description": "[150-200 char polite Japanese description in です/ます調]",
-  "url": "https://activeoahutours.com/ja/[path]/",
+  "url": "https://example.com/ja/[path]/",
   "tourOperator": {
     "@type": "TravelAgency",
-    "name": "Active Oahu Tours",
-    "url": "https://activeoahutours.com",
-    "telephone": "+1-808-123-4567"
+    "name": "Global Travel Agency",
+    "url": "https://example.com",
+    "telephone": "+1-800-555-0199"
   },
   "touristType": [
     "アドベンチャー旅行者",
@@ -56,7 +56,7 @@ Japanese pages should have Japanese og:title but English twitter:title (Twitter 
     "priceCurrency": "USD",
     "price": "[PRICE]",
     "availability": "https://schema.org/InStock",
-    "url": "https://activeoahutours.com/ja/[path]/"
+    "url": "https://example.com/ja/[path]/"
   }
 }
 ```
@@ -68,17 +68,17 @@ Japanese pages should have Japanese og:title but English twitter:title (Twitter 
   "@type": "Product",
   "name": "[CLEAN JAPANESE PRODUCT NAME]",
   "description": "[Polite Japanese description]",
-  "url": "https://activeoahutours.com/ja/[path]/",
+  "url": "https://example.com/ja/[path]/",
   "brand": {
     "@type": "Brand",
-    "name": "Active Oahu Tours"
+    "name": "Global Travel Co"
   },
   "offers": {
     "@type": "Offer",
     "priceCurrency": "USD",
     "price": "[PRICE]",
     "availability": "https://schema.org/InStock",
-    "url": "https://activeoahutours.com/ja/[path]/"
+    "url": "https://example.com/ja/[path]/"
   }
 }
 ```
@@ -88,22 +88,22 @@ Japanese pages should have Japanese og:title but English twitter:title (Twitter 
 {
   "@context": "https://schema.org",
   "@type": "TravelAgency",
-  "name": "アクティブ・オアフ・ツアーズ（Active Oahu Tours）",
+  "name": "グローバルトラベルエージェンシー（Global Travel Agency）",
   "description": "[Japanese description of services]",
-  "url": "https://activeoahutours.com/ja/",
-  "telephone": "+1-808-123-4567",
+  "url": "https://example.com/ja/",
+  "telephone": "+1-800-555-0199",
   "address": {
     "@type": "PostalAddress",
-    "streetAddress": "134B Hamakua Drive",
-    "addressLocality": "Kailua",
-    "addressRegion": "HI",
-    "postalCode": "96734",
+    "streetAddress": "100 Market St, Suite 200",
+    "addressLocality": "San Francisco",
+    "addressRegion": "CA",
+    "postalCode": "94105",
     "addressCountry": "US"
   },
   "sameAs": [
-    "https://www.facebook.com/activeoahutours/",
-    "https://www.instagram.com/activeoahu/",
-    "https://twitter.com/activeoahutours"
+    "https://www.facebook.com/example/",
+    "https://www.instagram.com/example/",
+    "https://twitter.com/example"
   ],
   "openingHoursSpecification": {
     "@type": "OpeningHoursSpecification",

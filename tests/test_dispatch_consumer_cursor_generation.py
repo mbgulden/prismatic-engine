@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import errno
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import importlib
 import json
 import os

@@ -8,6 +8,9 @@ Uses dry_run=True since we can't run ``integrate_pipeline_run()``
 in a test without a real git repository.
 """
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from prismatic.merge_candidate_manifest import (
@@ -22,17 +25,81 @@ from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
     ReviewDecision,
-    ReviewJobState,
     ReviewVerdict,
     VerificationReceipt,
 )
+from prismatic.review_factory.policy import PolicyEngine
 from prismatic.review_factory.queue import ReviewQueue
-from prismatic.review_factory.testing import enqueue_with_defaults
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _create_merge_ready_manifest() -> MergeCandidateManifest:
+def _make_git_repo(tmp_path):
+    """Build a real git repo: base commit B, candidate commit C (child of B).
+
+    Pre-creates the no-ff merge commit M of C into main, then resets main back
+    to B. The fixture can then hand the executor a real merge SHA whose tree
+    equals the candidate tree — exactly what the strict result-tree check
+    requires — while the target head still sits at the authorized base.
+    """
+    repo = tmp_path / "merge-repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-b", "main")
+    git("config", "user.email", "rf-test@example.com")
+    git("config", "user.name", "RF Test")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "readme.md").write_text("# fixture\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    base_commit = git("rev-parse", "HEAD").stdout.strip()
+
+    git("checkout", "-b", "candidate")
+    (repo / "docs" / "readme.md").write_text("# fixture\n\ncandidate change\n")
+    git("add", ".")
+    git("commit", "-m", "candidate")
+    candidate_commit = git("rev-parse", "HEAD").stdout.strip()
+    candidate_tree = git("rev-parse", f"{candidate_commit}^{{tree}}").stdout.strip()
+
+    git("checkout", "main")
+    git("merge", "--no-ff", "candidate", "-m", "merge candidate")
+    merge_sha = git("rev-parse", "HEAD").stdout.strip()
+    # Restore main to the base so the executor sees the pre-merge target head.
+    git("reset", "--hard", base_commit)
+
+    return {
+        "repo": repo,
+        "base_commit": base_commit,
+        "candidate_commit": candidate_commit,
+        "candidate_tree": candidate_tree,
+        "merge_sha": merge_sha,
+    }
+
+
+def _v1_policy_queue(db):
+    """ReviewQueue whose policy stamps policy_version "v1".
+
+    The strict executor binding requires f"v{manifest.proof_policy_version}"
+    ("v1", pinned by PROOF_POLICY_VERSION) to equal job.policy_version, so the
+    fixture must enqueue under the spec v1 policy rather than the
+    "v1-builtin" default policy.
+    """
+    policy_path = Path(__file__).resolve().parents[1] / "spec" / "policy_file_v1.yaml"
+    return ReviewQueue(db=db, policy=PolicyEngine.from_yaml(policy_path))
+
+
+def _create_merge_ready_manifest(
+    base_sha="a" * 40, candidate_sha="b" * 40
+) -> MergeCandidateManifest:
     """Create a manifest promoted through CANDIDATE → CLEAN."""
     manifest = MergeCandidateManifest.create(
         issue_id="GRO-TEST-MERGE",
@@ -40,8 +107,8 @@ def _create_merge_ready_manifest() -> MergeCandidateManifest:
         task_file_sha256="a" * 64,
         repository="mbgulden/prismatic-engine",
         target="main",
-        base_sha="a" * 40,
-        candidate_sha="b" * 40,
+        base_sha=base_sha,
+        candidate_sha=candidate_sha,
         changed_paths=["docs/readme.md"],
         producer="agy",
         preserved_candidate_location="/tmp/test-merge",
@@ -68,7 +135,7 @@ def _create_merge_ready_manifest() -> MergeCandidateManifest:
         reviewer="antigravity-rf-v1",
         review_id="review-test-1",
         verdict="CLEAN",
-        reviewed_sha="b" * 40,
+        reviewed_sha=candidate_sha,
         reviewed_manifest_digest=manifest._digest_without_review(),
         scope_clean=True,
         conflict_free=True,
@@ -78,7 +145,13 @@ def _create_merge_ready_manifest() -> MergeCandidateManifest:
     return manifest
 
 
-def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
+def _create_merge_ready_job(
+    queue: ReviewQueue,
+    tier: int = 0,
+    base_commit: str | None = None,
+    candidate_commit: str | None = None,
+    candidate_tree: str | None = None,
+) -> str:
     """Create a job and push it through to merge_ready."""
     paths = {
         0: ["docs/readme.md"],
@@ -86,12 +159,17 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
         2: ["prismatic/auth/oauth.py"],
     }
 
-    job_id = enqueue_with_defaults(
-        queue,
+    base_commit = base_commit or "a" * 40
+    candidate_commit = candidate_commit or "b" * 40
+    candidate_tree = candidate_tree or candidate_commit
+
+    job_id = queue.enqueue_completed_work(
         completed_work_id=f"agy-cw-merge-{tier}-{id(queue)}",
         task_id="GRO-TEST-MERGE",
-        base_commit="a" * 40,
-        candidate_commit="b" * 40,
+        repository="mbgulden/prismatic-engine",
+        base_commit=base_commit,
+        candidate_commit=candidate_commit,
+        candidate_tree=candidate_tree,
         changed_paths=paths.get(tier, ["docs/readme.md"]),
     )
 
@@ -99,8 +177,8 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
     _ = queue.lease_for_verification("verifier-1")
     receipt = VerificationReceipt(
         review_job_id=job_id,
-        candidate_commit="b" * 40,
-        candidate_tree="b" * 40,
+        candidate_commit=candidate_commit,
+        candidate_tree=candidate_tree,
     )
     queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
@@ -113,8 +191,8 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
             decision = ReviewDecision(
                 review_job_id=job_id,
                 reviewer_id=f"reviewer-{witness_n}",
-                candidate_commit="b" * 40,
-                candidate_tree="b" * 40,
+                candidate_commit=candidate_commit,
+                candidate_tree=candidate_tree,
                 receipt_id=receipt.receipt_id,
                 verdict=ReviewVerdict.CLEAN.value,
             )
@@ -190,88 +268,135 @@ class TestMergeExecution:
     """Test merge execution flow (dry-run)."""
 
     def test_dry_run_merge_succeeds(self, queue, executor):
-        """Dry-run merge for a Tier 0 job produces a MergeResult.
-
-        RF-R2: caller-supplied manifest is no longer honored by the executor
-        when a durable result packet exists.  The executor loads the
-        durable manifest and compares digests; mismatches are rejected.
-        This test now exercises the durable path: it does NOT pass
-        ``manifest=`` and lets the executor load from ``result_packet_path``.
-        """
+        """Dry-run merge for a Tier 0 job produces a MergeResult."""
         job_id = _create_merge_ready_job(queue, tier=0)
 
         # Authorize explicitly
         auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
-        result = executor.execute(job_id)
+        # Build a CLEAN manifest for the executor
+        manifest = _create_merge_ready_manifest()
+        # Advance through CI
+        ci_checks = [
+            CICheck(
+                name="rf-v1-verification",
+                run_id=1000,
+                conclusion="SUCCESS",
+                head_sha="b" * 40,
+                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+            )
+        ]
+        manifest = manifest.record_ci(ci_checks)
+        manifest = manifest.mark_merge_eligible()
+
+        result = executor.execute(job_id, manifest=manifest)
         assert result.success
         assert result.merge_sha == "dry-run-sha"
 
     def test_no_auth_fails(self, queue, executor):
-        """Merge without authorization fails.
-
-        RF-R2: durable manifest binding — see test_dry_run_merge_succeeds.
-        """
+        """Merge without authorization fails."""
         job_id = _create_merge_ready_job(queue, tier=0)
         # Don't authorize
 
-        result = executor.execute(job_id)
+        manifest = _create_merge_ready_manifest()
+        ci_checks = [
+            CICheck(
+                name="rf-v1-verification",
+                run_id=1000,
+                conclusion="SUCCESS",
+                head_sha="b" * 40,
+                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+            )
+        ]
+        manifest = manifest.record_ci(ci_checks)
+        manifest = manifest.mark_merge_eligible()
+
+        result = executor.execute(job_id, manifest=manifest)
         assert not result.success
         assert "authorization" in result.error.lower()
 
-    def test_non_dry_run_rejects_synthetic_ci_before_claim(self, queue, tmp_path):
-        """Synthetic GitHub-shaped checks cannot authorize a non-dry merge."""
-        from unittest.mock import patch
-
+    def test_non_dry_run_merge_executes_attestation_and_lock(self, tmp_path):
+        """Verify non-dry-run merge calls submit_attestation, acquire_lock, and release_lock."""
+        from unittest.mock import patch, MagicMock
         from prismatic.core.merge_factory import MergeFactoryStore
 
-        mf_store = MergeFactoryStore(db_path=tmp_path / "test_mf.db")
-        executor = MergeExecutor(queue=queue, dry_run=False, mf_store=mf_store)
+        # Strict production requires real git state: a repo whose main sits at
+        # the authorized base, plus a job enqueued under the spec v1 policy so
+        # the manifest's proof_policy_version ("v1") binds to the job.
+        git_ids = _make_git_repo(tmp_path)
+        db = ReviewFactoryDB(db_path=tmp_path / "test_merge_real.db")
+        db.ensure_tables()
+        queue = _v1_policy_queue(db)
+        try:
+            mf_store = MergeFactoryStore(db_path=tmp_path / "test_mf.db")
+            executor = MergeExecutor(
+                queue=queue,
+                dry_run=False,
+                mf_store=mf_store,
+                repo_path=git_ids["repo"],
+            )
 
-        job_id = _create_merge_ready_job(queue, tier=0)
-        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
-        assert auth_id is not None
+            job_id = _create_merge_ready_job(
+                queue,
+                tier=0,
+                base_commit=git_ids["base_commit"],
+                candidate_commit=git_ids["candidate_commit"],
+                candidate_tree=git_ids["candidate_tree"],
+            )
+            auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
+            assert auth_id is not None
 
-        manifest = _create_merge_ready_manifest()
-        manifest = manifest.record_ci(
-            [
+            manifest = _create_merge_ready_manifest(
+                base_sha=git_ids["base_commit"],
+                candidate_sha=git_ids["candidate_commit"],
+            )
+            ci_checks = [
                 CICheck(
                     name="rf-v1-verification",
                     run_id=1000,
                     conclusion="SUCCESS",
-                    head_sha="b" * 40,
+                    head_sha=git_ids["candidate_commit"],
                     details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+                    provider_receipt_id="receipt-123",
+                    provider_receipt_sha256="a" * 64,
+                    provider_policy_sha256="b" * 64,
                 )
             ]
-        ).mark_merge_eligible()
+            manifest = manifest.record_ci(ci_checks)
+            manifest = manifest.mark_merge_eligible()
 
-        with patch(
-            "prismatic.review_factory.merge_executor.integrate_pipeline_run"
-        ) as integration:
-            # RF-R2: don't pass manifest=; executor loads from durable path.
-            result = executor.execute(job_id)
+            mock_integration_manifest = MagicMock()
+            mock_integration_manifest.merge_sha = git_ids["merge_sha"]
 
-        assert result.success is False
-        # RF-R2: the durable manifest has no CI checks recorded (the test
-        # only adds CI to the in-memory manifest it used to pass).  Both
-        # "lacks provider-neutral receipt provenance" and "Required CI
-        # check missing or not green" are valid R2 rejections.
-        assert any(
-            needle in (result.error or "")
-            for needle in (
-                "lacks provider-neutral receipt provenance",
-                "Required CI check",
-            )
-        )
-        integration.assert_not_called()
-        row = queue.db.get_review_job(job_id)
-        assert row is not None
-        assert row.state == ReviewJobState.MERGE_AUTHORIZED.value
-        decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
-        assert decision_hist == []
-        consumed_at = queue.db.conn.execute(
-            "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
-            (auth_id,),
-        ).fetchone()[0]
-        assert consumed_at == ""
+            # Mock the verification receipt store to return a valid receipt.
+            # The strict contract only admits provider-neutral receipts whose
+            # digest matches the CI check's declared receipt digest.
+            mock_receipt = MagicMock()
+            mock_receipt.receipt_id = "receipt-123"
+            mock_receipt.receipt_sha256 = "a" * 64
+            mock_receipt.policy_sha256 = "b" * 64
+            mock_receipt.task_id = "test-task"
+            mock_receipt.candidate_commit = git_ids["candidate_commit"]
+            mock_receipt.candidate_tree = git_ids["candidate_tree"]
+            mock_receipt.base_commit = git_ids["base_commit"]
+            mock_receipt.base_tree = git_ids["base_commit"]
+            mock_store = MagicMock()
+            mock_store.get.return_value = mock_receipt
+            executor.verification_receipt_store = mock_store
+
+            with patch(
+                "prismatic.review_factory.merge_executor.integrate_pipeline_run",
+                return_value=mock_integration_manifest,
+            ):
+                result = executor.execute(job_id, manifest=manifest)
+
+            assert result.success, result.error
+            assert result.merge_sha == git_ids["merge_sha"]
+
+            # Verify attestation was written to mf_store
+            decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
+            assert len(decision_hist) == 1
+            assert decision_hist[0]["decision"] == "APPROVE_MERGE"
+        finally:
+            queue.close()

@@ -497,7 +497,7 @@ def test_fresh_key_threshold_exact_boundary_tests() -> None:
 
 
 def test_producer_verifier_separation_preserved() -> None:
-    from test_receipt_validator import valid_policy, valid_receipt
+    from tests.test_receipt_validator import valid_policy, valid_receipt
 
     priv, rec = make_key_record(verifier_id="verifier-1")
     policy = valid_policy()

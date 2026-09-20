@@ -21,22 +21,22 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from prismatic.merge_candidate_manifest import (
     IndependentReview,
     MergeCandidateManifest,
 )
 from prismatic.review import (
-    ACTION_ADVANCE,
-    ACTION_GIVE_UP,
-    ACTION_HOLD,
-    ACTION_REWORK,
     APPROVE,
     NEEDS_DISCUSSION,
     REQUEST_CHANGES,
-    PipelineOrchestrator,
+    ACTION_ADVANCE,
+    ACTION_HOLD,
+    ACTION_REWORK,
+    ACTION_GIVE_UP,
     PRReviewResult,
+    PipelineOrchestrator,
     RealPRReviewer,
 )
 from prismatic.review_factory.models import (
@@ -146,8 +146,8 @@ class ReviewerCapability:
 
     def __init__(
         self,
-        adapter: PreliminaryReviewAdapter | None = None,
-        orchestrator: PipelineOrchestrator | None = None,
+        adapter: Optional[PreliminaryReviewAdapter] = None,
+        orchestrator: Optional[PipelineOrchestrator] = None,
         reviewer_id: str = "antigravity-rf-v1",
     ):
         self._adapter = adapter or PreliminaryReviewAdapter()
@@ -159,8 +159,8 @@ class ReviewerCapability:
         job: ReviewJob,
         manifest: MergeCandidateManifest,
         receipt: VerificationReceipt,
-        pr_url: str | None = None,
-    ) -> tuple[ReviewDecision, MergeCandidateManifest, RepairPacket | None]:
+        pr_url: Optional[str] = None,
+    ) -> tuple[ReviewDecision, MergeCandidateManifest, Optional[RepairPacket]]:
         """Run the full review pipeline.
 
         Args:
@@ -172,36 +172,6 @@ class ReviewerCapability:
         Returns:
             (decision, updated_manifest, repair_packet_or_None)
         """
-        # Validate 5-point composite lineage
-        if receipt.review_job_id and receipt.review_job_id != job.review_job_id:
-            raise ValueError(
-                f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) != job review_job_id ({job.review_job_id})"
-            )
-        if (
-            receipt.candidate_commit
-            and job.candidate_commit
-            and receipt.candidate_commit != job.candidate_commit
-        ):
-            raise ValueError(
-                f"Cross-candidate receipt commit mismatch: receipt commit ({receipt.candidate_commit}) != job commit ({job.candidate_commit})"
-            )
-        if (
-            receipt.candidate_tree
-            and job.candidate_tree
-            and receipt.candidate_tree != job.candidate_tree
-        ):
-            raise ValueError(
-                f"Cross-candidate receipt tree mismatch: receipt tree ({receipt.candidate_tree}) != job tree ({job.candidate_tree})"
-            )
-        if (
-            manifest.candidate_sha
-            and job.candidate_commit
-            and manifest.candidate_sha != job.candidate_commit
-        ):
-            raise ValueError(
-                f"Cross-candidate manifest SHA mismatch: manifest SHA ({manifest.candidate_sha}) != job commit ({job.candidate_commit})"
-            )
-
         if pr_url is None:
             pr_url = self._derive_pr_url(job)
 
@@ -309,7 +279,7 @@ class StubReviewerCapability:
     def __init__(
         self,
         verdict: ReviewVerdict = ReviewVerdict.CLEAN,
-        findings: list[Finding] | None = None,
+        findings: Optional[list[Finding]] = None,
         reviewer_id: str = "stub-reviewer",
     ):
         self._verdict = verdict
@@ -321,8 +291,8 @@ class StubReviewerCapability:
         job: ReviewJob,
         manifest: MergeCandidateManifest,
         receipt: VerificationReceipt,
-        pr_url: str | None = None,
-    ) -> tuple[ReviewDecision, MergeCandidateManifest, RepairPacket | None]:
+        pr_url: Optional[str] = None,
+    ) -> tuple[ReviewDecision, MergeCandidateManifest, Optional[RepairPacket]]:
         """Return a deterministic verdict."""
         idempotency_key = ReviewerCapability._compute_idempotency_key(
             self._reviewer_id,

@@ -32,14 +32,14 @@ from prismatic.review_factory.models import (
 )
 
 __all__ = [
+    "ReviewJob",
+    "ReviewJobState",
+    "RiskTier",
+    "VerificationReceipt",
+    "VerificationClassification",
+    "ReviewDecision",
+    "ReviewVerdict",
     "MergeAuthorization",
     "MergeScope",
     "RepairPacket",
-    "ReviewDecision",
-    "ReviewJob",
-    "ReviewJobState",
-    "ReviewVerdict",
-    "RiskTier",
-    "VerificationClassification",
-    "VerificationReceipt",
 ]

@@ -9,6 +9,8 @@ import sqlite3
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 
 def canonical_result_text(
     *,
@@ -22,9 +24,15 @@ def canonical_result_text(
     repo = Path.cwd().resolve()
 
     def git_value(*args: str) -> str:
-        return subprocess.check_output(
-            ["git", "-C", str(repo), *args], text=True
-        ).strip()
+        try:
+            return subprocess.check_output(
+                ["git", "-C", str(repo), *args], text=True
+            ).strip()
+        except subprocess.CalledProcessError:
+            pytest.skip(
+                "requires a git checkout with an origin/main ref "
+                "(present in CI checkouts; absent in local snapshots)"
+            )
 
     packet = {
         "agent": agent,

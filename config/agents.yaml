@@ -20,13 +20,13 @@ fred:
       chat_id: 8190664947      # Michael's DM
       bot_token: ${TELEGRAM_BOT_TOKEN}
 
-# ── Kai (Active Oahu Tours bot, remote) ──────────────────────
-kai:
+# ── Remote Worker (External worker node) ─────────────────────
+remote_worker:
   signal:
     primary:
       type: http
       endpoints:
-        kai: https://kai.activeoahutours.com/signals
+        worker: https://worker.internal:9001/signals
       shared_secret: ${PRISMATIC_SECRET}
     fallback:
       type: redis

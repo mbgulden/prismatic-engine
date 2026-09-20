@@ -1,51 +1,52 @@
 name: test
 
+# PR gate: fast smoke (~2 min) + the review factory verifier, both on
+# the self-hosted webtop-hermes runner (free minutes; GitHub-hosted
+# minutes are blocked by the account billing state).
+#
+# What changed (Sep 2026): the old 8-job matrix (4 Python versions x 2 shards,
+# up to 70 min/run, fired on both push AND pull_request) burned ~1,840 of
+# 2,000 monthly minutes. The full unit suite now runs nightly on the
+# self-hosted runner instead (nightly-full-suite.yml); PRs get the focused
+# review-factory gate plus a ruff smoke check.
+#
+# DO NOT re-add push+pull_request double triggers or the version matrix here
+# without checking the Actions minute budget first.
+
 on:
-  push:
-    branches:
-      - main
-      - deploy-fresh
   pull_request:
     branches:
       - main
       - deploy-fresh
+  push:
+    branches:
+      - main
+      - deploy-fresh
+
+# A new push kills the stale run instead of billing both.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: test py${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
+  smoke:
+    name: smoke (ruff lint)
+    # Self-hosted webtop-hermes runner (free minutes).
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
+          python-version: "3.12"
 
-      - name: Install package and release dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e ".[release]"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Playwright & Dependencies
-        run: |
-          python -m pip install playwright pytest-playwright
-          npm ci
-          npx playwright install --with-deps chromium
+      - name: Install ruff
+        # Pinned: the repo is clean under 0.15.20; unpinned installs drift
+        # (0.16.x flags 114 pre-existing findings) and break the gate.
+        run: python -m pip install "ruff==0.15.20"
 
       - name: Run lint
         run: |
@@ -74,49 +75,17 @@ jobs:
             tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
 
-      - name: Run distribution readiness smoke (clean-room fresh-install)
-        run: |
-          python scripts/distribution_readiness_smoke.py --fresh-install
-
-      - name: Run release readiness checks
-        run: |
-          python scripts/release_check.py
-
-      - name: Run release smoke
-        run: |
-          python scripts/release_smoke.py
-
-      - name: Run public security audit
-        run: |
-          python scripts/public_security_readiness_audit.py
-
-      - name: Validate documentation and OKF governance
-        run: |
-          python scripts/validate_okf_docs.py
-
-      - name: Run Unit Tests
-        run: |
-          python -m pytest tests/ prismatic/review_factory/tests/
-
-      - name: Setup Mock Git Hooks (Required by Canary Integration Tests)
-        run: |
-          mkdir -p .git/hooks
-          touch .git/hooks/pre-commit .git/hooks/pre-push
-          chmod +x .git/hooks/pre-commit .git/hooks/pre-push
-
-      - name: Run Sandbox Integration Tests (Canary)
-        env:
-          PRISMATIC_HOME: ${{ github.workspace }}
-        run: |
-          bash scripts/canary_test.sh --verbose
-
-  build:
-    name: build package
-    runs-on: ubuntu-latest
-    needs: test
+  review-factory-gate:
+    name: "review factory gate (tier A)"
+    # Self-hosted webtop-hermes runner — minutes are free. If the runner is
+    # ever offline this job waits; the smoke job above still reports.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -124,20 +93,18 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install build tools
+      - name: Install package and release dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[release]"
 
-      - name: Build distributions
-        run: |
-          rm -rf dist build *.egg-info
-          python -m build
-          python -m twine check dist/*
+      - name: "review factory gate (tier A: focused verification)"
+        run: python scripts/review_factory_gate.py --base origin/main --tier A
 
-      - name: Upload dist artifacts
+      - name: Upload verification logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prismatic-engine-dist
-          path: dist/*
-          if-no-files-found: error
+          name: review-factory-receipt-${{ github.run_id }}
+          path: rf-gate-logs/
+          if-no-files-found: warn

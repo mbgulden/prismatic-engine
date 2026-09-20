@@ -910,6 +910,51 @@ class MergeFactoryStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def validate_candidate_receipt(
+        self,
+        candidate_sha: str,
+        *,
+        task_id: Optional[str] = None,
+        db_path: Optional[Path | str] = None,
+    ) -> Dict[str, Any]:
+        """Verify that an exact candidate commit has an active, merge-eligible provider-neutral receipt."""
+        from prismatic.verification.receipt_store import VerificationReceiptStore
+
+        store = VerificationReceiptStore(db_path)
+        if task_id:
+            stored = store.find_latest(task_id=task_id, candidate_sha=candidate_sha)
+            if stored and stored.merge_eligible and stored.classification == "accepted":
+                return {
+                    "valid": True,
+                    "receipt_id": stored.receipt_id,
+                    "classification": stored.classification,
+                    "receipt": stored.as_dict(),
+                }
+            return {
+                "valid": False,
+                "reason": f"No active merge-eligible receipt found for task {task_id} at {candidate_sha}.",
+                "receipt_id": stored.receipt_id if stored else None,
+            }
+
+        for stored in store.list(limit=100):
+            if (
+                stored.receipt.get("candidate_sha") == candidate_sha
+                and stored.merge_eligible
+                and stored.classification == "accepted"
+            ):
+                return {
+                    "valid": True,
+                    "receipt_id": stored.receipt_id,
+                    "classification": stored.classification,
+                    "receipt": stored.as_dict(),
+                }
+
+        return {
+            "valid": False,
+            "reason": f"No active merge-eligible verification receipt found for candidate {candidate_sha}.",
+            "receipt_id": None,
+        }
+
     # ─────────────────────────────────────────────────────────────────────────
     # ── Merge Locks
     # ─────────────────────────────────────────────────────────────────────────

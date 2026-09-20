@@ -32,11 +32,10 @@ import json
 import os
 import sqlite3
 import uuid
-from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator, Optional
 
 from prismatic.review_factory.models import (
     MergeAuthorization,
@@ -47,19 +46,21 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 
+
 # ─────────────────────────────────────────────────────────────────────
 # Path resolution — reuses agy_completed_work's DB
 # ─────────────────────────────────────────────────────────────────────
 
 
 def _agy_default_state_dir() -> Path:
-    """Mirror of agy_completed_work.default_state_dir().
-
-    We replicate instead of importing to avoid circular dependencies
-    during early module loading.  This MUST stay in sync with
-    ``prismatic.agy_completed_work.default_state_dir()``.
-    """
-    return Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")).expanduser()
+    """Mirror of agy_completed_work.default_state_dir()."""
+    if os.environ.get("PRISMATIC_STATE_DIR"):
+        return Path(os.environ["PRISMATIC_STATE_DIR"]).expanduser()
+    p_home = Path.home() / ".prismatic" / "db"
+    if p_home.parent.exists():
+        p_home.mkdir(parents=True, exist_ok=True)
+        return p_home
+    return Path("./prismatic_state").expanduser()
 
 
 def default_db_path() -> Path:
@@ -85,7 +86,7 @@ def default_db_path() -> Path:
 # Schema DDL
 # ─────────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 
 _CREATE_TABLES = """
 -- Schema version tracking
@@ -112,9 +113,11 @@ CREATE TABLE IF NOT EXISTS review_jobs (
     state TEXT NOT NULL DEFAULT 'queued',
     required_witnesses INTEGER NOT NULL DEFAULT 0,
     completed_witnesses INTEGER NOT NULL DEFAULT 0,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     lease_owner TEXT NOT NULL DEFAULT '',
-    lease_expires_at TEXT NOT NULL DEFAULT ''
+    lease_expires_at TEXT NOT NULL DEFAULT '',
+    manifest_json TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_state ON review_jobs(state);
@@ -198,7 +201,6 @@ CREATE TABLE IF NOT EXISTS repair_packets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_repair_candidate ON repair_packets(candidate_tree);
-CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id);
 
 -- Enterprise Audit Log: append-only table for operator actions
 CREATE TABLE IF NOT EXISTS review_factory_audit_log (
@@ -229,10 +231,10 @@ class ReviewFactoryDB:
     All writes are atomic (single transaction per method).
     """
 
-    def __init__(self, db_path: Path | None = None):
+    def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = None
+        self._conn: Optional[sqlite3.Connection] = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -274,69 +276,55 @@ class ReviewFactoryDB:
     # ── Schema management ────────────────────────────────────────────
 
     def ensure_tables(self) -> None:
-        """Create all tables if they don't exist and run migrations.  Idempotent."""
+        """Create all tables if they don't exist.  Idempotent."""
         self.conn.executescript(_CREATE_TABLES)
+        # Migration: repair_packets.review_job_id was dropped by an
+        # intermediate schema; restore it on databases created without it.
+        cols = [
+            r["name"] for r in self.conn.execute("PRAGMA table_info(repair_packets)")
+        ]
+        if "review_job_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE repair_packets ADD COLUMN review_job_id TEXT NOT NULL DEFAULT ''"
+            )
+        # Migration: review_jobs.manifest_json persists the pipeline manifest
+        # (REVIEW_REQUIRED after verification) for the review stage.
+        job_cols = [
+            r["name"] for r in self.conn.execute("PRAGMA table_info(review_jobs)")
+        ]
+        if "manifest_json" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN manifest_json TEXT NOT NULL DEFAULT ''"
+            )
+        # Migration: review_jobs.consecutive_failures persists the daemon's
+        # poison-job counter on the job row (survives daemon restarts).
+        if "consecutive_failures" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0"
+            )
+        # Migration: review_jobs.repair_attempts / repair_last_dispatch_at
+        # persist the bounded repair re-dispatch budget on the job row (Phase 4).
+        if "repair_attempts" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN repair_attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        if "repair_last_dispatch_at" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN repair_last_dispatch_at TEXT NOT NULL DEFAULT ''"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
+        )
         # Record schema version if not already present
         cur = self.conn.execute(
             "SELECT version FROM rf_schema_version ORDER BY version DESC LIMIT 1"
         )
         row = cur.fetchone()
-        current_ver = row["version"] if row else 0
-
-        if current_ver < 2:
-            # Preflight check: fail closed if duplicate non-empty completed_work_id exist
-            dup_cur = self.conn.execute(
-                "SELECT completed_work_id, COUNT(*) as cnt FROM review_jobs WHERE completed_work_id != '' GROUP BY completed_work_id HAVING cnt > 1"
-            )
-            dups = dup_cur.fetchall()
-            if dups:
-                dup_ids = [d["completed_work_id"] for d in dups]
-                raise RuntimeError(
-                    f"Schema v2 migration aborted: duplicate completed_work_id values found: {dup_ids}"
-                )
-
-            # Apply UNIQUE index
-            self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_cw_id ON review_jobs(completed_work_id) WHERE completed_work_id != ''"
-            )
-
+        if row is None or row["version"] < SCHEMA_VERSION:
             self.conn.execute(
                 "INSERT INTO rf_schema_version (version, applied_at) VALUES (?, ?)",
-                (2, datetime.now(timezone.utc).isoformat()),
+                (SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
             )
-
-        # Migration: Ensure repair_packets has review_job_id column
-        cur = self.conn.execute("PRAGMA table_info(repair_packets)")
-        cols = [r["name"] for r in cur.fetchall()]
-        if "review_job_id" not in cols:
-            self.conn.execute(
-                "ALTER TABLE repair_packets ADD COLUMN review_job_id TEXT NOT NULL DEFAULT ''"
-            )
-            self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
-            )
-
-        # Admission invariant: at most one active (unconsumed) merge
-        # authorization may exist for a review job.  Fail closed on legacy
-        # duplicates rather than silently selecting one by expiry ordering.
-        duplicate_auths = self.conn.execute(
-            """SELECT review_job_id, COUNT(*) AS cnt
-               FROM merge_authorizations
-               WHERE consumed_at = ''
-               GROUP BY review_job_id
-               HAVING COUNT(*) > 1"""
-        ).fetchall()
-        if duplicate_auths:
-            duplicate_ids = [row["review_job_id"] for row in duplicate_auths]
-            raise RuntimeError(
-                "Active merge authorization migration aborted: duplicate "
-                f"review_job_id values found: {duplicate_ids}"
-            )
-        self.conn.execute(
-            """CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_one_active_per_job
-               ON merge_authorizations(review_job_id)
-               WHERE consumed_at = ''"""
-        )
 
     # ── review_jobs CRUD ─────────────────────────────────────────────
 
@@ -367,7 +355,7 @@ class ReviewFactoryDB:
                     job.changed_paths_json,
                     job.risk_tier,
                     job.policy_version,
-                    job.state,
+                    job.state.value if hasattr(job.state, "value") else str(job.state),
                     job.required_witnesses,
                     job.completed_witnesses,
                     job.created_at,
@@ -377,7 +365,7 @@ class ReviewFactoryDB:
             )
         return job.review_job_id
 
-    def get_review_job(self, review_job_id: str) -> ReviewJob | None:
+    def get_review_job(self, review_job_id: str) -> Optional[ReviewJob]:
         """Fetch a single review job by ID."""
         cur = self.conn.execute(
             "SELECT * FROM review_jobs WHERE review_job_id = ?",
@@ -388,7 +376,7 @@ class ReviewFactoryDB:
 
     def list_review_jobs(
         self,
-        state: ReviewJobState | None = None,
+        state: Optional[ReviewJobState] = None,
         limit: int = 100,
     ) -> list[ReviewJob]:
         """List review jobs, optionally filtered by state."""
@@ -404,7 +392,9 @@ class ReviewFactoryDB:
             )
         return [self._row_to_review_job(r) for r in cur.fetchall()]
 
-    def get_job_by_completed_work_id(self, completed_work_id: str) -> ReviewJob | None:
+    def get_job_by_completed_work_id(
+        self, completed_work_id: str
+    ) -> Optional[ReviewJob]:
         """Fetch job by completed_work_id via SQL index query."""
         cur = self.conn.execute(
             "SELECT * FROM review_jobs WHERE completed_work_id = ? LIMIT 1",
@@ -448,6 +438,149 @@ class ReviewFactoryDB:
                     review_job_id,
                     current.value,
                 ),
+            )
+            return cur.rowcount > 0
+
+    def update_job_manifest(self, review_job_id: str, manifest_json: str) -> bool:
+        """Persist the pipeline manifest JSON for a review job.
+
+        Written by the verification stage (REVIEW_REQUIRED manifest) and read
+        by the review stage; Phase 4's merge executor binds the CLEAN manifest
+        from here as well.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET manifest_json = ? WHERE review_job_id = ?",
+                (manifest_json, review_job_id),
+            )
+            return cur.rowcount > 0
+
+    def increment_job_failures(self, review_job_id: str) -> int:
+        """Atomically increment a job's consecutive-failure counter.
+
+        Returns the new count. Backs the daemon's poison-job guard.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET consecutive_failures = consecutive_failures + 1 "
+                "WHERE review_job_id = ?",
+                (review_job_id,),
+            )
+            row = cur.execute(
+                "SELECT consecutive_failures FROM review_jobs WHERE review_job_id = ?",
+                (review_job_id,),
+            ).fetchone()
+            return int(row[0]) if row is not None else 0
+
+    def reset_job_failures(self, review_job_id: str) -> bool:
+        """Reset a job's consecutive-failure counter to zero."""
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET consecutive_failures = 0 WHERE review_job_id = ?",
+                (review_job_id,),
+            )
+            return cur.rowcount > 0
+
+    def note_repair_dispatch(self, review_job_id: str, at_iso: str) -> int:
+        """Record a repair intake dispatch: bump attempts, stamp the time.
+
+        Returns the new attempt count. Backs the bounded re-dispatch budget.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET repair_attempts = repair_attempts + 1, "
+                "repair_last_dispatch_at = ? WHERE review_job_id = ?",
+                (at_iso, review_job_id),
+            )
+            row = cur.execute(
+                "SELECT repair_attempts FROM review_jobs WHERE review_job_id = ?",
+                (review_job_id,),
+            ).fetchone()
+            return int(row[0]) if row is not None else 0
+
+    def backfill_repair_dispatch(
+        self, review_job_id: str, attempts: int, at_iso: str
+    ) -> bool:
+        """Seed the re-dispatch budget from history (no new dispatch).
+
+        Used once for jobs dispatched before attempt tracking existed: the
+        audit log's most recent ``repair_dispatched`` entry supplies the
+        starting budget instead of firing a duplicate dispatch.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET repair_attempts = ?, "
+                "repair_last_dispatch_at = ? WHERE review_job_id = ?",
+                (attempts, at_iso, review_job_id),
+            )
+            return cur.rowcount > 0
+
+    def lease_merge_ready(
+        self,
+        worker_id: str,
+        lease_seconds: int = 600,
+        tiers: Optional[set] = None,
+        exclude_job_ids: Optional[set] = None,
+    ) -> Optional["ReviewJob"]:
+        """Lease one MERGE_READY job without changing its state.
+
+        Conditional claim: only unleased or expired-lease rows are taken, so
+        concurrent merge-stage workers cannot double-process a job. The
+        merge itself is additionally guarded by the executor's atomic
+        authorization claim.
+
+        ``tiers`` (when non-empty) restricts leasing to those risk tiers and
+        ``exclude_job_ids`` (when non-empty) skips specific jobs, so refused
+        jobs (tier 2/3, tiers not enabled for auto-merge, authorize-refused)
+        sit in MERGE_READY without lease churn.
+        """
+        now = datetime.now(timezone.utc)
+        expiry = (now + timedelta(seconds=lease_seconds)).isoformat()
+        now_iso = now.isoformat()
+        where_params: list = [now_iso]
+        tier_clause = ""
+        if tiers:
+            tier_clause = " AND risk_tier IN ({})".format(", ".join(["?"] * len(tiers)))
+            where_params.extend(sorted(int(t) for t in tiers))
+        exclude_clause = ""
+        if exclude_job_ids:
+            exclude_clause = " AND review_job_id NOT IN ({})".format(
+                ", ".join(["?"] * len(exclude_job_ids))
+            )
+            where_params.extend(sorted(exclude_job_ids))
+        with self.transaction() as cur:
+            cur.execute(
+                """UPDATE review_jobs
+                   SET lease_owner = ?, lease_expires_at = ?
+                   WHERE review_job_id = (
+                       SELECT review_job_id FROM review_jobs
+                       WHERE state = 'merge_ready'
+                         AND (lease_owner = '' OR lease_owner IS NULL
+                              OR lease_expires_at IS NULL OR lease_expires_at = ''
+                              OR lease_expires_at < ?)
+                         {tier_clause}{exclude_clause}
+                       ORDER BY created_at ASC LIMIT 1
+                   )""".format(tier_clause=tier_clause, exclude_clause=exclude_clause),
+                [worker_id, expiry] + where_params,
+            )
+            if cur.rowcount == 0:
+                return None
+            row = cur.execute(
+                "SELECT * FROM review_jobs WHERE lease_owner = ? "
+                "AND lease_expires_at = ? LIMIT 1",
+                (worker_id, expiry),
+            ).fetchone()
+            return self._row_to_review_job(row) if row else None
+
+    def release_merge_lease(self, review_job_id: str, worker_id: str) -> bool:
+        """Release a merge lease, leaving the job MERGE_READY."""
+        with self.transaction() as cur:
+            cur.execute(
+                """UPDATE review_jobs
+                   SET lease_owner = '', lease_expires_at = ''
+                   WHERE review_job_id = ? AND state = 'merge_ready'
+                     AND lease_owner = ?""",
+                (review_job_id, worker_id),
             )
             return cur.rowcount > 0
 
@@ -569,7 +702,7 @@ class ReviewFactoryDB:
     # ── merge_authorizations CRUD ────────────────────────────────────
 
     def insert_authorization(self, auth: MergeAuthorization) -> str:
-        """Insert a merge authorization.  Low-level fixture/migration helper."""
+        """Insert a merge authorization.  Returns authorization_id."""
         with self.transaction() as cur:
             cur.execute(
                 """INSERT INTO merge_authorizations (
@@ -599,18 +732,116 @@ class ReviewFactoryDB:
             )
         return auth.authorization_id
 
-    @staticmethod
-    def _parse_authorization_expiry(value: str) -> datetime | None:
-        """Return canonical aware UTC expiry, or ``None`` for invalid input."""
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
-            return None
-        return parsed.astimezone(timezone.utc)
+    def get_authorization_for_job(
+        self, review_job_id: str
+    ) -> Optional[MergeAuthorization]:
+        """Fetch the latest unconsumed authorization for a job."""
+        cur = self.conn.execute(
+            """SELECT * FROM merge_authorizations
+               WHERE review_job_id = ? AND consumed_at = ''
+               ORDER BY expires_at DESC LIMIT 1""",
+            (review_job_id,),
+        )
+        row = cur.fetchone()
+        return self._row_to_authorization(row) if row else None
+
+    def consume_authorization(self, authorization_id: str) -> bool:
+        """Mark an authorization as consumed.  Idempotent."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as cur:
+            cur.execute(
+                """UPDATE merge_authorizations
+                   SET consumed_at = ?
+                   WHERE authorization_id = ? AND consumed_at = ''""",
+                (now, authorization_id),
+            )
+            return cur.rowcount > 0
+
+    def claim_authorization_for_merge(
+        self,
+        authorization_id: str,
+        *,
+        review_job_id: str,
+        repository: str,
+        pr_head_commit: str,
+        pr_base_commit: str,
+        candidate_tree: str,
+        expected_merge_tree: str,
+        policy_version: str,
+        now: datetime | None = None,
+    ) -> MergeAuthorization | None:
+        """Atomically consume exact authority and transition the job to merging."""
+        claim_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        claim_time_iso = claim_time.isoformat()
+
+        with self.transaction(immediate=True) as cur:
+            cur.execute(
+                """SELECT * FROM merge_authorizations
+                       WHERE authorization_id = ? AND review_job_id = ?
+                         AND repository = ? AND pr_head_commit = ?
+                         AND pr_base_commit = ? AND candidate_tree = ?
+                         AND expected_merge_tree = ? AND policy_version = ?
+                         AND consumed_at = ''""",
+                (
+                    authorization_id,
+                    review_job_id,
+                    repository,
+                    pr_head_commit,
+                    pr_base_commit,
+                    candidate_tree,
+                    expected_merge_tree,
+                    policy_version,
+                ),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            expiry = self._parse_authorization_expiry(row["expires_at"])
+            if expiry is None or expiry <= claim_time:
+                return None
+
+            cur.execute(
+                """SELECT * FROM review_jobs
+                       WHERE review_job_id = ? AND state = ?
+                         AND repository = ? AND candidate_commit = ?
+                         AND base_commit = ? AND candidate_tree = ?
+                         AND policy_version = ?""",
+                (
+                    review_job_id,
+                    ReviewJobState.MERGE_AUTHORIZED.value,
+                    repository,
+                    pr_head_commit,
+                    pr_base_commit,
+                    candidate_tree,
+                    policy_version,
+                ),
+            )
+            if cur.fetchone() is None:
+                return None
+
+            cur.execute(
+                """UPDATE merge_authorizations SET consumed_at = ?
+                       WHERE authorization_id = ? AND consumed_at = ''""",
+                (claim_time_iso, authorization_id),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError("Atomic merge authorization claim lost")
+            cur.execute(
+                """UPDATE review_jobs
+                       SET state = ?, lease_owner = '', lease_expires_at = ''
+                       WHERE review_job_id = ? AND state = ?""",
+                (
+                    ReviewJobState.MERGING.value,
+                    review_job_id,
+                    ReviewJobState.MERGE_AUTHORIZED.value,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError("Atomic merge state transition lost")
+
+            claimed = self._row_to_authorization(row)
+            claimed.consumed_at = claim_time_iso
+            return claimed
 
     def create_authorization_and_transition(
         self,
@@ -652,7 +883,7 @@ class ReviewFactoryDB:
 
             cur.execute(
                 """SELECT 1 FROM merge_authorizations
-                   WHERE review_job_id = ? AND consumed_at = '' LIMIT 1""",
+                       WHERE review_job_id = ? AND consumed_at = '' LIMIT 1""",
                 (auth.review_job_id,),
             )
             if cur.fetchone() is not None:
@@ -660,13 +891,13 @@ class ReviewFactoryDB:
 
             cur.execute(
                 """INSERT INTO merge_authorizations (
-                    authorization_id, review_job_id,
-                    repository, pr_number,
-                    pr_head_commit, pr_base_commit,
-                    candidate_tree, expected_merge_tree,
-                    policy_version, actor, scope,
-                    expires_at, consumed_at, idempotency_key
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        authorization_id, review_job_id,
+                        repository, pr_number,
+                        pr_head_commit, pr_base_commit,
+                        candidate_tree, expected_merge_tree,
+                        policy_version, actor, scope,
+                        expires_at, consumed_at, idempotency_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     auth.authorization_id,
                     auth.review_job_id,
@@ -686,8 +917,8 @@ class ReviewFactoryDB:
             )
             cur.execute(
                 """UPDATE review_jobs
-                   SET state = ?, lease_owner = '', lease_expires_at = ''
-                   WHERE review_job_id = ? AND state = ?""",
+                       SET state = ?, lease_owner = '', lease_expires_at = ''
+                       WHERE review_job_id = ? AND state = ?""",
                 (
                     ReviewJobState.MERGE_AUTHORIZED.value,
                     auth.review_job_id,
@@ -698,126 +929,16 @@ class ReviewFactoryDB:
                 raise RuntimeError("Atomic authorization state transition lost")
         return True
 
-    def claim_authorization_for_merge(
-        self,
-        authorization_id: str,
-        *,
-        review_job_id: str,
-        repository: str,
-        pr_head_commit: str,
-        pr_base_commit: str,
-        candidate_tree: str,
-        expected_merge_tree: str,
-        policy_version: str,
-        now: datetime | None = None,
-    ) -> MergeAuthorization | None:
-        """Atomically consume exact authority and transition the job to merging."""
-        claim_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        claim_time_iso = claim_time.isoformat()
-
-        with self.transaction(immediate=True) as cur:
-            cur.execute(
-                """SELECT * FROM merge_authorizations
-                   WHERE authorization_id = ? AND review_job_id = ?
-                     AND repository = ? AND pr_head_commit = ?
-                     AND pr_base_commit = ? AND candidate_tree = ?
-                     AND expected_merge_tree = ? AND policy_version = ?
-                     AND consumed_at = ''""",
-                (
-                    authorization_id,
-                    review_job_id,
-                    repository,
-                    pr_head_commit,
-                    pr_base_commit,
-                    candidate_tree,
-                    expected_merge_tree,
-                    policy_version,
-                ),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return None
-            expiry = self._parse_authorization_expiry(row["expires_at"])
-            if expiry is None or expiry <= claim_time:
-                return None
-
-            cur.execute(
-                """SELECT * FROM review_jobs
-                   WHERE review_job_id = ? AND state = ?
-                     AND repository = ? AND candidate_commit = ?
-                     AND base_commit = ? AND candidate_tree = ?
-                     AND policy_version = ?""",
-                (
-                    review_job_id,
-                    ReviewJobState.MERGE_AUTHORIZED.value,
-                    repository,
-                    pr_head_commit,
-                    pr_base_commit,
-                    candidate_tree,
-                    policy_version,
-                ),
-            )
-            if cur.fetchone() is None:
-                return None
-
-            cur.execute(
-                """UPDATE merge_authorizations SET consumed_at = ?
-                   WHERE authorization_id = ? AND consumed_at = ''""",
-                (claim_time_iso, authorization_id),
-            )
-            if cur.rowcount != 1:
-                raise RuntimeError("Atomic merge authorization claim lost")
-            cur.execute(
-                """UPDATE review_jobs
-                   SET state = ?, lease_owner = '', lease_expires_at = ''
-                   WHERE review_job_id = ? AND state = ?""",
-                (
-                    ReviewJobState.MERGING.value,
-                    review_job_id,
-                    ReviewJobState.MERGE_AUTHORIZED.value,
-                ),
-            )
-            if cur.rowcount != 1:
-                raise RuntimeError("Atomic merge state transition lost")
-
-            claimed = self._row_to_authorization(row)
-            claimed.consumed_at = claim_time_iso
-            return claimed
-
-    def get_authorization_for_job(
-        self, review_job_id: str
-    ) -> MergeAuthorization | None:
-        """Fetch the latest unconsumed authorization for a job."""
-        cur = self.conn.execute(
-            """SELECT * FROM merge_authorizations
-               WHERE review_job_id = ? AND consumed_at = ''
-               ORDER BY expires_at DESC LIMIT 1""",
-            (review_job_id,),
-        )
-        row = cur.fetchone()
-        return self._row_to_authorization(row) if row else None
-
-    def consume_authorization(self, authorization_id: str) -> bool:
-        """Mark an authorization as consumed.  Idempotent."""
-        now = datetime.now(timezone.utc).isoformat()
-        with self.transaction() as cur:
-            cur.execute(
-                """UPDATE merge_authorizations
-                   SET consumed_at = ?
-                   WHERE authorization_id = ? AND consumed_at = ''""",
-                (now, authorization_id),
-            )
-            return cur.rowcount > 0
-
     # ── repair_packets CRUD ──────────────────────────────────────────
 
     def insert_repair_packet(self, packet: RepairPacket) -> str:
-        """Insert a repair packet."""
+        """Insert a repair packet.  Returns packet_id."""
         with self.transaction() as cur:
             cur.execute(
                 """INSERT INTO repair_packets (
                     packet_id, review_job_id, candidate_tree, findings_json,
-                    producer_id, consumed_at, resolution_attempt_n, created_at
+                    producer_id, consumed_at, resolution_attempt_n,
+                    created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     packet.packet_id,
@@ -847,7 +968,7 @@ class ReviewFactoryDB:
         review_job_id: str,
         new_candidate_commit: str,
         new_candidate_tree: str = "",
-        new_changed_paths: list[str] | None = None,
+        new_changed_paths: Optional[list[str]] = None,
     ) -> bool:
         """Atomically consume repair packets, invalidate stale evidence, and re-queue job.
 
@@ -918,7 +1039,7 @@ class ReviewFactoryDB:
 
     # ── Janitor / recovery ───────────────────────────────────────────
 
-    def reset_stale_leases(self, now_iso: str | None = None) -> int:
+    def reset_stale_leases(self, now_iso: Optional[str] = None) -> int:
         """Reset jobs with expired leases back to their re-queue state.
 
         - ``verifying`` with expired lease → ``queued``
@@ -987,9 +1108,17 @@ class ReviewFactoryDB:
             state=row["state"],
             required_witnesses=row["required_witnesses"],
             completed_witnesses=row["completed_witnesses"],
+            consecutive_failures=row["consecutive_failures"],
+            repair_attempts=row["repair_attempts"]
+            if "repair_attempts" in row.keys()
+            else 0,
+            repair_last_dispatch_at=row["repair_last_dispatch_at"]
+            if "repair_last_dispatch_at" in row.keys()
+            else "",
             created_at=row["created_at"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
+            manifest_json=row["manifest_json"],
         )
 
     @staticmethod
@@ -1028,6 +1157,20 @@ class ReviewFactoryDB:
         )
 
     @staticmethod
+    @staticmethod
+    def _parse_authorization_expiry(value: str) -> Optional[datetime]:
+        """Return canonical aware UTC expiry, or ``None`` for invalid input."""
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
     def _row_to_authorization(row: sqlite3.Row) -> MergeAuthorization:
         return MergeAuthorization(
             authorization_id=row["authorization_id"],
@@ -1048,10 +1191,9 @@ class ReviewFactoryDB:
 
     @staticmethod
     def _row_to_repair_packet(row: sqlite3.Row) -> RepairPacket:
-        row_keys = row.keys() if hasattr(row, "keys") else []
         return RepairPacket(
             packet_id=row["packet_id"],
-            review_job_id=row["review_job_id"] if "review_job_id" in row_keys else "",
+            review_job_id=row["review_job_id"] if "review_job_id" in row.keys() else "",
             candidate_tree=row["candidate_tree"],
             findings_json=row["findings_json"],
             producer_id=row["producer_id"],
@@ -1066,7 +1208,7 @@ class ReviewFactoryDB:
         action: str,
         review_job_id: str = "",
         client_ip: str = "",
-        details: dict[str, Any] | None = None,
+        details: Optional[dict[str, Any]] = None,
     ) -> str:
         """Record an immutable audit log entry."""
         audit_id = f"audit-{uuid.uuid4().hex[:12]}"
@@ -1103,3 +1245,31 @@ class ReviewFactoryDB:
                 (limit,),
             )
             return [dict(r) for r in cur.fetchall()]
+
+    def find_audit_entry(
+        self, review_job_id: str, action: str
+    ) -> dict[str, Any] | None:
+        """Return the most recent audit entry for a job+action, or None."""
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "SELECT * FROM review_factory_audit_log "
+                "WHERE review_job_id = ? AND action = ? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (review_job_id, action),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def count_audit_entries(self, review_job_id: str, action: str) -> int:
+        """Count audit entries for a job+action.
+
+        Used for bounded loops such as the Phase 3 LLM re-review budget.
+        """
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "SELECT COUNT(*) AS n FROM review_factory_audit_log "
+                "WHERE review_job_id = ? AND action = ?",
+                (review_job_id, action),
+            )
+            row = cur.fetchone()
+            return int(row["n"]) if row else 0

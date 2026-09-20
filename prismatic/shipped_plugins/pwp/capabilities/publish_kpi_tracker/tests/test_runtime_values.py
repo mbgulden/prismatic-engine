@@ -74,7 +74,7 @@ def sites_dir(tmp_path: Path):
 def test_default_sites_dir_resolves_to_canonical():
     """The default sites_dir must end at plugins/pwp/.../publish_kpi_tracker/sites."""
     p = rv.default_sites_dir()
-    assert str(p).endswith("publish_kpi_tracker/sites"), f"unexpected path: {p}"
+    assert p.as_posix().endswith("publish_kpi_tracker/sites"), f"unexpected path: {p}"
     assert p.is_dir(), f"sites dir does not exist: {p}"
 
 

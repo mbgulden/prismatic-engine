@@ -31,15 +31,5 @@
     "expected_dataLayer_events": [],
     "title": "ezshare"
   },
-  "site_slug": "ezshare",
-  "external_sources": {
-    "stripe": {
-      "account_id": "",
-      "key_type": "standard",
-      "registered_at": "2026-07-30T04:34:05.104062+00:00",
-      "validated": true,
-      "currency": "usd",
-      "available_cents": 0
-    }
-  }
+  "site_slug": "ezshare"
 }

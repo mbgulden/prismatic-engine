@@ -41,6 +41,11 @@ skill_info = _mod.skill_info
 install_skill = _mod.install_skill
 uninstall_skill = _mod.uninstall_skill
 create_skill = _mod.create_skill
+get_universal_skills_dirs = _mod.get_universal_skills_dirs
+upload_skill = _mod.upload_skill
+toggle_skill_enabled = _mod.toggle_skill_enabled
+delete_skill = _mod.delete_skill
+get_disabled_skills = _mod.get_disabled_skills
 
 # Subpackages remain first-class attributes of this package (they live on
 # disk under prismatic/skills/<name>/). No extra wiring needed.

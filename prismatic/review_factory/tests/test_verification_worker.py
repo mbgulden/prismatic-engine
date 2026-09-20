@@ -6,6 +6,8 @@ These tests exercise real PE integration by creating
 """
 
 import json
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +18,41 @@ from prismatic.merge_candidate_manifest import (
 )
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
-from prismatic.review_factory.testing import enqueue_with_defaults
 from prismatic.review_factory.verifier import VerificationWorker
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _init_git_repo(path):
+    """Init a real git repo with one commit; return its commit and tree SHAs.
+
+    The strict verifier materializes the candidate via ``git rev-parse`` and
+    ``git archive`` and refuses fabricated SHAs, so the fixture must give the
+    job real commit/tree identity.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-b", "main")
+    git("config", "user.email", "rf-test@example.com")
+    git("config", "user.name", "RF Test")
+    (path / "docs").mkdir(exist_ok=True)
+    (path / "docs" / "readme.md").write_text("# fixture\n")
+    git("add", ".")
+    git("commit", "-m", "fixture base")
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    tree = git("rev-parse", f"{commit}^{{tree}}").stdout.strip()
+    return {"commit": commit, "tree": tree}
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -60,20 +95,33 @@ def _create_tier_b_manifest() -> MergeCandidateManifest:
     )
 
 
-def _create_review_job(queue: ReviewQueue, tier: int = 0) -> str:
-    """Create and return a queued review job ID."""
+def _create_review_job(queue: ReviewQueue, tier: int = 0, git_ids=None) -> str:
+    """Create and return a queued review job ID.
+
+    When ``git_ids`` (from ``_init_git_repo``) is given, the job carries the
+    repo's real commit/tree identity so the strict verifier can materialize
+    the candidate instead of failing closed on fabricated SHAs.
+    """
     paths = {
         0: ["docs/readme.md"],
         1: ["prismatic/core/router.py"],
     }
-    return enqueue_with_defaults(
-        queue,
+    candidate_commit = git_ids["commit"] if git_ids else "b" * 40
+    candidate_tree = git_ids["tree"] if git_ids else "b" * 40
+    return queue.enqueue_completed_work(
         completed_work_id=f"agy-cw-verify-{tier}",
         task_id=f"GRO-VERIFY-{tier}",
-        base_commit="a" * 40,
-        candidate_commit="b" * 40,
+        repository="mbgulden/prismatic-engine",
+        base_commit=git_ids["commit"] if git_ids else "a" * 40,
+        candidate_commit=candidate_commit,
+        candidate_tree=candidate_tree,
         changed_paths=paths.get(tier, ["docs/readme.md"]),
     )
+
+
+@pytest.fixture
+def git_ids(tmp_path):
+    return _init_git_repo(tmp_path)
 
 
 @pytest.fixture
@@ -86,7 +134,7 @@ def queue(tmp_path):
 
 
 @pytest.fixture
-def worker(tmp_path):
+def worker(tmp_path, git_ids):
     return VerificationWorker(
         repo_path=tmp_path,
         log_dir=tmp_path / "logs",
@@ -102,16 +150,16 @@ class TestVerificationWithManifest:
     satisfies the manifest's risk tier and advances it to REVIEW_REQUIRED.
     """
 
-    def test_tier_a_produces_focused_evidence(self, queue, worker):
+    def test_tier_a_produces_focused_evidence(self, queue, worker, git_ids):
         """RiskTier A requires only 'focused' proof class."""
         manifest = _create_tier_a_manifest()
         assert manifest.state == PromotionState.CANDIDATE
 
-        job_id = _create_review_job(queue, tier=0)
+        job_id = _create_review_job(queue, 0, git_ids)
         job = queue.lease_for_verification("verifier-1")
         assert job is not None
 
-        receipt, updated = worker._verify_materialized(job, manifest, "f" * 64)
+        receipt, updated = worker.verify(job, manifest)
 
         # Manifest advanced to REVIEW_REQUIRED
         assert updated.state == PromotionState.REVIEW_REQUIRED
@@ -125,16 +173,16 @@ class TestVerificationWithManifest:
         assert receipt.candidate_commit == job.candidate_commit
         assert receipt.changed_path_invariance_proof != ""
 
-    def test_tier_b_produces_three_evidence_classes(self, queue, worker):
+    def test_tier_b_produces_three_evidence_classes(self, queue, worker, git_ids):
         """RiskTier B requires focused + canonical + package."""
         manifest = _create_tier_b_manifest()
         assert manifest.state == PromotionState.CANDIDATE
 
-        _ = _create_review_job(queue, tier=1)
+        _ = _create_review_job(queue, 1, git_ids)
         job = queue.lease_for_verification("verifier-1")
         assert job is not None
 
-        receipt, updated = worker._verify_materialized(job, manifest, "f" * 64)
+        receipt, updated = worker.verify(job, manifest)
 
         # Manifest advanced
         assert updated.state == PromotionState.REVIEW_REQUIRED
@@ -143,13 +191,13 @@ class TestVerificationWithManifest:
         evidence_classes = {e.proof_class for e in updated.verification_evidence}
         assert evidence_classes == {"focused", "canonical", "package"}
 
-    def test_evidence_has_correct_structure(self, queue, worker):
+    def test_evidence_has_correct_structure(self, queue, worker, git_ids):
         """Each VerificationEvidence has all required fields."""
         manifest = _create_tier_a_manifest()
-        _ = _create_review_job(queue, tier=0)
+        _ = _create_review_job(queue, 0, git_ids)
         job = queue.lease_for_verification("verifier-1")
 
-        receipt, updated = worker._verify_materialized(job, manifest, "f" * 64)
+        receipt, updated = worker.verify(job, manifest)
 
         for evidence in updated.verification_evidence:
             assert evidence.proof_class in (
@@ -168,13 +216,13 @@ class TestVerificationWithManifest:
             assert evidence.log_path != ""
             assert len(evidence.log_sha256) == 64  # SHA-256 hex
 
-    def test_receipt_captures_non_claims(self, queue, worker):
+    def test_receipt_captures_non_claims(self, queue, worker, git_ids):
         """Receipt honestly records what was NOT tested."""
         manifest = _create_tier_a_manifest()
-        _ = _create_review_job(queue, tier=0)
+        _ = _create_review_job(queue, 0, git_ids)
         job = queue.lease_for_verification("verifier-1")
 
-        receipt, _ = worker._verify_materialized(job, manifest, "f" * 64)
+        receipt, _ = worker.verify(job, manifest)
 
         non_claims = json.loads(receipt.explicit_non_claims)
         assert isinstance(non_claims, list)
@@ -182,13 +230,13 @@ class TestVerificationWithManifest:
         # Must mention what wasn't tested
         assert any("not" in c.lower() for c in non_claims)
 
-    def test_invariance_proof_is_deterministic(self, queue, worker):
+    def test_invariance_proof_is_deterministic(self, queue, worker, git_ids):
         """Same changed paths → same invariance proof."""
         manifest = _create_tier_a_manifest()
-        _ = _create_review_job(queue, tier=0)
+        _ = _create_review_job(queue, 0, git_ids)
         job = queue.lease_for_verification("verifier-1")
 
-        receipt1, _ = worker._verify_materialized(job, manifest, "f" * 64)
+        receipt1, _ = worker.verify(job, manifest)
 
         # Create a second run with the same paths
         proof1 = receipt1.changed_path_invariance_proof

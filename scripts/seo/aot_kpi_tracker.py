@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Active Oahu Tours — Weekly KPI Tracking Script
+Managed Site — Weekly KPI Tracking Script
 Runs autonomously via cron. Tracks rankings changes, competitor landscape, and traffic trends.
 Saves to reports directory and outputs a summary for delivery.
 """
@@ -13,7 +13,7 @@ OUTDIR = str(Path(os.environ.get("PRISMATIC_STATE_DIR", REPO_ROOT / "prismatic_s
 os.makedirs(OUTDIR, exist_ok=True)
 
 TS = datetime.now().strftime("%Y%m%d_%H%M%S")
-MY_SITE = "activeoahutours.com"
+MY_SITE = os.environ.get("PRISMATIC_PRIMARY_SITE", "engine.local")
 
 # Previous run data (for comparison)
 PREVIOUS_FILE = f"{OUTDIR}/latest_keywords.json"

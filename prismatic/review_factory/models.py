@@ -23,8 +23,9 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, datetime, timezone
 from typing import Any
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Enums
@@ -44,6 +45,7 @@ class ReviewJobState(enum.Enum):
     REVIEWING = "reviewing"
     REPAIR_REQUIRED = "repair_required"
     REJECTED = "rejected"
+    QUARANTINED = "quarantined"
     MERGE_READY = "merge_ready"
     MERGE_AUTHORIZED = "merge_authorized"
     MERGING = "merging"
@@ -58,19 +60,39 @@ class ReviewJobState(enum.Enum):
         """
         S = ReviewJobState
         return {
-            S.QUEUED.value: [S.VERIFYING.value],
-            S.VERIFYING.value: [S.REVIEW_READY.value, S.QUEUED.value],
-            S.REVIEW_READY.value: [S.REVIEWING.value],
+            S.QUEUED.value: [
+                S.VERIFYING.value,
+                S.QUARANTINED.value,  # poison: too many consecutive failures
+            ],
+            S.VERIFYING.value: [
+                S.REVIEW_READY.value,
+                S.QUEUED.value,
+                S.REPAIR_REQUIRED.value,  # verification checks failed -> producer rework
+                S.QUARANTINED.value,  # poison: too many consecutive failures
+            ],
+            S.REVIEW_READY.value: [
+                S.REVIEWING.value,
+                S.REPAIR_REQUIRED.value,
+                S.QUEUED.value,  # requeue for re-verification (e.g. manifest not persisted)
+                S.QUARANTINED.value,  # poison: too many consecutive failures
+            ],
             S.REVIEWING.value: [
                 S.MERGE_READY.value,
                 S.REPAIR_REQUIRED.value,
                 S.REJECTED.value,
                 S.REVIEW_READY.value,
+                S.QUARANTINED.value,  # poison: too many consecutive failures
             ],
             S.REPAIR_REQUIRED.value: [S.QUEUED.value],
             S.REJECTED.value: [],  # terminal
-            S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value],
-            S.MERGE_AUTHORIZED.value: [S.MERGING.value],
+            S.QUARANTINED.value: [],  # terminal (poison jobs; manual recovery)
+            S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value, S.REPAIR_REQUIRED.value],
+            # A dry-run authorization (or any unused authorization) may be
+            # stood down back to MERGE_READY: the spent auth row is marked
+            # consumed and the audit trail records the outcome. This is the
+            # ONLY way back -- it keeps dry runs repeatable and never
+            # strands a job.
+            S.MERGE_AUTHORIZED.value: [S.MERGING.value, S.MERGE_READY.value],
             S.MERGING.value: [S.MERGED.value, S.MERGE_VERIFICATION_FAILED.value],
             S.MERGED.value: [],  # terminal
             S.MERGE_VERIFICATION_FAILED.value: [],  # terminal (manual recovery)
@@ -186,12 +208,30 @@ class ReviewJob:
     required_witnesses: int = 0
     completed_witnesses: int = 0
 
+    # Consecutive infrastructure-stage failures (daemon poison-job guard).
+    # Persisted on the row so a daemon restart cannot wipe poison memory;
+    # reset to zero on any successful stage completion.
+    consecutive_failures: int = 0
+
+    # Repair dispatch attempts (bounded re-dispatch with backoff).
+    # repair_attempts counts intake dispatches; repair_last_dispatch_at is the
+    # ISO timestamp of the most recent one. Both persist on the row so a
+    # daemon restart cannot lose the retry budget.
+    repair_attempts: int = 0
+    repair_last_dispatch_at: str = ""
+
     # Timestamps
     created_at: str = field(default_factory=_utcnow_iso)
 
     # Lease
     lease_owner: str = ""
     lease_expires_at: str = ""
+
+    # Persisted pipeline manifest (canonical JSON of MergeCandidateManifest).
+    # Written by the verification stage once it reaches REVIEW_REQUIRED and
+    # consumed by the review stage; Phase 4's merge executor binds the CLEAN
+    # manifest from here as well.
+    manifest_json: str = ""
 
     @property
     def changed_paths(self) -> list[str]:
@@ -262,6 +302,32 @@ class VerificationReceipt:
     # Timestamp
     created_at: str = field(default_factory=_utcnow_iso)
 
+    def recompute_provenance_hash(self, repository: str, policy_version: str) -> str:
+        """Recompute the content-addressed provenance record from stored evidence."""
+        cmds = json.loads(self.commands)
+        exits = json.loads(self.exit_codes)
+        logs = json.loads(self.log_sha256)
+        sorted_commands = sorted(cmds)
+        sorted_exits = sorted(f"{k}:{v}" for k, v in exits.items())
+        sorted_logs = sorted(f"{k}:{v}" for k, v in logs.items())
+        archive_id = self.immutable_archive_id
+        if archive_id.startswith("sha256:"):
+            archive_sha = archive_id[7:]
+        else:
+            archive_sha = archive_id
+        parts = [
+            repository,
+            self.candidate_commit,
+            self.candidate_tree,
+            ",".join(sorted_commands),
+            policy_version,
+            ",".join(sorted_exits),
+            f"sha256:{archive_sha}",
+            ",".join(sorted_logs),
+        ]
+        raw = "\0".join(parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Schema 3: review_decisions (§5.3)
@@ -302,8 +368,8 @@ class Finding:
 class ReviewDecision:
     """A reviewer's verdict on a candidate.
 
-    The ``idempotency_key`` is computed automatically from the exact
-    job, reviewer, candidate tree, receipt, and verdict identities.
+    The ``idempotency_key`` is computed automatically from
+    ``reviewer_id``, ``candidate_tree``, and ``verdict``.
     """
 
     decision_id: str = field(default_factory=_new_uuid)
@@ -335,15 +401,8 @@ class ReviewDecision:
             self.idempotency_key = self.compute_idempotency_key()
 
     def compute_idempotency_key(self) -> str:
-        """Bind retry identity to the exact job, artifact, reviewer, and verdict."""
-        fields = (
-            self.review_job_id,
-            self.reviewer_id,
-            self.candidate_tree,
-            self.receipt_id,
-            self.verdict,
-        )
-        raw = "\0".join(fields)
+        """sha256(reviewer_id + candidate_tree + verdict)."""
+        raw = f"{self.reviewer_id}{self.candidate_tree}{self.verdict}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @property
@@ -399,16 +458,18 @@ class MergeAuthorization:
 
     @property
     def is_expired(self) -> bool:
-        """Fail closed unless expiry is a valid aware UTC timestamp in the future."""
+        # Fail closed: any missing, malformed, or non-UTC expiry is expired.
         if not self.expires_at:
             return True
         try:
             exp = datetime.fromisoformat(self.expires_at)
-        except (TypeError, ValueError):
+        except (ValueError, TypeError):
             return True
-        if exp.tzinfo is None or exp.utcoffset() != timedelta(0):
+        if exp.tzinfo is None:
             return True
-        return _utcnow() >= exp.astimezone(timezone.utc)
+        if exp.utcoffset() != timedelta(0):
+            return True
+        return _utcnow() > exp
 
     def consume(self) -> None:
         """Mark this authorization as consumed. Idempotent."""

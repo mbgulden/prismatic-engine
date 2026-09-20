@@ -45,11 +45,12 @@ async function runVisualAudit() {
             await page.waitForTimeout(500);
 
             // Switch to Review Factory tab if available
-            const rfTabBtn = await page.$('button[onclick*="review-factory"]');
-            if (rfTabBtn) {
-                await rfTabBtn.click();
-                await page.waitForTimeout(500);
-            }
+            await page.evaluate(() => {
+                if (typeof switchTab === 'function') {
+                    switchTab('review-factory');
+                }
+            });
+            await page.waitForTimeout(500);
 
             // Assert presence of Review Factory elements
             const sectionRF = await page.$('#section-review-factory');
@@ -89,6 +90,13 @@ async function runVisualAudit() {
             const imgPath = path.join(outDir, `rf_dashboard_${vp.name}.png`);
             await page.screenshot({ path: imgPath, fullPage: false });
             console.log(`Saved screenshot: ${imgPath}`);
+
+            if (process.env.BRAIN_DIR && fs.existsSync(process.env.BRAIN_DIR)) {
+                const brainImg = path.join(process.env.BRAIN_DIR, `rf_dashboard_${vp.name}.png`);
+                fs.copyFileSync(imgPath, brainImg);
+                console.log(`Copied screenshot to brain dir: ${brainImg}`);
+            }
+
         } catch (err) {
             console.error(`Audit failed for ${vp.name}: ${err.message}`);
         } finally {

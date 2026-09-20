@@ -281,8 +281,10 @@ class PolicyEngine:
             for rule in self.rules:
                 if rule.matches(path):
                     path_matched = True
-                    max_tier = max(max_tier, rule.risk_tier)
-                    max_witnesses = max(max_witnesses, rule.required_witnesses)
+                    if rule.risk_tier > max_tier:
+                        max_tier = rule.risk_tier
+                    if rule.required_witnesses > max_witnesses:
+                        max_witnesses = rule.required_witnesses
                     if rule.rule_id not in matched_rules:
                         matched_rules.append(rule.rule_id)
 

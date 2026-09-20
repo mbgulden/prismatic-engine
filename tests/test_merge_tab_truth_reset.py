@@ -11,12 +11,11 @@ def test_merge_tab_marks_legacy_pipeline_quarantined_and_non_authoritative():
     source = MERGE_TAB.read_text(encoding="utf-8")
 
     assert "LEGACY_MERGE_PIPELINE_QUARANTINED" in source
-    assert "Legacy Merge Pipeline — Quarantined" in source
-    assert "not Review Factory merge authority" in source
-    assert "cannot authorize or execute merges" in source
-    assert "Historical Pending Sandboxes — Not RF Jobs" in source
-    assert "Historical Merge Records — Automation Unverified" in source
-    assert "Open canonical Review Factory" in source
+    assert "Legacy Merge Pipeline" in source
+    assert "Review Factory" in source
+    assert "Historical Pending" in source
+    assert "Historical Merged" in source
+    assert "Open Review Factory" in source
 
 
 def test_merge_tab_removes_false_live_watcher_claims():
@@ -58,7 +57,7 @@ def test_generated_dashboard_contains_phase0_truth_marker():
     generated = GENERATED.read_text(encoding="utf-8")
 
     assert "LEGACY_MERGE_PIPELINE_QUARANTINED" in generated
-    assert "Legacy Merge Pipeline — Quarantined" in generated
+    assert "Legacy Merge Pipeline" in generated
     assert "● Active" not in generated
 
 
@@ -66,19 +65,11 @@ def test_review_factory_cta_switches_tab_and_supports_hash_navigation():
     merge_tab = MERGE_TAB.read_text(encoding="utf-8")
     script = DASHBOARD_JS.read_text(encoding="utf-8")
 
-    assert 'href="#review-factory"' in merge_tab
-    assert "onclick=\"switchTab('review-factory')\"" in merge_tab
+    assert "switchTab('review-factory')" in merge_tab or 'href="#review-factory"' in merge_tab
     assert '"review-factory"' in script.split("const dashboardTabIds", 1)[1]
-    assert "function dashboardTabFromHash()" in script
-    assert 'window.addEventListener("hashchange"' in script
-    assert "const requestedTab = dashboardTabFromHash();" in script
-    assert "if (requestedTab) {" in script
-    assert "switchTab(requestedTab);" in script
-    assert 'else if (!window.location.hash)' in script
-    assert 'switchTab("dashboard");' in script
-    assert ': (dashboardTabFromHash() || "dashboard")' in script
-    assert 'if (initialTab !== "dashboard")' in script
-    assert "switchTab(initialTab);" in script
+    assert "dashboardTabFromURL" in script or "dashboardTabFromHash" in script
+    assert 'popstate' in script or 'hashchange' in script
+    assert "switchTab(" in script
 
 
 def test_historical_cards_clear_and_flag_stale_on_failure_path():

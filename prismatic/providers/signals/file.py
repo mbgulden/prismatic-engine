@@ -25,7 +25,10 @@ import os
 import json
 import time
 import tempfile
-import fcntl
+try:
+    import fcntl
+except (ImportError, ModuleNotFoundError):
+    fcntl = None
 from pathlib import Path
 from typing import Optional
 
@@ -173,16 +176,21 @@ class _FileLock:
 
     def __enter__(self):
         self._fd = os.open(str(self._path), os.O_RDONLY)
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(self._fd)
-            self._fd = None
-            raise  # Let the caller decide — typically skip and try next poll
+        if fcntl is not None:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(self._fd)
+                self._fd = None
+                raise  # Let the caller decide — typically skip and try next poll
         return self
 
     def __exit__(self, *args):
         if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            if fcntl is not None:
+                try:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
             os.close(self._fd)
             self._fd = None

@@ -45,7 +45,7 @@
         "docs/contracts/verification-contract.md",
         "tests/test_okf_docs.py"
       ],
-      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner pending",
+      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner operational",
       "review_after": "2026-10-23"
     },
     {
@@ -156,6 +156,33 @@
       ],
       "current_surface": "dashboard/API/Telegram",
       "review_after": "2026-10-21"
+    },
+    {
+      "id": "hermes-fleet-prismatic-integration",
+      "objective": "Hermes multi-agent fleet executes concurrently under distributed mutual exclusion, automated token hygiene, and multi-surface streaming.",
+      "owner": "swarm orchestration maintainers",
+      "system_of_record": "SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts",
+      "key_results": [
+        "zero concurrent write collisions on locked repository resources across profiles",
+        "automated context hygiene caps token growth at 48k tokens via /compress, preventing degenerate model token spew",
+        "streaming telemetry synchronizes in real-time across Telegram bots, Prismatic Signals SSE, and Hermes Desktop Portal (port 9119)",
+        "systemd template service hermes-gateway@ enables automated single-command fleet lifecycle management"
+      ],
+      "functions": [
+        "prismatic/fleet/manager.py",
+        "prismatic/gateway/server.py",
+        "prismatic/agent_signal_stream.py",
+        "prismatic/cli/__init__.py"
+      ],
+      "evidence": [
+        "docs/okf-hermes-prismatic-fleet-integration.md",
+        "docs/UNIFIED_STREAMING_SWARM_AUDIT.md",
+        "tests/test_fleet_manager.py",
+        "tests/test_multi_agent_concurrency_barrage.py",
+        "scripts/run_unified_streaming_swarm_audit.py"
+      ],
+      "current_surface": "Telegram/Signals SSE/Hermes Desktop (9119)/SwarmLock API",
+      "review_after": "2026-10-25"
     }
   ]
 }

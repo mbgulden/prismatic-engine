@@ -14,7 +14,14 @@ on:
 
 jobs:
   post-merge-deploy:
-    runs-on: ubuntu-latest
+    # Self-hosted webtop-hermes runner (free minutes; GitHub-hosted
+    # minutes are blocked by the account billing state).
+    # NOTE: on the runner, the curl below reaches localhost:9460 on
+    # webtop-hermes, where the real deploy receiver (pe.deploy.receiver)
+    # listens -- a correctly-signed POST triggers the actual post-merge
+    # deploy pipeline. On GitHub-hosted runners this was a silent
+    # no-op because nothing listened on the runner's localhost.
+    runs-on: [self-hosted, linux, x64]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -36,7 +43,7 @@ jobs:
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
           # Construct JSON payload
-          PAYLOAD_JSON=$(jq -n \
+          PAYLOAD_JSON=$(jq -c -n \
             --arg sha "$PR_SHA" \
             --arg title "$COMMIT_MSG" \
             --arg deployer "${{ github.actor }}" \
@@ -56,9 +63,15 @@ jobs:
         run: |
           HOST="${RECEIVER_HOST:-localhost}"
           echo "Triggering deploy receiver at http://${HOST}:9460/deploy"
-          curl -s -f -X POST \
+          # The receiver answers 2xx only when the deploy (including the real
+          # gateway redeploy + rollback-on-failure) actually succeeded. Any
+          # failure must turn this run RED -- never swallow it into green.
+          if ! curl -s -f -X POST \
             -H "X-Hub-Signature-256: sha256=${HMAC_SIG}" \
             -H "Content-Type: application/json" \
             --data "${PAYLOAD_JSON}" \
-            "http://${HOST}:9460/deploy" || echo "Receiver call completed or offline"
+            "http://${HOST}:9460/deploy"; then
+            echo "::error::Deploy receiver call failed -- the gateway was NOT redeployed. Check the receiver log at ~/.prismatic/logs/deploy-receiver.log"
+            exit 1
+          fi
 

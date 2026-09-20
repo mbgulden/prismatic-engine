@@ -12,6 +12,7 @@ Covers the runtime enforcement path used by completed-work ingestion:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -361,7 +362,7 @@ def test_fixture_harness_iterates_flat_files():
     )
     proc = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(validator_script),
             str(EXAMPLES_DIR),
             "--test-fixtures",
@@ -459,7 +460,7 @@ def test_dual_artifact_validator_runs_from_cli(monkeypatch: pytest.MonkeyPatch):
     )
     proc = subprocess.run(
         [
-            "python",
+            sys.executable,
             str(validator_script),
             str(EXAMPLES_DIR),
             "--test-fixtures",

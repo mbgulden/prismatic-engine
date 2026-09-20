@@ -4,7 +4,10 @@ import hashlib
 import importlib.util
 import json
 import os
-import pwd
+try:
+    import pwd
+except ImportError:
+    pwd = None
 import sqlite3
 import subprocess
 import sys
@@ -435,7 +438,12 @@ def test_result_boundary_captures_before_strict_raw_packet_acceptance(tmp_path):
     # Raw AGY and normalized completed-work are intentionally distinct dialects.
     assert boundary["normalization_status"] == "rejected_rerun_required"
     assert boundary["canonical_packet_id"] is None
-    assert boundary["queue_rejection_reason"] == "missing packet fields: source_path"
+    # The fixture declares risk_level/next_action needing human review, so the
+    # fail-closed lane logic appends the manual-review reason to the rejection.
+    assert boundary["queue_rejection_reason"] == (
+        "missing packet fields: source_path"
+        "; raw AGY risk/next_action requires manual review"
+    )
     assert boundary["queue_repair_hint"] == "missing_source_path"
     assert boundary["completed_work_persisted"] is True
     assert boundary["completed_work_id"].startswith("agy-cw-")

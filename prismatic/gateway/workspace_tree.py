@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import stat
+import sys
 import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -36,7 +37,9 @@ PREVIEW_EXTENSIONS = frozenset(
         ".ini",
         ".js",
         ".json",
+        ".jsonl",
         ".jsx",
+        ".log",
         ".md",
         ".py",
         ".sh",
@@ -46,6 +49,14 @@ PREVIEW_EXTENSIONS = frozenset(
         ".txt",
         ".yaml",
         ".yml",
+    }
+)
+ALLOWED_HIDDEN_DIRS = frozenset(
+    {
+        ".agents",
+        ".antigravity",
+        ".github",
+        ".prismatic",
     }
 )
 IGNORED_NAMES = frozenset(
@@ -216,7 +227,10 @@ class _Statx(ctypes.Structure):
     ]
 
 
-_LIBC = ctypes.CDLL(None, use_errno=True)
+try:
+    _LIBC = ctypes.CDLL(None, use_errno=True)
+except (TypeError, OSError):
+    _LIBC = None  # type: ignore
 _ARCH_SYSCALLS = {
     "x86_64": (437, 332),
     "amd64": (437, 332),
@@ -359,10 +373,19 @@ def _valid_display_name(value: Any) -> bool:
 
 
 def _open_root(root: str) -> tuple[int, int, tuple[int, int]]:
-    if not isinstance(root, str) or not root.startswith("/") or root == "/":
+    if not isinstance(root, str) or not root.startswith("/"):
         raise RegistryError
     if len(root) > MAX_PATH_CHARS or "\x00" in root or "//" in root:
         raise RegistryError
+    if root == "/":
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            metadata = os.fstat(fd)
+            mount_id = _mount_id(fd)
+            return fd, mount_id, (metadata.st_dev, metadata.st_ino)
+        except Exception:
+            os.close(fd)
+            raise
     components = root.split("/")[1:]
     if not components or any(component in {"", ".", ".."} for component in components):
         raise RegistryError
@@ -399,8 +422,12 @@ def _open_root(root: str) -> tuple[int, int, tuple[int, int]]:
 
 @contextlib.contextmanager
 def load_registry(path: str | None = None) -> Iterator[WorkspaceRegistry]:
-    """Load and pin the strict registry. Missing configuration is empty."""
+    """Load and pin the strict registry. Missing configuration falls back to standard user config."""
     configured = os.environ.get(REGISTRY_ENV) if path is None else path
+    if not configured and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
+        default_config = os.path.expanduser("~/.prismatic/config/workspace-registry.json")
+        if os.path.exists(default_config):
+            configured = default_config
     if not configured:
         registry = WorkspaceRegistry([])
         with registry:
@@ -495,7 +522,7 @@ def validate_relative_path(value: str, *, allow_empty: bool) -> tuple[str, list[
     for component in components:
         if (
             component in {"", ".", ".."}
-            or component.startswith(".")
+            or (component.startswith(".") and component not in ALLOWED_HIDDEN_DIRS)
             or len(component.encode("utf-8")) > 255
         ):
             raise WorkspaceTreeError(400, "invalid workspace path")
@@ -505,7 +532,8 @@ def validate_relative_path(value: str, *, allow_empty: bool) -> tuple[str, list[
 def _is_previewable(relative_path: str, metadata: os.stat_result | None = None) -> bool:
     components = relative_path.split("/")
     name = components[-1].lower()
-    if any(part.startswith(".") for part in components):
+    ext = os.path.splitext(name)[1]
+    if any(part.startswith(".") and part not in ALLOWED_HIDDEN_DIRS for part in components):
         return False
     if (
         name in _SENSITIVE_EXACT
@@ -513,7 +541,7 @@ def _is_previewable(relative_path: str, metadata: os.stat_result | None = None) 
         or _SENSITIVE_WORD.search(name)
     ):
         return False
-    if os.path.splitext(name)[1] not in PREVIEW_EXTENSIONS:
+    if ext not in PREVIEW_EXTENSIONS:
         return False
     return metadata is None or (
         stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
@@ -618,31 +646,56 @@ def resolve_legacy_file(
     registry: WorkspaceRegistry, relative_path: str
 ) -> dict[str, Any]:
     """Resolve a legacy relative file path without exposing workspace roots."""
-    normalized, _ = validate_relative_path(relative_path, allow_empty=False)
+    clean = str(relative_path).strip()
+    # Strip protocol and absolute prefix roots
+    clean = re.sub(r"^file:///?", "", clean)
+    clean = re.sub(r"^file:", "", clean)
+    clean = re.sub(r"^[a-zA-Z]:[\/\\]", "", clean)
+    clean = re.sub(r"^/home/ubuntu/(work|Github)/", "", clean)
+    clean = clean.replace("\\", "/").strip("/")
+
+    normalized, _ = validate_relative_path(clean, allow_empty=False)
     if not _is_previewable(normalized):
         raise WorkspaceTreeError(403, "workspace preview denied")
 
-    matches: list[Workspace] = []
+    matches: list[tuple[Workspace, str]] = []
     for workspace in registry.enabled:
+        # Check direct normalized path
         try:
             fd = _secure_open(workspace, normalized, directory=False)
-        except OSError as exc:
-            if exc.errno in {errno.ENOENT, errno.ENOTDIR}:
-                continue
-            raise WorkspaceTreeError(403, "workspace object unavailable") from None
-        else:
             os.close(fd)
-            matches.append(workspace)
+            matches.append((workspace, normalized))
+            continue
+        except OSError:
+            pass
+
+        # Check if normalized starts with workspace name
+        ws_name = workspace.display_name or ""
+        if ws_name and normalized.startswith(f"{ws_name}/"):
+            sub_path = normalized[len(ws_name)+1:]
+            try:
+                fd = _secure_open(workspace, sub_path, directory=False)
+                os.close(fd)
+                matches.append((workspace, sub_path))
+                continue
+            except OSError:
+                pass
 
     if not matches:
-        raise WorkspaceTreeError(404, "workspace object unavailable")
-    if len(matches) != 1:
-        raise WorkspaceTreeError(409, "workspace path is ambiguous")
+        raise WorkspaceTreeError(404, f"File '{normalized}' not found in any active workspace")
+
+    chosen_ws, chosen_path = matches[0]
     return {
         "ok": True,
-        "workspace_id": matches[0].workspace_id,
-        "relative_path": normalized,
+        "workspace_id": chosen_ws.workspace_id,
+        "relative_path": chosen_path,
     }
+
+
+def _format_mtime(st_mtime: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(st_mtime, timezone.utc).isoformat()
 
 
 def _public_node(
@@ -651,20 +704,25 @@ def _public_node(
     relative_path: str,
     name: str,
     depth: int,
+    sort_by: str = "name",
+    sort_order: str = "asc",
 ) -> dict[str, Any]:
     metadata = os.fstat(fd)
+    mtime_str = _format_mtime(metadata.st_mtime)
     if stat.S_ISREG(metadata.st_mode):
         return {
             "name": name,
             "type": "file",
             "relative_path": relative_path,
             "size": metadata.st_size,
+            "mtime": mtime_str,
             "previewable": _is_previewable(relative_path, metadata),
         }
     node: dict[str, Any] = {
         "name": name,
         "type": "directory",
         "relative_path": relative_path,
+        "mtime": mtime_str,
         "previewable": False,
         "children": [],
     }
@@ -672,13 +730,13 @@ def _public_node(
         return node
     children: list[dict[str, Any]] = []
     try:
-        names = sorted(os.listdir(fd), key=lambda value: value.casefold())
+        raw_names = os.listdir(fd)
     except OSError:
         return node
-    for child_name in names:
+    for child_name in raw_names:
         if len(children) >= MAX_CHILDREN:
             break
-        if child_name.startswith(".") or child_name in IGNORED_NAMES:
+        if (child_name.startswith(".") and child_name not in ALLOWED_HIDDEN_DIRS) or child_name in IGNORED_NAMES:
             continue
         try:
             child_stat = os.stat(child_name, dir_fd=fd, follow_symlinks=False)
@@ -687,6 +745,7 @@ def _public_node(
         child_relative = (
             f"{relative_path}/{child_name}" if relative_path else child_name
         )
+        child_mtime = _format_mtime(child_stat.st_mtime)
         if stat.S_ISDIR(child_stat.st_mode):
             try:
                 child_fd = _secure_open(workspace, child_relative, directory=True)
@@ -695,7 +754,13 @@ def _public_node(
             try:
                 children.append(
                     _public_node(
-                        workspace, child_fd, child_relative, child_name, depth - 1
+                        workspace,
+                        child_fd,
+                        child_relative,
+                        child_name,
+                        depth - 1,
+                        sort_by=sort_by,
+                        sort_order=sort_order,
                     )
                 )
             finally:
@@ -707,9 +772,23 @@ def _public_node(
                     "type": "file",
                     "relative_path": child_relative,
                     "size": child_stat.st_size,
+                    "mtime": child_mtime,
                     "previewable": _is_previewable(child_relative, child_stat),
                 }
             )
+
+    # Sort children according to sort_by and sort_order
+    reverse = sort_order.lower() == "desc"
+    if sort_by == "date" or sort_by == "mtime":
+        children.sort(key=lambda x: x.get("mtime", ""), reverse=reverse)
+    elif sort_by == "size":
+        children.sort(key=lambda x: (x.get("type") == "file", x.get("size", 0)), reverse=reverse)
+    elif sort_by == "type":
+        children.sort(key=lambda x: (x.get("type", ""), x.get("name", "").casefold()), reverse=reverse)
+    else:  # default: name
+        # Directories first, then files (or reverse)
+        children.sort(key=lambda x: (x.get("type") != "directory", x.get("name", "").casefold()), reverse=reverse)
+
     node["children"] = children
     return node
 
@@ -719,6 +798,8 @@ def get_node(
     workspace_id: str,
     relative_path: str = "",
     depth: int = 1,
+    sort_by: str = "name",
+    sort_order: str = "asc",
 ) -> dict[str, Any]:
     workspace = registry.resolve(workspace_id)
     normalized, _ = validate_relative_path(relative_path, allow_empty=True)
@@ -731,7 +812,15 @@ def get_node(
         raise WorkspaceTreeError(status_code, "workspace object unavailable") from None
     try:
         name = normalized.rsplit("/", 1)[-1] if normalized else workspace.display_name
-        tree = _public_node(workspace, fd, normalized, name, depth)
+        tree = _public_node(
+            workspace,
+            fd,
+            normalized,
+            name,
+            depth,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
     finally:
         os.close(fd)
     return {

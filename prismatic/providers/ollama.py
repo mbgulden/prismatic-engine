@@ -117,6 +117,67 @@ class OllamaClient:
             return res["models"]
         return None
 
+    def model_available(self, model_name: str) -> bool:
+        """Return True when *model_name* is listed by /api/tags.
+
+        Matches the exact name, or the name without a registry tag suffix
+        (e.g. "ned-q8" matches "ned-q8:latest").
+        """
+        models = self.get_available_models()
+        if not models:
+            return False
+        want = (model_name or "").strip()
+        if not want:
+            return False
+        for entry in models:
+            name = str(entry.get("name") or entry.get("model") or "")
+            if name == want or name.split(":")[0] == want.split(":")[0]:
+                return True
+        return False
+
+    def chat(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        format: str | None = None,
+        options: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Send a chat completion request (POST /api/chat, non-streaming).
+
+        Args:
+            model: Model name on the Ollama host. Never hardcoded here --
+                callers supply it from configuration (e.g. the Phase 3
+                LLM deep-review stage reads it from env).
+            messages: Chat messages, e.g. [{"role": "system", ...},
+                {"role": "user", ...}].
+            format: Pass "json" to request JSON-mode output.
+            options: Extra Ollama options (e.g. {"temperature": 0.1}).
+            timeout: Per-call timeout in seconds. Falls back to the client
+                default when None. Deep-review calls can take minutes.
+
+        Returns:
+            Parsed JSON response dict, or None if the call failed.
+        """
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+        }
+        if format is not None:
+            payload["format"] = format
+        if options:
+            payload["options"] = options
+        if timeout is not None:
+            previous_timeout = self.timeout
+            self.timeout = timeout
+            try:
+                return self._request("/api/chat", "POST", payload)
+            finally:
+                self.timeout = previous_timeout
+        return self._request("/api/chat", "POST", payload)
+
     def get_active_models(self) -> list[dict[str, Any]] | None:
         """List all models currently loaded in memory/VRAM (GET /api/ps).
 
@@ -362,3 +423,18 @@ def make_routing_decision(
 ) -> dict[str, Any]:
     """Make a real-time routing decision for loading or calling a model."""
     return OllamaClient(base_url, timeout).make_routing_decision(model_name, required_vram_bytes, total_vram_bytes)
+
+
+def chat(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    format: str | None = None,
+    options: dict[str, Any] | None = None,
+    base_url: str = "http://localhost:11434",
+    timeout: float = 180.0,
+) -> dict[str, Any] | None:
+    """Send a chat completion request (POST /api/chat, non-streaming)."""
+    return OllamaClient(base_url, timeout).chat(
+        model, messages, format=format, options=options, timeout=timeout
+    )

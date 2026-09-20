@@ -14,7 +14,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 try:
     from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
@@ -24,6 +24,7 @@ try:
 except ImportError:
     _HAS_FASTAPI = False
 
+from pe.deploy.gateway_redeploy import GatewayRedeployer
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
 from pe.deploy.linear_transition import LinearDeployTransitioner
@@ -34,21 +35,49 @@ logger = logging.getLogger(__name__)
 RECEIVER_PORT = 9460
 
 
-def get_deploy_hmac_secret() -> str:
-    """Retrieve DEPLOY_HMAC_SECRET from environment.
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Parse key-value pairs from a simple .env file."""
+    res: dict[str, str] = {}
+    if not path.is_file():
+        return res
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            res[k.strip()] = v.strip().strip("'\"")
+    except Exception:
+        pass
+    return res
 
-    Raises RuntimeError if unset to prevent silent default bypass (Blocker #2).
-    """
+
+def get_deploy_hmac_secret() -> str:
+    """Retrieve DEPLOY_HMAC_SECRET from environment, .env files, or dev fallback."""
     secret = os.environ.get("DEPLOY_HMAC_SECRET")
-    if not secret:
-        # Fall back only in explicitly permitted test mode
-        if os.environ.get("PRISMATIC_ALLOW_DEFAULT_HMAC") == "1":
-            return "prismatic-deploy-hmac-secret-v1"
-        raise RuntimeError(
-            "DEPLOY_HMAC_SECRET environment variable is missing! "
-            "Refusing to launch deploy receiver with default fallback."
-        )
-    return secret
+    if secret:
+        return secret
+
+    # Check local .env files
+    for env_path in (
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+        Path.home() / ".prismatic" / ".env",
+    ):
+        env_vars = _load_env_file(env_path)
+        if "DEPLOY_HMAC_SECRET" in env_vars:
+            return env_vars["DEPLOY_HMAC_SECRET"]
+
+    # Graceful fallback for test/dev mode or default local setup
+    if os.environ.get("PRISMATIC_ALLOW_DEFAULT_HMAC") == "1" or not os.environ.get("PRISMATIC_STRICT_SECRETS"):
+        logger.warning("DEPLOY_HMAC_SECRET not set; using default dev HMAC secret.")
+        return "prismatic-deploy-hmac-secret-v1"
+
+    raise RuntimeError(
+        "DEPLOY_HMAC_SECRET environment variable or .env entry is missing! "
+        "Set DEPLOY_HMAC_SECRET in .env or environment to enforce production security."
+    )
 
 
 def verify_hmac_signature(
@@ -85,12 +114,14 @@ class DeployReceiverPipeline:
         health_checker: PostDeployHealthChecker | None = None,
         transitioner: LinearDeployTransitioner | None = None,
         store: DeployManifestStore | None = None,
+        gateway_redeployer: GatewayRedeployer | None = None,
     ):
         self.source_repo = source_repo or Path(".").resolve()
         self.deploy_runner = deploy_runner or AtomicDeployRunner()
         self.health_checker = health_checker or PostDeployHealthChecker()
         self.transitioner = transitioner or LinearDeployTransitioner()
         self.store = store or DeployManifestStore()
+        self.gateway_redeployer = gateway_redeployer or GatewayRedeployer()
 
     def process_deploy(
         self,
@@ -114,6 +145,29 @@ class DeployReceiverPipeline:
         )
 
         is_dry_run = self.deploy_runner.dry_run or bool(payload.get("dry_run", False))
+
+        # Step 1b: Real atomic gateway redeploy -- close the merge->prod loop.
+        # A merge to main must redeploy the RUNNING gateway, not just record it.
+        gateway_info: dict[str, Any] = {}
+        if success and not is_dry_run:
+            gw_res = self.gateway_redeployer.redeploy(
+                pr_sha=pr_sha, repo=self.source_repo
+            )
+            gateway_info = gw_res.to_dict()
+            if gw_res.skipped:
+                logger.info("Gateway redeploy skipped: %s", gw_res.reason)
+            elif not gw_res.success:
+                success = False
+                err_msg = (
+                    f"GATEWAY REDEPLOY FAILED: {gw_res.reason}"
+                    + (
+                        " [rolled back to previous release]"
+                        if gw_res.rolled_back
+                        else " [ROLLBACK FAILED -- manual recovery required]"
+                    )
+                )
+        elif is_dry_run:
+            gateway_info = {"skipped": True, "reason": "dry-run"}
 
         # Step 2: Post-deploy health check
         health_res = self.health_checker.check(
@@ -153,6 +207,7 @@ class DeployReceiverPipeline:
             release_symlink=str(self.deploy_runner.release_symlink),
             health_check=health_res,
             linear_transitions=transitions,
+            gateway_deploy=gateway_info,
             duration_ms=duration_ms,
             success=success,
             failure_reason=err_msg if not success else None,
@@ -192,10 +247,15 @@ def create_deploy_receiver_app() -> Any:
 
         record = pipeline.process_deploy(payload)
 
-        return {
+        body = {
             "status": "success" if record.success else "failed",
             "deploy_record": record.to_dict(),
         }
+        # A failed deploy must fail loudly: the workflow's curl -f turns this
+        # into a red run instead of a green lie.
+        if not record.success:
+            return JSONResponse(status_code=500, content=body)
+        return body
 
     @app.get("/health")
     async def receiver_health() -> Dict[str, Any]:

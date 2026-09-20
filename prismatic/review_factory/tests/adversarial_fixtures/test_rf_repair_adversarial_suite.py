@@ -1,7 +1,9 @@
 """Adversarial test suite enforcing all 12 RF-1/RF-2/RF-3/RF-4/RF-5 repair packet security invariants."""
 
+from datetime import datetime, timedelta, timezone
+
+from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
 from prismatic.review_factory.db import ReviewFactoryDB
-from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
     MergeAuthorization,
     ReviewDecision,
@@ -9,6 +11,7 @@ from prismatic.review_factory.models import (
     ReviewVerdict,
     VerificationReceipt,
 )
+from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.testing import enqueue_with_defaults
 from prismatic.review_factory.verifier import VerificationWorker
@@ -100,10 +103,10 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(
-        q,
+    job_id = q.enqueue_completed_work(
         completed_work_id="cw-dryrun-1",
         task_id="GRO-DRYRUN-1",
+        repository="mbgulden/prismatic-engine",
         base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
@@ -129,7 +132,8 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
         reviewer_id="r1",
     )
 
-    # Authorize merge explicitly
+    # Authorize merge explicitly (strict: tier-0 auto-merges require the
+    # standing-policy actor, not a bare human name)
     auth_id = q.authorize_merge(job_id, actor="standing-policy: tier-0")
     assert auth_id is not None
 
@@ -137,9 +141,23 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     assert job_before.state == ReviewJobState.MERGE_AUTHORIZED.value
 
     # Execute with dry_run=True
+    manifest = MergeCandidateManifest.create(
+        issue_id="GRO-DRYRUN-1",
+        task_id="GRO-DRYRUN-1",
+        task_file_sha256="a" * 64,
+        repository="mbgulden/prismatic-engine",
+        target="main",
+        base_sha="a" * 40,
+        candidate_sha="b" * 40,
+        changed_paths=["docs/readme.md"],
+        producer="agy",
+        preserved_candidate_location="/tmp/dryrun",
+        risk_tier=RiskTier.A,
+        dashboard_change=False,
+        required_ci_checks=["rf-v1-verification"],
+    )
     executor = MergeExecutor(queue=q, dry_run=True)
-    # RF-R2: don't pass manifest=; executor loads from durable path.
-    res = executor.execute(job_id)
+    res = executor.execute(job_id, manifest=manifest)
     assert res.success is True
     assert res.merge_sha == "dry-run-sha"
 
@@ -156,10 +174,10 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(
-        q,
+    job_id = q.enqueue_completed_work(
         completed_work_id="cw-mismatch-1",
         task_id="GRO-MISMATCH-1",
+        repository="mbgulden/prismatic-engine",
         base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
@@ -185,7 +203,9 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
         reviewer_id="r1",
     )
 
-    # Insert malicious authorization with wrong candidate_tree
+    # Insert malicious authorization with wrong candidate_tree. It must carry a
+    # valid (non-expired, UTC) expires_at so the fail-closed expiry check does
+    # not mask the binding check this test exercises.
     bad_auth = MergeAuthorization(
         review_job_id=job_id,
         repository="mbgulden/prismatic-engine",
@@ -194,7 +214,7 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
         candidate_tree="wrong-tree-sha",
         expected_merge_tree="wrong-tree-sha",
         actor="hacker",
-        expires_at="2999-01-01T00:00:00+00:00",
+        expires_at=(datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
     )
     db.insert_authorization(bad_auth)
 
@@ -211,10 +231,10 @@ def test_authorize_merge_rejects_missing_actor(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(
-        q,
+    job_id = q.enqueue_completed_work(
         completed_work_id="cw-actor-1",
         task_id="GRO-ACTOR-1",
+        repository="mbgulden/prismatic-engine",
         base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],

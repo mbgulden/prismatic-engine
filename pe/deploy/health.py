@@ -17,9 +17,12 @@ class PostDeployHealthChecker:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000",
+        base_url: str | None = None,
         timeout_seconds: int = 5,
     ):
+        if base_url is None:
+            port = os.environ.get("PRISMATIC_PORT", "9000")
+            base_url = f"http://localhost:{port}"
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
@@ -65,8 +68,8 @@ class PostDeployHealthChecker:
 
         # 3. HTTP endpoint checks (graceful if server not running during offline unit tests)
         endpoints = [
-            ("/", "root_dashboard"),
-            ("/api/v1/credits/policy", "api_credits_policy"),
+            ("/health", "gateway_health"),
+            ("/api/skills", "gateway_skills"),
         ]
 
         for path, name in endpoints:

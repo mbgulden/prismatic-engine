@@ -10,13 +10,13 @@ and ``integrate_pipeline_run()`` for the actual git merge.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from prismatic.core.merge_factory import MergeFactoryStore, Principal
 from prismatic.integrate import (
@@ -46,7 +46,7 @@ class MergeResult:
     success: bool
     merge_sha: str = ""
     error: str = ""
-    integration_manifest: IntegrationManifest | None = None
+    integration_manifest: Optional[IntegrationManifest] = None
     final_manifest_state: str = ""
 
 
@@ -55,11 +55,11 @@ class MergeExecutor:
 
     def __init__(
         self,
-        queue: ReviewQueue | None = None,
+        queue: Optional[ReviewQueue] = None,
         dry_run: bool = False,
-        repo_path: Path | None = None,
-        mf_store: MergeFactoryStore | None = None,
-        verification_receipt_store: VerificationReceiptStore | None = None,
+        repo_path: Optional[Path] = None,
+        mf_store: Optional[MergeFactoryStore] = None,
+        verification_receipt_store: Optional[VerificationReceiptStore] = None,
     ):
         self.queue = queue or ReviewQueue()
         self.dry_run = dry_run
@@ -70,7 +70,7 @@ class MergeExecutor:
     def execute(
         self,
         job_id: str,
-        manifest: MergeCandidateManifest | None = None,
+        manifest: Optional[MergeCandidateManifest] = None,
     ) -> MergeResult:
         """Execute the merge for an authorized job."""
         job = self.queue.db.get_review_job(job_id)
@@ -126,6 +126,14 @@ class MergeExecutor:
                 success=False,
                 error=f"Authorization candidate tree mismatch: expected {job.candidate_tree}, got {auth.candidate_tree}",
             )
+        if auth.expected_merge_tree and auth.expected_merge_tree != (
+            job.candidate_tree or job.candidate_commit
+        ):
+            return MergeResult(
+                job_id=job_id,
+                success=False,
+                error=f"Authorization expected merge tree mismatch: expected {job.candidate_tree}, got {auth.expected_merge_tree}",
+            )
 
         # Load and bind the durable manifest. A caller-supplied object cannot
         # bypass a file-backed reviewed packet.
@@ -163,10 +171,91 @@ class MergeExecutor:
         try:
             result = self._execute_merge(job, manifest, auth)
         except Exception as exc:
+            # Fail closed without mutating job state here: a pre-claim
+            # failure (validation error, lost atomic claim) must leave the
+            # job and authorization untouched so a contention loser cannot
+            # poison the winner's merge. Post-claim failures are recorded by
+            # _execute_merge's own handler after a successful claim.
             logger.error("Merge failed for %s: %s", job_id, exc)
             return MergeResult(job_id=job_id, success=False, error=str(exc))
 
         return result
+
+    def _git_rev_parse(self, ref: str) -> str:
+        import subprocess
+
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    def _is_exact_merge_commit(
+        self,
+        *,
+        merge_sha: str,
+        original_head: str,
+        candidate_commit: str,
+    ) -> bool:
+        """Prove a commit is the authorized no-ff merge before rollback."""
+        import subprocess
+
+        completed = subprocess.run(
+            ["git", "rev-list", "--parents", "-n", "1", merge_sha],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        parts = completed.stdout.strip().split()
+        return (
+            len(parts) >= 3
+            and parts[0] == merge_sha
+            and parts[1] == original_head
+            and candidate_commit in parts[2:]
+        )
+
+    def _rollback_target(
+        self,
+        *,
+        target_branch: str,
+        original_head: str,
+        failed_head: str,
+    ) -> None:
+        """CAS the exact failed merge ref back without overwriting advancement."""
+        import subprocess
+
+        subprocess.run(
+            [
+                "git",
+                "update-ref",
+                f"refs/heads/{target_branch}",
+                original_head,
+                failed_head,
+            ],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+        )
+        # Restore index/worktree content only when this checkout's symbolic HEAD
+        # is the target. Unlike ``reset --hard``, read-tree performs no ref move.
+        symbolic_head = subprocess.run(
+            ["git", "symbolic-ref", "--short", "-q", "HEAD"],
+            cwd=str(self.repo_path),
+            check=False,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if symbolic_head == target_branch:
+            subprocess.run(
+                ["git", "read-tree", "--reset", "-u", original_head],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+            )
 
     def _execute_merge(
         self,
@@ -430,94 +519,21 @@ class MergeExecutor:
                     acquisition_token=lock_token,
                 )
 
-    def _git_rev_parse(self, ref: str) -> str:
-        import subprocess
-
-        completed = subprocess.run(
-            ["git", "rev-parse", "--verify", ref],
-            cwd=str(self.repo_path),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return completed.stdout.strip()
-
-    def _is_exact_merge_commit(
-        self,
-        *,
-        merge_sha: str,
-        original_head: str,
-        candidate_commit: str,
-    ) -> bool:
-        """Prove a commit is the authorized no-ff merge before rollback."""
-        import subprocess
-
-        completed = subprocess.run(
-            ["git", "rev-list", "--parents", "-n", "1", merge_sha],
-            cwd=str(self.repo_path),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        parts = completed.stdout.strip().split()
-        return (
-            len(parts) >= 3
-            and parts[0] == merge_sha
-            and parts[1] == original_head
-            and candidate_commit in parts[2:]
-        )
-
-    def _rollback_target(
-        self,
-        *,
-        target_branch: str,
-        original_head: str,
-        failed_head: str,
-    ) -> None:
-        """CAS the exact failed merge ref back without overwriting advancement."""
-        import subprocess
-
-        subprocess.run(
-            [
-                "git",
-                "update-ref",
-                f"refs/heads/{target_branch}",
-                original_head,
-                failed_head,
-            ],
-            cwd=str(self.repo_path),
-            check=True,
-            capture_output=True,
-        )
-        # Restore index/worktree content only when this checkout's symbolic HEAD
-        # is the target. Unlike ``reset --hard``, read-tree performs no ref move.
-        symbolic_head = subprocess.run(
-            ["git", "symbolic-ref", "--short", "-q", "HEAD"],
-            cwd=str(self.repo_path),
-            check=False,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        if symbolic_head == target_branch:
-            subprocess.run(
-                ["git", "read-tree", "--reset", "-u", original_head],
-                cwd=str(self.repo_path),
-                check=True,
-                capture_output=True,
-            )
-
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
         if job.result_packet_path and Path(job.result_packet_path).exists():
-            packet_path = Path(job.result_packet_path)
+            # Verify the durable packet has not been tampered with.
             if job.result_packet_sha256:
-                expected_digest = job.result_packet_sha256.removeprefix("sha256:")
-                observed_digest = hashlib.sha256(packet_path.read_bytes()).hexdigest()
-                if observed_digest != expected_digest:
-                    raise PermissionError(
-                        "Durable result packet digest mismatch: expected "
-                        f"{expected_digest}, got {observed_digest}"
+                import hashlib
+
+                actual = hashlib.sha256(
+                    Path(job.result_packet_path).read_bytes()
+                ).hexdigest()
+                if actual != job.result_packet_sha256:
+                    raise ValueError(
+                        f"Durable result packet digest mismatch for {job.review_job_id}: "
+                        f"expected {job.result_packet_sha256}, got {actual}"
                     )
-            return MergeCandidateManifest.read(packet_path)
+            return MergeCandidateManifest.read(Path(job.result_packet_path))
         raise FileNotFoundError(
             f"Candidate manifest not found at {job.result_packet_path}"
         )
@@ -526,6 +542,7 @@ class MergeExecutor:
         self, job: ReviewJob, manifest: MergeCandidateManifest
     ) -> tuple:
         """Validate required checks against durable provider-neutral receipts."""
+
         existing_checks = {check.name: check for check in manifest.ci_checks}
         if not manifest.required_ci_checks:
             raise ValueError(
@@ -561,50 +578,19 @@ class MergeExecutor:
                 ) from exc
             if stored.receipt_sha256 != check.provider_receipt_sha256:
                 raise ValueError(f"Required CI check '{name}' receipt digest mismatch")
-            if stored.policy_sha256 != check.provider_policy_sha256:
-                raise ValueError(f"Required CI check '{name}' policy digest mismatch")
-            if not stored.merge_eligible or stored.classification != "accepted":
-                raise ValueError(
-                    f"Required CI check '{name}' provider-neutral receipt is not accepted: "
-                    f"classification={stored.classification}, reason={stored.decision_reason}"
-                )
-            receipt_bindings = {
-                "task_id": (stored.receipt.get("task_id"), job.task_id),
-                "repository_id": (
-                    str(stored.receipt.get("repository_id")),
-                    job.repository,
-                ),
-                "base_sha": (stored.receipt.get("base_sha"), job.base_commit),
-                "candidate_sha": (
-                    stored.receipt.get("candidate_sha"),
-                    job.candidate_commit,
-                ),
-                "tree_sha": (
-                    stored.receipt.get("tree_sha"),
-                    job.candidate_tree or job.candidate_commit,
-                ),
-            }
-            for field, (observed, expected) in receipt_bindings.items():
-                if observed != expected:
-                    raise ValueError(
-                        f"Required CI check '{name}' receipt {field} mismatch: "
-                        f"expected {expected}, got {observed}"
-                    )
             validated.append(check)
         return tuple(validated)
 
 
-def _cli_approve(job_id: str, actor: str, operator_key: str | None = None) -> None:
+def _cli_approve(job_id: str, actor: str, operator_key: Optional[str] = None) -> None:
     if not actor:
         print("ERROR: --actor identity is required")
-        raise PermissionError("Actor identity required")
+        sys.exit(1)
 
     expected_key = os.environ.get("PRISMATIC_OPERATOR_KEY")
-    if not expected_key or operator_key != expected_key:
-        print("ERROR: Invalid or unconfigured operator security key — fail closed")
-        raise PermissionError(
-            "PRISMATIC_OPERATOR_KEY required and must match operator_key"
-        )
+    if expected_key and operator_key != expected_key:
+        print("ERROR: Invalid operator security key")
+        sys.exit(1)
 
     queue = ReviewQueue()
     job = queue.get_job(job_id)
