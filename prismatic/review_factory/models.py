@@ -61,7 +61,7 @@ class ReviewJobState(enum.Enum):
         return {
             S.QUEUED.value: [S.VERIFYING.value],
             S.VERIFYING.value: [S.REVIEW_READY.value, S.QUEUED.value],
-            S.REVIEW_READY.value: [S.REVIEWING.value],
+            S.REVIEW_READY.value: [S.REVIEWING.value, S.REPAIR_REQUIRED.value],
             S.REVIEWING.value: [
                 S.MERGE_READY.value,
                 S.REPAIR_REQUIRED.value,
@@ -70,7 +70,7 @@ class ReviewJobState(enum.Enum):
             ],
             S.REPAIR_REQUIRED.value: [S.QUEUED.value],
             S.REJECTED.value: [],  # terminal
-            S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value],
+            S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value, S.REPAIR_REQUIRED.value],
             S.MERGE_AUTHORIZED.value: [S.MERGING.value],
             S.MERGING.value: [S.MERGED.value, S.MERGE_VERIFICATION_FAILED.value],
             S.MERGED.value: [],  # terminal

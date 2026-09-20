@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -39,6 +40,8 @@ DEFAULT_DB_NAME = "agy_completed_work.db"
 DEFAULT_EVIDENCE_DIR_NAME = "agy-completed-work-evidence"
 MAX_RETAINED_EVIDENCE_BYTES = 2 * 1024 * 1024
 AGY_PACKET_NORMALIZATION_MARKER = "AGY_RESULT_PACKET_NORMALIZED_OK"
+
+logger = logging.getLogger(__name__)
 
 
 class AgyCompletedWorkConflictError(ValueError):
@@ -1615,6 +1618,43 @@ class AgyCompletedWorkStore:
         return [json.loads(row["record_json"]) for row in rows]
 
     def ingest(
+        self,
+        packet: Mapping[str, Any],
+        *,
+        dirty_source: bool = False,
+        source_is_stale: bool = False,
+        conflicts: Sequence[str] | None = None,
+    ) -> CompletedWorkRow:
+        """Ingest a completed-work result packet (closeout).
+
+        After the row is durably stored, eligible work is enqueued into the
+        Review Factory on a best-effort basis: ingestion is the system of
+        record and never fails because the review queue is unavailable.
+        """
+        row = self._ingest_packet(
+            packet,
+            dirty_source=dirty_source,
+            source_is_stale=source_is_stale,
+            conflicts=conflicts,
+        )
+        self._enqueue_review_factory_best_effort(row)
+        return row
+
+    def _enqueue_review_factory_best_effort(self, row: CompletedWorkRow) -> None:
+        """Enqueue freshly ingested completed work into the Review Factory.
+
+        Best-effort: failures are logged and never propagate, so completed-
+        work closeout stays durable even if the review queue is down.
+        """
+        try:
+            from prismatic.review_factory.backlog_importer import BacklogImporter
+
+            if BacklogImporter().ingest_completed_work_row(row):
+                logger.info("review factory: enqueued completed work %s", row.id)
+        except Exception as exc:  # never break ingestion
+            logger.warning("review factory: enqueue skipped for %s: %s", row.id, exc)
+
+    def _ingest_packet(
         self,
         packet: Mapping[str, Any],
         *,

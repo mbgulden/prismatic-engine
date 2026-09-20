@@ -5,6 +5,7 @@ Endpoints:
     GET  /jobs             — List review jobs (?state=, ?tier=) (Authenticated)
     GET  /job/{id}         — Job detail with receipt & decision breakdown (Authenticated)
     POST /job/{id}/authorize — Exception merge authorization (Admin)
+    POST /job/{id}/reject    — Request repair: REPAIR_REQUIRED + dispatch (Admin)
     POST /job/{id}/release   — Force release stuck lease (Admin)
     GET  /authorizations   — Authorization state (Authenticated)
     POST /janitor          — Run stale lease janitor (Admin, Rate limited)
@@ -18,6 +19,7 @@ Endpoints:
 from __future__ import annotations
 
 import time
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -33,7 +35,8 @@ except ImportError:
     security_scheme = None
 
 from prismatic.core.merge_factory import Principal, get_authenticated_principal
-from prismatic.review_factory.models import ReviewJobState
+from prismatic.review_factory.events import emit_rf_event
+from prismatic.review_factory.models import RepairPacket, ReviewJobState
 from prismatic.review_factory.queue import ReviewQueue
 
 _RATE_LIMIT_STORE: dict[str, list[float]] = defaultdict(list)
@@ -240,9 +243,15 @@ def _attach_routes(router: Any) -> None:
             actor = f"human:{principal.identity}"
         expected_merge_tree = body.get("expected_merge_tree", "")
         if not expected_merge_tree:
+            # Default to the verified candidate tree (or commit): the operator
+            # is authorizing the merge of exactly what verification reviewed.
+            # authorize_merge applies the same fallback at the queue layer;
+            # fail closed here only when the job has nothing to bind.
+            expected_merge_tree = job.candidate_tree or job.candidate_commit
+        if not expected_merge_tree:
             raise HTTPException(
                 status_code=400,
-                detail="expected_merge_tree is required",
+                detail="Job has no candidate tree to authorize",
             )
         auth_id = q.authorize_merge(
             review_job_id=job_id,
@@ -284,6 +293,77 @@ def _attach_routes(router: Any) -> None:
         return {
             "status": "released",
             "review_job_id": job_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @router.post(
+        "/job/{job_id}/reject",
+        dependencies=[Depends(require_admin_principal), Depends(enforce_rate_limit)],
+    )
+    async def reject_job_for_repair(
+        job_id: str,
+        body: Dict[str, Any],
+        principal: Principal = Depends(require_admin_principal),
+    ) -> Dict[str, Any]:
+        """Operator requests repair for a job.
+
+        Moves the job to REPAIR_REQUIRED from review_ready, reviewing, or
+        merge_ready (pre-authorization), records a repair packet, and
+        dispatches the repair task to task_admission. Matches the dashboard's
+        "Request Repair" button contract: ``{"reason": "..."}``.
+        """
+        q = _get_queue()
+        job = q.db.get_review_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        if job.state not in (
+            ReviewJobState.REVIEW_READY.value,
+            ReviewJobState.REVIEWING.value,
+            ReviewJobState.MERGE_READY.value,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {job_id} is in state {job.state}; cannot request repair",
+            )
+        reason = str(body.get("reason") or "Rejected from dashboard").strip()[:500]
+        requester = f"human:{principal.identity}"
+        transitioned = q.db.update_review_job_state(
+            job_id,
+            ReviewJobState.REPAIR_REQUIRED,
+            lease_owner="",
+            lease_expires_at="",
+        )
+        if not transitioned:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {job_id} could not transition to repair_required",
+            )
+        packet = RepairPacket(
+            review_job_id=job_id,
+            candidate_tree=job.candidate_tree,
+            findings_json=json.dumps([{"note": reason, "source": "dashboard"}]),
+            producer_id=requester,
+        )
+        q.db.insert_repair_packet(packet)
+        dispatched = q.dispatch_repair_task(job_id, failure_reason=reason)
+        q.db.insert_audit_entry(
+            actor=requester,
+            action="request_repair",
+            review_job_id=job_id,
+            details={"reason": reason, "repair_dispatched": bool(dispatched)},
+        )
+        emit_rf_event(
+            "review_factory.job_state_changed",
+            {
+                "review_job_id": job_id,
+                "new_state": ReviewJobState.REPAIR_REQUIRED.value,
+            },
+        )
+        return {
+            "status": "repair_required",
+            "review_job_id": job_id,
+            "repair_dispatched": bool(dispatched),
+            "requested_by": principal.identity,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
