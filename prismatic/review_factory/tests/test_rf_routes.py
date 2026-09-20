@@ -4,7 +4,10 @@ from fastapi.testclient import TestClient
 from fastapi import FastAPI
 import pytest
 
-from prismatic.review_factory.routes import router as review_factory_router, get_rf_principal
+from prismatic.review_factory.routes import (
+    router as review_factory_router,
+    get_rf_principal,
+)
 from prismatic.core.merge_factory import Principal
 
 

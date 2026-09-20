@@ -6,11 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
-from prismatic.review_factory.models import (
-    VerificationReceipt,
-    ReviewDecision,
-    ReviewJobState,
-)
+from prismatic.review_factory.models import VerificationReceipt
 from prismatic.review_factory.merge_executor import MergeExecutor
 
 
@@ -36,7 +32,9 @@ def test_cross_job_receipt_mismatch_rejected(tmp_path):
     )
 
     with pytest.raises(ValueError, match="mismatch|not match"):
-        queue.complete_verification(job_id, receipt=wrong_receipt, worker_id="verifier-1")
+        queue.complete_verification(
+            job_id, receipt=wrong_receipt, worker_id="verifier-1"
+        )
 
 
 def test_expired_lease_completion_rejected(tmp_path):
@@ -59,7 +57,10 @@ def test_expired_lease_completion_rejected(tmp_path):
     # Manually set expired lease timestamp in DB
     past_iso = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
     with db.transaction() as cur:
-        cur.execute("UPDATE review_jobs SET lease_expires_at = ? WHERE review_job_id = ?", (past_iso, job_id))
+        cur.execute(
+            "UPDATE review_jobs SET lease_expires_at = ? WHERE review_job_id = ?",
+            (past_iso, job_id),
+        )
 
     receipt = VerificationReceipt(
         review_job_id=job_id,
