@@ -101,7 +101,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
         candidate_commit="b" * 40,
         candidate_tree="b" * 40,
     )
-    queue.complete_verification(job_id, receipt)
+    queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
     # Review (multi-witness for high tiers)
     job_obj = queue.db.get_review_job(job_id)
@@ -117,7 +117,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
                 receipt_id=receipt.receipt_id,
                 verdict=ReviewVerdict.CLEAN.value,
             )
-            queue.submit_verdict(job_id, decision)
+            queue.submit_verdict(job_id, decision, reviewer_id=f"reviewer-{witness_n}")
 
     return job_id
 
@@ -193,7 +193,7 @@ class TestMergeExecution:
         job_id = _create_merge_ready_job(queue, tier=0)
 
         # Authorize explicitly
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
         # Build a CLEAN manifest for the executor
@@ -246,7 +246,7 @@ class TestMergeExecution:
         executor = MergeExecutor(queue=queue, dry_run=False, mf_store=mf_store)
 
         job_id = _create_merge_ready_job(queue, tier=0)
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
         manifest = _create_merge_ready_manifest()
@@ -257,6 +257,9 @@ class TestMergeExecution:
                 conclusion="SUCCESS",
                 head_sha="b" * 40,
                 details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+                provider_receipt_id="receipt-123",
+                provider_receipt_sha256="a" * 64,
+                provider_policy_sha256="b" * 64,
             )
         ]
         manifest = manifest.record_ci(ci_checks)
@@ -264,6 +267,21 @@ class TestMergeExecution:
 
         mock_integration_manifest = MagicMock()
         mock_integration_manifest.merge_sha = "c" * 40
+
+        # Mock the verification receipt store to return a valid receipt
+        mock_receipt = MagicMock()
+        mock_receipt.receipt_id = "receipt-123"
+        mock_receipt.receipt_sha256 = "a" * 64
+        mock_receipt.policy_sha256 = "b" * 64
+        mock_receipt.task_id = "test-task"
+        mock_receipt.candidate_commit = "b" * 40
+        mock_receipt.candidate_tree = "c" * 40
+        mock_receipt.base_commit = "a" * 40
+        mock_receipt.base_tree = "d" * 40
+        mock_receipt.provenance_hash = "e" * 64
+        mock_store = MagicMock()
+        mock_store.get.return_value = mock_receipt
+        executor.verification_receipt_store = mock_store
 
         with patch(
             "prismatic.review_factory.merge_executor.integrate_pipeline_run",
