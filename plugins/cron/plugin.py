@@ -219,15 +219,28 @@ class CronPlugin(PrismaticPlugin):
         self._lock = threading.Lock()
         self._script_timeout_sec = DEFAULT_SCRIPT_TIMEOUT_SEC
         self._state_dir = plugin_state_dir()
+        # True when on_init received an explicit "jobs" key (even an empty
+        # list). Distinguishes "operator configured zero jobs" from "no
+        # config provided", so on_resume() knows when it may fall back to
+        # the suspend snapshot for job definitions.
+        self._jobs_from_config = False
 
     # ── lifecycle: init / suspend / resume ──────────────────────────────
 
     def on_init(self, context: PluginContext) -> None:
-        """Validate config jobs, restore state, start the tick thread."""
-        config = (context.config or {})
+        """Validate config jobs, restore state, start the tick thread.
+
+        The generic PluginLoader passes the whole core config as
+        ``context.config`` with this plugin's validated config nested at
+        ``context.config["plugin_configs"]["prismatic-cron"]``; standalone
+        use may pass the plugin config directly. Support both.
+        """
+        core_config = (context.config or {})
+        config = core_config.get("plugin_configs", {}).get(PLUGIN_NAME, core_config)
         jobs_cfg = config.get("jobs", [])
         if not isinstance(jobs_cfg, list):
             raise PluginValidationError("config.jobs must be an array")
+        self._jobs_from_config = "jobs" in config
         self._script_timeout_sec = int(config.get("script_timeout_sec", DEFAULT_SCRIPT_TIMEOUT_SEC))
 
         jobs: Dict[str, Dict[str, Any]] = {}
@@ -328,15 +341,26 @@ class CronPlugin(PrismaticPlugin):
         return json.loads(json.dumps(snapshot, default=str))
 
     def on_resume(self, state: Dict[str, Any]) -> None:
-        """Restore jobs + run history from a suspend snapshot; restart ticks."""
-        jobs_cfg = state.get("jobs", [])
-        jobs: Dict[str, Dict[str, Any]] = {}
-        for raw in jobs_cfg:
-            job = validate_job(raw)
-            jobs[job["name"]] = job
+        """Restore run history from a suspend snapshot; restart ticks.
+
+        Job definitions are the operator config's domain — on_init already
+        loaded them and the loader re-supplies the recorded config on
+        enable-after-unload. The snapshot's jobs are only a fallback: they
+        are restored when this instance has no jobs AND on_init did not
+        receive an explicit "jobs" key (so an intentionally-emptied config
+        stays empty instead of resurrecting old definitions).
+        """
         with self._lock:
-            self._jobs = jobs
-            self._evaluators = {n: CronScheduleEvaluator(j["schedule"]) for n, j in jobs.items()}
+            jobs_cfg = state.get("jobs") or []
+            if jobs_cfg and not self._jobs and not self._jobs_from_config:
+                jobs: Dict[str, Dict[str, Any]] = {}
+                for raw in jobs_cfg:
+                    job = validate_job(raw)
+                    jobs[job["name"]] = job
+                self._jobs = jobs
+                self._evaluators = {
+                    n: CronScheduleEvaluator(j["schedule"]) for n, j in jobs.items()
+                }
             for r in state.get("runs_tail", []):
                 if isinstance(r, dict) and r.get("idempotency_key") not in self._seen_keys:
                     self._runs.append(r)

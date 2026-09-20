@@ -335,3 +335,49 @@ def test_validate_job_rejects_duplicate_names(plugin, tmp_path):
     ctx = make_context(tmp_path, [script_job(), script_job()])
     with pytest.raises(PluginValidationError):
         plugin.on_init(ctx)
+
+
+def test_on_init_accepts_loader_nested_plugin_configs(plugin, tmp_path, monkeypatch):
+    """The generic PluginLoader nests the validated plugin config at
+    context.config["plugin_configs"]["prismatic-cron"]; on_init must read
+    jobs from there, not only from a top-level config."""
+    monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path))
+    jobs = [script_job(name="loader-job")]
+    ctx = PluginContext(
+        config={"plugin_configs": {"prismatic-cron": {"jobs": jobs}}},
+        db_connection=None,
+        state_dir=str(tmp_path),
+    )
+    plugin.on_init(ctx)
+    assert [j["name"] for j in plugin.jobs_status()] == ["loader-job"]
+
+
+def test_on_resume_with_empty_state_keeps_config_jobs(plugin, tmp_path):
+    """First enable passes {} (no state file yet): the jobs on_init loaded
+    from config must survive — on_resume must not wipe them."""
+    ctx = make_context(tmp_path, [script_job(name="keep-me")])
+    plugin.on_init(ctx)
+    plugin._stop_tick_thread()
+    try:
+        plugin.on_resume({})
+        assert [j["name"] for j in plugin.jobs_status()] == ["keep-me"]
+    finally:
+        plugin._stop_tick_thread()
+
+
+def test_on_resume_does_not_resurrect_jobs_when_config_emptied(plugin, tmp_path):
+    """An explicitly emptied config stays empty even when a suspend snapshot
+    holds old definitions."""
+    ctx = make_context(tmp_path, [script_job(name="old")])
+    plugin.on_init(ctx)
+    plugin._stop_tick_thread()
+    snapshot = plugin.on_suspend()
+
+    cleared = CronPlugin()
+    try:
+        cleared.on_init(make_context(tmp_path, []))  # explicit empty jobs
+        cleared._stop_tick_thread()
+        cleared.on_resume(snapshot.get("state", snapshot))
+        assert cleared.jobs_status() == []
+    finally:
+        cleared._stop_tick_thread()
