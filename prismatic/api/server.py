@@ -13,14 +13,13 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
 
 import uvicorn
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from prismatic.api.auth import verify_api_key
-from prismatic.api.routers import credits, jobs, worktrees
+from prismatic.api.routers import credits, jobs, merge_factory, worktrees
 
 logger = logging.getLogger("prismatic.api")
 
@@ -71,6 +70,22 @@ async def root():
 app.include_router(credits.router, prefix=API_PREFIX, tags=["credits"])
 app.include_router(jobs.router, prefix=API_PREFIX, tags=["jobs"])
 app.include_router(worktrees.router, prefix=API_PREFIX, tags=["worktrees"])
+app.include_router(merge_factory.router, prefix=API_PREFIX)
+
+try:
+    from prismatic.workspace.routes import workspace_router
+    if workspace_router:
+        app.include_router(workspace_router, prefix="/api")
+except Exception as exc:
+    logger.warning("Could not mount workspace_router: %s", exc)
+
+try:
+    from prismatic.deploy.routes import deploy_router
+    if deploy_router:
+        app.include_router(deploy_router, prefix="/api")
+except Exception as exc:
+    logger.warning("Could not mount deploy_router: %s", exc)
+
 
 
 # ── CLI ───────────────────────────────────────────────────
@@ -78,9 +93,15 @@ app.include_router(worktrees.router, prefix=API_PREFIX, tags=["worktrees"])
 
 def run() -> None:
     parser = argparse.ArgumentParser(description="Prismatic Engine API Gateway")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    parser.add_argument(
+        "--port", type=int, default=8000, help="Port to bind (default: 8000)"
+    )
+    parser.add_argument(
+        "--reload", action="store_true", help="Enable auto-reload for development"
+    )
+    parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)"
+    )
     args, _ = parser.parse_known_args()
 
     # Load .env from env/ directory relative to project root
@@ -95,7 +116,9 @@ def run() -> None:
         except ImportError:
             logger.warning("python-dotenv not installed, skipping .env load")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
 
     logger.info("Starting Prismatic API Gateway on %s:%d", args.host, args.port)
     uvicorn.run(

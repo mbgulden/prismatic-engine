@@ -12,6 +12,7 @@ from prismatic.gateway import server
 from prismatic.pwp_integration import (
     PWP_PLUGIN_ID,
     PWPIntegrationStore,
+    contract_version,
     connect_pwp,
     disconnect_pwp,
     integration_status,
@@ -43,7 +44,7 @@ def test_pwp_integration_status_contract(monkeypatch, tmp_path: Path) -> None:
     assert payload["plugin_id"] == PWP_PLUGIN_ID
     assert payload["manifest"]["exists"] is True
     assert payload["manifest"]["name"] == PWP_PLUGIN_ID
-    assert payload["manifest"]["version"] == "1.2.0"
+    assert payload["manifest"]["version"] == contract_version()
     assert payload["status"] == "disconnected"
     assert len(payload["capabilities"]) >= 3
     assert "pwp_credentials_refresh" in payload["tool_names"]
@@ -64,7 +65,7 @@ def test_pwp_connect_disconnect_state_is_durable(monkeypatch, tmp_path: Path) ->
     assert connected["state"] == "connected"
     assert state_path.exists()
     raw = json.loads(state_path.read_text())
-    assert raw["acknowledged_contract_version"] == "1.2.0"
+    assert raw["acknowledged_contract_version"] == contract_version()
 
     disconnected = disconnect_pwp(store)
     assert disconnected["connected"] is False
@@ -119,12 +120,18 @@ def test_pwp_cli_integration_status_uses_repo_local_state(
 
 
 def test_pwp_plugin_manifest_and_plugin_contract() -> None:
-    manifest = (REPO_ROOT / "plugins" / "pwp" / "plugin-manifest.yaml").read_text()
+    manifest_p = REPO_ROOT / "prismatic" / "shipped_plugins" / "pwp" / "plugin-manifest.yaml"
+    if not manifest_p.exists():
+        manifest_p = REPO_ROOT / "plugins" / "pwp" / "plugin-manifest.yaml"
+    manifest = manifest_p.read_text()
     assert "connect_points:" in manifest
     assert "disconnect_points:" in manifest
     assert "pwp.visual-governance" in manifest
 
-    from plugins.pwp.plugin import PWPDesignTokenPlugin
+    try:
+        from plugins.pwp.plugin import PWPDesignTokenPlugin
+    except Exception:
+        from prismatic.shipped_plugins.pwp.plugin import PWPDesignTokenPlugin
 
     plugin = PWPDesignTokenPlugin()
     contract = plugin.capability_contract()

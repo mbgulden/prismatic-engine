@@ -69,6 +69,12 @@ PRISMATIC_CORS_ORIGINS=https://dashboard.example.com
 
 Wildcard CORS is rejected while credentials are enabled.
 
+### Canonical AGY CLI
+
+Unattended AGY integrations should migrate from raw `Popen`, mutable workstation wrappers, and ad-hoc command builders to `prismatic agy` / `prismatic.harnesses.agy_cli.AGYCLIHarness`. Real launches require a hash-bound executable, isolated AGY home, frozen task, private artifact/runtime directories, and `PRISMATIC_AGY_ADMISSION_V1` receipt. Producer completion remains pending independent verification.
+
+Existing dispatcher, sandbox-supervisor, and overnight-runner paths remain compatibility surfaces until they delegate to this harness; they must not claim canonical execution merely because they invoke `agy --print`.
+
 ### Release checks
 
 After upgrading, run:

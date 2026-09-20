@@ -6,17 +6,16 @@ description: >
   research-backed interview strategy, structured script writing (6 content
   types), post-interview swarm processing (transcription → extraction →
   multi-format output), human-in-the-loop team operations, and compliance
-  patterns. Use when building content for any Michael-owned website
-  (Active Oahu Tours, activeoahu.com, yourhawaiiguide.com) that needs
-  first-hand local knowledge, personal stories, and authentic expertise
+  patterns. Use when building authoritative domain content that needs
+  first-hand knowledge, personal stories, and authentic expertise
   that AI alone cannot produce.
 triggers:
-  - expert interview or interview content or content from Michael
+  - expert interview or interview content or content from expert
   - E-E-A-T content or authoritative content or local expert content
-  - interview script or ask Michael questions or record answers
+  - interview script or ask expert questions or record answers
   - authentic content or personalized content or expert knowledge
   - website content strategy or content pipeline
-  - activeoahu or yourhawaiiguide or tour content
+  - domain content or expert knowledge capture
   - content for website or build content
   - audio answer or video response
 always-delegate: false
@@ -29,8 +28,7 @@ always-delegate: false
 Google's E-E-A-T (Experience, Expertise, Authoritativeness, Trustworthiness) rewards
 first-hand experience from a real local expert. AI-generated content cannot compete
 with authentic stories, specific details, and personal expertise from someone who
-has actually done the thing. Michael has years of Oahu kayak guiding, tour operations,
-and local knowledge — this pipeline captures that into high-ranking content.
+has actually operated in the field — this pipeline captures that into high-ranking content.
 
 ## The Pipeline
 
@@ -197,10 +195,10 @@ One interview can feed multiple domains when they cover different angles of the
 same expertise. Same stories, different framing:
 
 ```
-Michael's Expertise (kayak guide on Oahu)
-    ├── activeoahutours.com  ← tour experience, safety, booking context
-    ├── yourhawaiiguide.com  ← comparisons, honest reviews, affiliate context
-    └── activeoahu.com       ← community, events, retreats context
+Domain Expertise (e.g. Technical Systems / Product Knowledge)
+    ├── docs.domain.com   ← architectural reference, safety, specs
+    ├── guides.domain.com ← comparisons, tutorials, field guides
+    └── blog.domain.com   ← case studies, real-world stories, updates
 ```
 
 ## Human-in-the-Loop Team Model
@@ -275,33 +273,24 @@ domain knowledge before the real content work begins. Onboarding template in
   their creative judgment feedback loop needs strengthening.
 - **Too many tasks assigned**: Humans should say "batch limit reached" and adjust.
 
-## Batching Across Sites
+## Batching Across Domains
 
-When building content for multiple sites, batch interviews by site theme:
+When building content across multiple domains or products, batch interviews by topic theme:
 
-| Site | Interview Topics | Count |
-|------|-----------------|-------|
-| activeoahutours.com | Tour experiences, safety, local knowledge | 4-5 interviews |
-| activeoahu.com | Community, events, retreats, lifestyle | 2-3 interviews |
-| yourhawaiiguide.com | Comparisons, guides, regional deep-dives | 4-5 interviews |
+| Domain | Interview Topics | Count |
+|--------|-----------------|-------|
+| core.example.com | System architecture, core features, safety | 3-5 interviews |
+| guides.example.com | Step-by-step guides, workflows, tutorials | 3-5 interviews |
+| insights.example.com | Case studies, industry trends, analyses | 2-3 interviews |
 
-Create all interview tasks at once (one Linear issue per topic), post all scripts
-as comments, assign all to Michael. Then the swarm works through them as he uploads
-recordings — no bottleneck.
+Create all interview tasks at once, post all scripts as structured prompts, assign to domain experts. Then the swarm processes recordings as they arrive without bottlenecks.
 
-## Compliance Patterns for Restricted Geographies
+## Compliance and Truthful Framing Patterns
 
-When dealing with regulatory restrictions, don't make the content look guilty
-with defensive banners and disclaimers. Study what competitors who ARE compliant
-actually do — often they advertise the restricted destination aggressively while
-their defense is operational separation (transaction at shop, customer
-self-transports). Match their proven approach, not a lawyer's worst-case scenario.
-
-Embed self-transport language naturally: "Pick up at our shop → drive yourself →
-launch as a private boater." The operational separation (documented check-in at
-shop, no company vehicles at the beach) is the real defense — not website warnings.
-See `references/kaneohe-bay-compliance-pattern.md` for the full "Decouple and
-Reframe" framework.
+When dealing with regulatory or domain restrictions, ensure claims are factual and operations clearly separated:
+- Avoid speculative claims or over-promising.
+- Maintain operational separation between advisory guidance and formal transactional boundaries.
+- Ensure all technical and business disclaimers accurately reflect operational reality without ungrounded assertions.
 
 ## Pitfalls
 
@@ -345,7 +334,5 @@ Reframe" framework.
   for content writers joining the pipeline
 - `references/ubersuggest-mcp-integration.md` — Ubersuggest MCP OAuth setup for
   keyword research
-- `references/kaneohe-bay-compliance-pattern.md` — "Decouple and Reframe"
-  compliance framework
 - `references/competitor-seo-audit-methodology.md` — How to audit competitor SEO
 - `templates/interview-script-template.md` — Reusable interview script format

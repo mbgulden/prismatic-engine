@@ -1,0 +1,932 @@
+        <div id="section-dashboard" class="space-y-6">
+<!-- 🌐 REACTIVE TOPOLOGICAL MERKLE-DAG PIPELINE & CONCURRENCY COCKPIT -->
+<section id="merkle-dag-cockpit-panel" class="rounded-2xl border border-slate-800/90 bg-slate-950/70 p-4 sm:p-6 space-y-4 shadow-2xl relative transition-all duration-300">
+    <!-- Header with Live Synchronized Pulse, Filter Chips & Fullscreen Controls -->
+    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3 flex-wrap">
+                <div class="relative flex h-3 w-3 flex-shrink-0">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+                </div>
+                <h2 class="text-sm sm:text-base font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                    <span>Reactive Topological Merkle-DAG Pipeline</span>
+                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 font-semibold">Live Provenance &amp; Concurrency</span>
+                </h2>
+            </div>
+            <p class="text-xs text-slate-400">Real-time cryptographic execution graph across Prompt, SwarmLock, SwarmRouter, SwarmProof, SwarmGate, and SwarmLedger.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Time-travel scrubber toggle -->
+            <button type="button" id="dag-scrubber-toggle-btn" onclick="toggleDagScrubber()" class="pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 font-mono">
+                <svg class="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>Time-Travel</span>
+            </button>
+            <!-- Fullscreen Toggle -->
+            <button type="button" id="dag-fullscreen-btn" onclick="toggleDagFullscreen()" class="pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 font-mono">
+                <svg class="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                <span>⤢ Fullscreen</span>
+            </button>
+            <button type="button" onclick="refreshDagTopology()" class="pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 font-mono">
+                <svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Agent Filter Bar & KPI Summary Strip -->
+    <div class="flex flex-wrap items-center justify-between gap-3 pt-1 border-b border-slate-800/60 pb-3 text-xs">
+        <div class="flex flex-wrap items-center gap-2" id="dag-agent-filters">
+            <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">Agent Focus:</span>
+            <button type="button" onclick="setDagAgentFilter('all')" data-dag-agent="all" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-indigo-600/30 text-indigo-300 border-indigo-500/50 font-bold">All Agents</button>
+            <button type="button" onclick="setDagAgentFilter('lightbringer-agy')" data-dag-agent="lightbringer-agy" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">⚡ Lightbringer AGY</button>
+            <button type="button" onclick="setDagAgentFilter('hermes')" data-dag-agent="hermes" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🌐 Hermes</button>
+            <button type="button" onclick="setDagAgentFilter('kai')" data-dag-agent="kai" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🎨 Kai</button>
+            <button type="button" onclick="setDagAgentFilter('fred')" data-dag-agent="fred" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🧪 Fred</button>
+            <button type="button" onclick="setDagAgentFilter('george')" data-dag-agent="george" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🛡️ George</button>
+            <button type="button" onclick="setDagAgentFilter('autobot')" data-dag-agent="autobot" class="dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🤖 Autobot</button>
+        </div>
+
+        <div class="flex items-center gap-4 text-[11px] font-mono text-slate-400">
+            <div>Active Leases: <span id="dag-kpi-leases" class="font-bold text-cyan-400">0</span></div>
+            <div>AST Proofs: <span id="dag-kpi-proofs" class="font-bold text-emerald-400">100%</span></div>
+            <div>Deflections: <span id="dag-kpi-deflections" class="font-bold text-amber-400">0</span></div>
+            <div>Merkle Nodes: <span id="dag-kpi-nodes" class="font-bold text-indigo-300">0</span></div>
+        </div>
+    </div>
+
+    <!-- ⏱️ Optional Time-Travel Scrubber Bar (Hidden by default) -->
+    <div id="dag-time-scrubber-bar" class="hidden p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+        <div class="flex items-center justify-between text-xs font-mono">
+            <span class="text-cyan-400 font-bold flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>Time-Travel Provenance Replay</span>
+            </span>
+            <span id="dag-scrubber-time-label" class="text-slate-300">Live (Now)</span>
+        </div>
+        <div class="flex items-center gap-3">
+            <input type="range" id="dag-history-slider" min="0" max="100" value="100" oninput="onDagScrubberChange(this.value)" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+            <button type="button" onclick="resetDagToLive()" class="px-2.5 py-1 rounded bg-indigo-600 text-white text-[10px] font-bold uppercase font-mono">Live</button>
+        </div>
+    </div>
+
+    <!-- 📊 Stage Column Headers (Desktop/Tablet) -->
+    <div class="hidden md:grid grid-cols-6 gap-3 px-2 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 text-center border-b border-slate-900 pb-2">
+        <div class="flex items-center justify-center gap-1"><span>1. PROMPT</span><span class="text-[9px] text-slate-600">TASK</span></div>
+        <div class="flex items-center justify-center gap-1 text-cyan-500/80"><span>2. SWARMLOCK</span><span class="text-[9px]">LEASE</span></div>
+        <div class="flex items-center justify-center gap-1 text-sky-500/80"><span>3. SWARMROUTER</span><span class="text-[9px]">WAVE</span></div>
+        <div class="flex items-center justify-center gap-1 text-emerald-500/80"><span>4. SWARMPROOF</span><span class="text-[9px]">AST</span></div>
+        <div class="flex items-center justify-center gap-1 text-amber-500/80"><span>5. SWARMGATE</span><span class="text-[9px]">TIER</span></div>
+        <div class="flex items-center justify-center gap-1 text-indigo-400"><span>6. SWARMLEDGER</span><span class="text-[9px]">MERKLE</span></div>
+    </div>
+
+    <!-- 🌌 DAG Visualization Viewport & Interactive Canvas -->
+    <div id="dag-viewport-container" class="relative w-full min-h-[460px] max-h-[720px] overflow-x-auto overflow-y-auto rounded-xl border border-slate-900 bg-slate-950/90 p-4 transition-all duration-300">
+        <!-- SVG Bezier Energy Connector Overlay -->
+        <svg id="dag-svg-overlay" class="absolute inset-0 w-full h-full pointer-events-none z-0" style="min-width: 1000px; min-height: 440px;">
+            <defs>
+                <linearGradient id="dag-gradient-active" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.8"/>
+                    <stop offset="50%" stop-color="#10b981" stop-opacity="0.9"/>
+                    <stop offset="100%" stop-color="#6366f1" stop-opacity="0.8"/>
+                </linearGradient>
+                <filter id="dag-glow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feGaussianBlur stdDeviation="3" result="blur" />
+                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                </filter>
+            </defs>
+            <g id="dag-svg-paths-group"></g>
+        </svg>
+
+        <!-- Dynamic Topological Graph Node Grid / Mobile Card Chain -->
+        <div id="dag-nodes-grid" class="relative z-10 grid grid-cols-1 md:grid-cols-6 gap-3 sm:gap-4 items-start" style="min-width: 960px;">
+            <!-- Populated dynamically via renderMerkleDagPipeline() -->
+            <div class="col-span-full py-16 text-center text-slate-500 italic flex flex-col items-center justify-center gap-3 font-mono text-xs">
+                <div class="w-8 h-8 rounded-full border-2 border-indigo-500/40 border-t-indigo-400 animate-spin"></div>
+                <span>Synthesizing live cryptographic Merkle-DAG pipeline...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 👁️ Slide-Out Interactive Node Inspector Drawer -->
+    <div id="dag-node-inspector-drawer" class="hidden fixed inset-y-0 right-0 z-50 w-full max-w-[540px] bg-slate-950/95 backdrop-blur-xl border-l border-slate-800 shadow-2xl p-6 overflow-y-auto space-y-5 transition-transform duration-300 font-sans text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+            <div class="flex items-center gap-3">
+                <span id="dag-inspector-icon" class="text-2xl">🔒</span>
+                <div>
+                    <h3 id="dag-inspector-title" class="text-sm font-bold text-slate-100 uppercase tracking-wider">Node Details</h3>
+                    <div id="dag-inspector-subtitle" class="text-[11px] font-mono text-slate-400">span_8891 · Stage 2 (SwarmLock)</div>
+                </div>
+            </div>
+            <button type="button" onclick="closeDagNodeInspector()" class="text-slate-400 hover:text-white text-xl font-bold p-1">&times;</button>
+        </div>
+
+        <div id="dag-inspector-body" class="space-y-4">
+            <!-- Dynamic Inspector Sections: Metadata, Diff, AST Errors, Proof Hashes -->
+        </div>
+
+        <!-- Actionable Control Plane Toolbar in Drawer -->
+        <div id="dag-inspector-actions" class="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-end gap-2.5">
+            <button type="button" onclick="closeDagNodeInspector()" class="pe-btn pe-btn-secondary text-xs">Close</button>
+        </div>
+    </div>
+</section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-violet-500/80 shadow-lg shadow-violet-950/10">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Recovery Command Strip</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-violet-500/20 bg-violet-500/10 text-violet-300">Live / DLQ</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Fast operator surface for consumer health, heartbeat truth, and DLQ state without leaving the default dashboard.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="refreshRecoveryStatus()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-violet-500/10 text-violet-300 border border-violet-500/20 hover:bg-violet-500/20 transition-colors min-h-[36px]">
+                            Refresh recovery
+                        </button>
+                        <button onclick="switchTab('telemetry')" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 transition-colors min-h-[36px]">
+                            Open queue view
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Service</div>
+                        <div id="recovery-service" class="mt-1 font-semibold text-slate-100">prismatic-consumer.service</div>
+                        <div id="recovery-service-state" class="mt-1 text-[11px] text-slate-400">SYNCING</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Heartbeat</div>
+                        <div id="recovery-heartbeat" class="mt-1 font-semibold text-slate-100">—</div>
+                        <div id="recovery-heartbeat-path" class="mt-1 text-[11px] text-slate-500 break-all">Awaiting live heartbeat proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Pool</div>
+                        <div class="mt-1 font-semibold text-slate-100"><span id="recovery-live-count">0</span> live · <span id="recovery-dlq-count">0</span> dlq</div>
+                        <div id="recovery-pool-state" class="mt-1 text-[11px] text-slate-400">Awaiting live pool stats</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Failure taxonomy</div>
+                        <div id="recovery-taxonomy-count" class="mt-1 font-semibold text-slate-100">0 classes</div>
+                        <div id="recovery-taxonomy-sample" class="mt-1 text-[11px] text-slate-400">Awaiting taxonomy labels</div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="admission-panel" class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-amber-500/80 shadow-lg shadow-amber-950/10" data-proof-marker="dashboard-admission-v1">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Task Admission</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300">Operator / Durable Intent</span>
+                        </div>
+                        <p class="mt-1 text-xs text-slate-400"><strong>Records durable intent only; does not launch a producer.</strong></p>
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button type="button" onclick="const f = document.getElementById('admission-fields-container'); f.classList.toggle('hidden');" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20 min-h-[36px]">Toggle Form</button>
+                        <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                    </div>
+                </div>
+                <div id="admission-fields-container" class="space-y-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-xs">
+                        <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
+                        <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
+                    </div>
+                    <pre id="admission-proof" class="hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
+                    <div id="admission-history" class="text-xs text-slate-500">Authenticated readback not loaded.</div>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="provider-neutral-verification-receipt-card" data-golden-marker="PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Provider-Neutral Verification</h2>
+                            <span id="completed-work-gate-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Native immutable receipts are the acceptance authority. GitHub and hosted CI are optional transport signals and never decide acceptance.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK</div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Decision</div>
+                        <div id="completed-work-classification" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Exact artifact</div>
+                        <div id="completed-work-artifact" class="mt-1 text-[11px] font-mono text-slate-300 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Proof classes</div>
+                        <div id="completed-work-proof-classes" class="mt-1 text-[11px] text-slate-300">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verifier / isolation</div>
+                        <div id="completed-work-verifier" class="mt-1 text-[11px] text-slate-300 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Freshness / revocation</div>
+                        <div id="completed-work-freshness" class="mt-1 text-[11px] text-slate-300">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Hosted signal</div>
+                        <div id="completed-work-hosted-signal" class="mt-1 text-[11px] text-slate-300">Optional / none</div>
+                    </div>
+                </div>
+                <pre id="completed-work-receipt-proof" class="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap">No native receipts persisted yet</pre>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="one-agent-promotion-decision-ledger-card" data-golden-marker="ONE_AGENT_PROMOTION_DECISION_LEDGER_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Promotion Decision Ledger</h2>
+                            <span id="promotion-ledger-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Durable Objective → Key Result → Function → Evidence → Promotion Decision record for one completed-work row. Local ledger only; no real Linear/GitHub side effects.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="promotion-ledger-marker">ONE_AGENT_PROMOTION_DECISION_LEDGER_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Decision</div>
+                        <div id="promotion-ledger-decision" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verification</div>
+                        <div id="promotion-ledger-verification" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Ledger state</div>
+                        <div id="promotion-ledger-state" class="mt-1 text-[11px] text-slate-300">Awaiting ledger proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="promotion-ledger-side-effects" class="mt-1 text-[11px] text-slate-400">No decision recorded yet</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-sky-500/80 shadow-lg shadow-sky-950/10" data-proof-marker="one-agent-operator-action-approval-card" data-golden-marker="ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Operator Action Approval</h2>
+                            <span id="operator-approval-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Durable operator approve/reject/defer record for a promotion decision. Shows policy gate and dry-run execution preview before any real side effect can be eligible.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="operator-approval-marker">ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Decision</div>
+                        <div id="operator-approval-decision" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Requested action</div>
+                        <div id="operator-approval-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Policy gate</div>
+                        <div id="operator-approval-policy" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Execution preview</div>
+                        <div id="operator-approval-preview" class="mt-1 text-[11px] text-slate-300">Awaiting approval proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="operator-approval-side-effects" class="mt-1 text-[11px] text-slate-400">No approval recorded yet</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="one-agent-approved-action-executor-card" data-golden-marker="ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Approved Action Executor Dry Run</h2>
+                            <span id="approved-executor-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Durable executor request and final side-effect guard for an approved operator action. Dry-run only; real execution remains blocked by default.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="approved-executor-marker">ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Requested action</div>
+                        <div id="approved-executor-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Executor mode</div>
+                        <div id="approved-executor-mode" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Final guard</div>
+                        <div id="approved-executor-final-guard" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Execution status</div>
+                        <div id="approved-executor-status" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Command preview</div>
+                        <div id="approved-executor-command" class="mt-1 text-[11px] text-slate-300">Awaiting executor proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="approved-executor-side-effects" class="mt-1 text-[11px] text-slate-400">No executor request recorded yet</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-indigo-500/80 shadow-lg shadow-indigo-950/10" data-proof-marker="one-agent-final-action-authorization-card" data-golden-marker="ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Final Action Authorization Gate</h2>
+                            <span id="final-auth-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Separate final authorization record for the exact executor dry-run request. Fails closed by default; real side effects remain disabled.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="final-auth-marker">ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Authorization decision</div>
+                        <div id="final-auth-decision" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Requested action</div>
+                        <div id="final-auth-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Token state</div>
+                        <div id="final-auth-token" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Env gate</div>
+                        <div id="final-auth-env" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Final guard</div>
+                        <div id="final-auth-guard" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="final-auth-side-effects" class="mt-1 text-[11px] text-slate-400">No authorization recorded yet</div>
+                    </div>
+                </div>
+                <div id="final-auth-eligibility" class="mt-3 text-[11px] text-slate-400 font-mono break-all">Awaiting final authorization proof</div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="one-agent-quarantined-execution-adapter-card" data-golden-marker="ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Quarantined Execution Adapter</h2>
+                            <span id="quarantined-adapter-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Sealed dry-run adapter envelope and deny-by-default egress policy before any real executor implementation exists.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="quarantined-adapter-marker">ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Adapter mode</div>
+                        <div id="quarantined-adapter-mode" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Requested action</div>
+                        <div id="quarantined-adapter-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Egress policy</div>
+                        <div id="quarantined-adapter-egress" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Command envelope</div>
+                        <div id="quarantined-adapter-envelope" class="mt-1 text-[11px] text-slate-400 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Audit packet</div>
+                        <div id="quarantined-adapter-audit" class="mt-1 text-[11px] text-slate-400 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="quarantined-adapter-side-effects" class="mt-1 text-[11px] text-slate-400">No adapter recorded yet</div>
+                    </div>
+                </div>
+                <div id="quarantined-adapter-summary" class="mt-3 text-[11px] text-slate-400 font-mono break-all">Awaiting quarantined adapter proof</div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-sky-500/80 shadow-lg shadow-sky-950/10" data-proof-marker="one-agent-sandboxed-execution-canary-card" data-golden-marker="ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Sandboxed Execution Canary</h2>
+                            <span id="sandbox-canary-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">No-op sandbox containment proof for the sealed adapter envelope. Verifies hash, emits transcript, and keeps all egress denied.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="sandbox-canary-marker">ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Canary mode</div>
+                        <div id="sandbox-canary-mode" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Requested action</div>
+                        <div id="sandbox-canary-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Envelope verification</div>
+                        <div id="sandbox-canary-envelope" class="mt-1 text-[11px] text-slate-400 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Sandbox policy</div>
+                        <div id="sandbox-canary-policy" class="mt-1 text-[11px] text-slate-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Transcript</div>
+                        <div id="sandbox-canary-transcript" class="mt-1 text-[11px] text-slate-400 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="sandbox-canary-side-effects" class="mt-1 text-[11px] text-slate-400">No canary recorded yet</div>
+                    </div>
+                </div>
+                <div id="sandbox-canary-summary" class="mt-3 text-[11px] text-slate-400 font-mono break-all">Awaiting sandbox canary proof</div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-fuchsia-500/80 shadow-lg shadow-fuchsia-950/10" data-proof-marker="one-agent-real-executor-arming-gate-card">
+                <div class="flex flex-col sm:flex-row items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-xs uppercase tracking-[0.24em] text-slate-400">Real Executor Arming Gate</h2>
+                        <p class="mt-2 text-sm text-slate-400">Readiness-only gate that enumerates missing prerequisites before any future real executor could be armed.</p>
+                        <p class="mt-2 font-mono text-[11px] text-fuchsia-300 break-all">ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_OK</p>
+                    </div>
+                    <span id="real-executor-arming-badge" class="rounded-full bg-slate-800/80 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-300 shrink-0">Checking</span>
+                </div>
+                <div class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Arming mode</p>
+                        <p id="real-executor-arming-mode" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Requested action</p>
+                        <p id="real-executor-arming-action" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Token state</p>
+                        <p id="real-executor-arming-token" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Env gate</p>
+                        <p id="real-executor-arming-env" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                </div>
+                <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                    <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Missing prerequisites</p>
+                    <p id="real-executor-arming-missing" class="mt-1 font-mono">Awaiting arming proof</p>
+                    <p class="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">Satisfied prerequisites</p>
+                    <p id="real-executor-arming-satisfied" class="mt-1 font-mono">Awaiting sandbox proof</p>
+                    <p class="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">Side effects</p>
+                    <p id="real-executor-arming-summary" class="mt-1 font-mono">No arming gate recorded yet</p>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-fuchsia-500/80 shadow-lg shadow-fuchsia-950/10" data-proof-marker="raw-agent-output-repair-queue-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Raw Agent Output Queue</h2>
+                            <span id="raw-output-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Real persisted worst-output rows before normalization. Repair preview and rerun request are operator-controlled only.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="raw-output-marker">RAW_AGENT_OUTPUT_REPAIR_QUEUE_OK</div>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Accepted</div><div id="raw-output-accepted" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Normalized</div><div id="raw-output-normalized" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Rejected</div><div id="raw-output-rejected" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Repairable</div><div id="raw-output-repairable" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Rerun required</div><div id="raw-output-rerun-required" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Policy violation</div><div id="raw-output-policy-violation" class="mt-1 font-semibold text-slate-100">—</div></div>
+                </div>
+                <div id="raw-output-latest" class="mt-3 text-[11px] text-slate-400 font-mono break-all">No persisted raw output rows loaded yet</div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="agy-merge-backlog-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Merge Backlog</h2>
+                            <span id="merge-backlog-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Dry-run PR plan and verification gate from persisted completed-work rows. Auto-merge disabled.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="merge-backlog-marker">AGY_CLEAN_PR_AND_VERIFICATION_GATE_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Action</div>
+                        <div id="merge-backlog-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verification</div>
+                        <div id="merge-backlog-verification" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Dry-run PR branch</div>
+                        <div id="merge-backlog-branch" class="mt-1 text-[11px] text-slate-300 break-all">No row planned yet</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Auto-merge</div>
+                        <div id="merge-backlog-auto-merge" class="mt-1 text-[11px] text-slate-400">Disabled</div>
+                    </div>
+                </div>
+                <div class="mt-4 rounded-xl border border-cyan-900/50 bg-cyan-950/15 p-3" data-proof-marker="prompt5-pr-candidate-lifecycle-action">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-cyan-300">Prompt 5.2 PR candidate lifecycle</div>
+                            <div id="pr-candidate-status" class="mt-1 text-xs text-slate-300">Explicit operator action required. Metadata-only; no GitHub PR creation or auto-merge.</div>
+                        </div>
+                        <div class="flex flex-col gap-2 sm:flex-row">
+                            <button type="button" id="pr-candidate-action" onclick="stagePrCandidate()" class="rounded-lg border border-cyan-600/60 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/20">Stage PR Candidate Metadata</button>
+                            <button type="button" id="pr-dry-run-action" onclick="stagePrDryRun()" class="rounded-lg border border-emerald-600/60 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20" data-proof-marker="prompt5-operator-pr-dry-run-action">Plan PR Dry Run</button>
+                            <button type="button" id="pr-approval-action" onclick="stagePrApprovalGate()" class="rounded-lg border border-violet-600/60 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-500/20" data-proof-marker="prompt5-real-pr-approval-gate-action">Record PR Approval Gate</button>
+                            <button type="button" id="pr-executor-action" onclick="stageApprovedPrExecutor()" class="rounded-lg border border-amber-600/60 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20" data-proof-marker="prompt5-approved-real-pr-executor-action">Plan Approved PR Executor</button>
+                            <button type="button" id="prompt6-executor-canary-action" onclick="runPrompt6ExecutorCanaryDryRun()" class="rounded-lg border border-orange-600/60 bg-orange-500/10 px-3 py-2 text-xs font-semibold text-orange-100 hover:bg-orange-500/20" data-proof-marker="prompt6-executor-audit-canary">Run Executor Canary Dry Run</button>
+                        </div>
+                    </div>
+                    <pre id="pr-candidate-output" class="mt-3 hidden max-h-48 overflow-auto rounded-lg bg-slate-950/70 p-3 text-[11px] text-slate-300"></pre>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-violet-500/80 shadow-lg shadow-violet-950/10" data-proof-marker="agy-overnight-guard-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Overnight Evidence Readiness</h2>
+                            <span id="overnight-guard-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Evidence-aware guardrail only. It reads retained proof and policy state; it never launches AGY tasks.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="overnight-guard-marker">AGY_OVERNIGHT_READINESS_GUARD_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Readiness</div>
+                        <div id="overnight-guard-state" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Evidence</div>
+                        <div id="overnight-guard-evidence" class="mt-1 text-[11px] text-slate-300">Awaiting retained proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Safety flags</div>
+                        <div id="overnight-guard-safety" class="mt-1 text-[11px] text-slate-300">auto-merge=false · deploy=false</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Tasks launched</div>
+                        <div id="overnight-guard-tasks" class="mt-1 text-[11px] text-slate-300">0</div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Latest proof / blockers</div>
+                        <div id="overnight-guard-blockers" class="mt-1 text-[11px] text-slate-400 break-words">Awaiting guard readback</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Next safe action</div>
+                        <div id="overnight-guard-next" class="mt-1 text-[11px] text-slate-400">No overnight run active</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Morning Briefing Card (Overnight Report) -->
+            <section id="morning-briefing-card" class="glass-panel p-5 rounded-2xl border-l-2 border-l-indigo-500/80 shadow-lg shadow-indigo-950/10 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Morning Briefing Card</h2>
+                            <span id="briefing-fallback-badge" class="hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300">Fallback Lookback Mode</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Overnight factory run performance and deliverables snapshot (8am daily recap).</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="briefing-timestamp">
+                        Loading...
+                    </div>
+                </div>
+
+                <!-- Briefing Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs text-center" id="briefing-kpis">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Total Runs</div>
+                        <div id="briefing-total-runs" class="mt-1 text-lg font-bold text-indigo-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Completed</div>
+                        <div id="briefing-completed" class="mt-1 text-lg font-bold text-emerald-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Failed / Died</div>
+                        <div id="briefing-failed" class="mt-1 text-lg font-bold text-rose-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Success Rate</div>
+                        <div id="briefing-success-rate" class="mt-1 text-lg font-bold text-cyan-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Credits Spent</div>
+                        <div id="briefing-credits" class="mt-1 text-lg font-bold text-amber-400">—</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <!-- Left: Recent Escalations & Codebase Commits -->
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">🚨 Overnight Escalations</h3>
+                            <div class="space-y-2" id="briefing-escalations">
+                                <div class="text-slate-500 italic">No escalations occurred.</div>
+                            </div>
+                        </div>
+                        <div class="rounded-xl border border-slate-800/80 bg-slate-950/30 p-4 space-y-2">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">🛠️ Recent Git Commits</h3>
+                            <div class="space-y-1" id="briefing-commits">
+                                <div class="text-slate-500 italic">No recent commits.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Right: Detailed Runs Ledger Summary -->
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/30 p-4 flex flex-col justify-between">
+                        <div class="space-y-2 w-full">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">📋 Agent Runs Summary</h3>
+                            <div class="overflow-y-auto max-h-[140px] border border-slate-850 rounded-lg">
+                                <table class="w-full text-left border-collapse text-[11px]">
+                                    <thead>
+                                        <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
+                                            <th class="py-1.5 px-2">Agent</th>
+                                            <th class="py-1.5 px-2">Issue</th>
+                                            <th class="py-1.5 px-2">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="briefing-runs-tbody">
+                                        <tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No runs recorded.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="pt-3 border-t border-slate-800/40 flex justify-end">
+                            <a href="/api/gateway/overnight-report/latest/html" target="_blank" class="px-3 py-1.5 rounded bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold uppercase tracking-wider transition">
+                                Open Full Report HTML
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="grid min-w-0 grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Visualizer Graph (Left Column 2/3 wide) -->
+                <div class="min-w-0 lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
+                        <span>Swarm Spectrum Visualizer</span>
+                        <span class="text-xs text-slate-500 font-mono">Interactive Topology</span>
+                    </h2>
+
+                    <!-- SVG Ring -->
+                    <div class="flex justify-center items-center py-6">
+                        <svg viewBox="0 0 400 300" class="w-full max-w-[450px] h-auto">
+                            <!-- Center Prismatic Gate Glow -->
+                            <circle cx="200" cy="150" r="35" fill="none" stroke="#22d3ee" stroke-width="2" opacity="0.3" class="status-pulse" />
+                            <circle cx="200" cy="150" r="25" fill="url(#gateGrad)" />
+                            <text x="200" y="154" fill="#080b11" font-weight="bold" font-size="11" text-anchor="middle" font-family="'Outfit', sans-serif">GATE</text>
+
+                            <!-- Connecting lines -->
+                            <line x1="200" y1="150" x2="160" y2="70" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="280" y2="100" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="270" y2="220" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="130" y2="230" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="70" y2="150" stroke="#10b981" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="90" y2="70" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,4" />
+
+                            <!-- Agent Nodes -->
+                            <!-- AGY -->
+                            <g class="agent-node" onclick="showAgentDetail('agy')">
+                                <circle cx="160" cy="70" r="20" fill="#0f172a" stroke="#f59e0b" stroke-width="2" />
+                                <text x="160" y="74" fill="#f59e0b" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">AGY</text>
+                            </g>
+                            <!-- Jules -->
+                            <g class="agent-node" onclick="showAgentDetail('jules')">
+                                <circle cx="280" cy="100" r="20" fill="#0f172a" stroke="#ea580c" stroke-width="2" />
+                                <text x="280" y="104" fill="#ea580c" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">JLS</text>
+                            </g>
+                            <!-- Fred -->
+                            <g class="agent-node" onclick="showAgentDetail('fred')">
+                                <circle cx="270" cy="220" r="20" fill="#0f172a" stroke="#0ea5e9" stroke-width="2" />
+                                <text x="270" y="224" fill="#0ea5e9" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">FRD</text>
+                            </g>
+                            <!-- Ned -->
+                            <g class="agent-node" onclick="showAgentDetail('ned')">
+                                <circle cx="130" cy="230" r="20" fill="#0f172a" stroke="#a855f7" stroke-width="2" />
+                                <text x="130" y="234" fill="#a855f7" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">NED</text>
+                            </g>
+                            <!-- Kai -->
+                            <g class="agent-node" onclick="showAgentDetail('kai')">
+                                <circle cx="70" cy="150" r="20" fill="#0f172a" stroke="#10b981" stroke-width="2" />
+                                <text x="70" y="154" fill="#10b981" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">KAI</text>
+                            </g>
+                            <!-- Codex -->
+                            <g class="agent-node" onclick="showAgentDetail('codex')">
+                                <circle cx="90" cy="70" r="20" fill="#0f172a" stroke="#ef4444" stroke-width="2" />
+                                <text x="90" y="74" fill="#ef4444" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">CDX</text>
+                            </g>
+
+                            <!-- SVG Definitions -->
+                            <defs>
+                                <radialGradient id="gateGrad" cx="50%" cy="50%" r="50%">
+                                    <stop offset="0%" stop-color="#67e8f9" />
+                                    <stop offset="100%" stop-color="#06b6d4" />
+                                </radialGradient>
+                            </defs>
+                        </svg>
+                    </div>
+
+                    <div class="text-[11px] text-slate-500 text-center">
+                        Click on any agent node above to inspect status details and current running harness parameters.
+                    </div>
+                </div>
+
+                <!-- Agent Details & Webhook Simulator (Right Column 1/3 wide) -->
+                <div class="min-w-0 space-y-6">
+                    <!-- Agent Card Panel -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Agent Details
+                        </h3>
+                        <div id="agent-detail-placeholder" class="text-xs text-slate-500 py-6 text-center italic">
+                            Select an agent on the visualizer ring.
+                        </div>
+                        <div id="agent-detail-card" class="hidden space-y-3 text-xs">
+                            <div class="flex items-center space-x-2">
+                                <span id="agent-detail-dot" class="w-3 h-3 rounded-full"></span>
+                                <span id="agent-detail-name" class="font-bold text-sm text-slate-200">AGY</span>
+                                <span id="agent-detail-status-tag" class="px-2 py-0.5 rounded text-[9px] uppercase font-bold"></span>
+                            </div>
+                            <div class="text-slate-400" id="agent-detail-role"></div>
+                            <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-900/60 font-mono space-y-2">
+                                <div class="text-slate-500 font-bold text-[10px] uppercase">Active Task</div>
+                                <div id="agent-detail-task" class="text-slate-300"></div>
+                            </div>
+                            <div class="grid min-w-0 grid-cols-2 gap-2 text-[10px] text-slate-400">
+                                <div>
+                                    <span class="text-slate-500 block">LAST SEEN</span>
+                                    <span id="agent-detail-seen" class="font-semibold text-slate-300"></span>
+                                </div>
+                                <div class="min-w-0">
+                                    <span class="text-slate-500 block">HARNESS CONFIG</span>
+                                    <span id="agent-detail-config" class="block break-all font-semibold text-indigo-400"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Agent Governance Status -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4" data-proof-marker="agent-governance-dashboard-status" data-golden-marker="GOVERNANCE_DASHBOARD_UI_API_CONTRACT_OK">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1 sm:gap-2">
+                            <span>Agent Governance</span>
+                            <span id="agent-governance-marker" class="text-[9px] text-cyan-400 font-mono break-all">GOVERNANCE_DASHBOARD_UI_API_CONTRACT_OK</span>
+                        </h3>
+                        <p class="text-[11px] text-slate-500">Kai/Fred lane status, task detail, proof links, audit events, approval gates, side-effect policy, durability, and portability/readiness with explicit source labels.</p>
+                        <div id="agent-governance-status" class="space-y-3 text-xs">
+                            <div class="text-slate-500 italic">Loading agent governance status…</div>
+                        </div>
+                    </div>
+
+                    <!-- Webhook Event Simulator -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Simulate Webhook Event
+                        </h3>
+                        <form id="simulate-form" onsubmit="simulateWebhook(event)" class="space-y-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ticket ID</label>
+                                    <input type="text" id="sim-ticket" value="GRO-3340" required class="w-full bg-slate-950 text-slate-200 border border-slate-800 px-2.5 py-1.5 rounded text-xs font-semibold focus:outline-none focus:border-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Target Agent</label>
+                                    <select id="sim-agent" class="w-full bg-slate-950 text-slate-200 border border-slate-800 px-2 py-1.5 rounded text-xs font-semibold focus:outline-none focus:border-indigo-500">
+                                        <option value="agy">agy</option>
+                                        <option value="jules">jules</option>
+                                        <option value="fred">fred</option>
+                                        <option value="ned">ned</option>
+                                        <option value="kai">kai</option>
+                                        <option value="codex">codex</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Event Text / Title</label>
+                                <input type="text" id="sim-title" value="Integrate standalone dashboard widgets for telemetry tracking" required class="w-full bg-slate-950 text-slate-200 border border-slate-800 px-2.5 py-1.5 rounded text-xs font-semibold focus:outline-none focus:border-indigo-500">
+                            </div>
+                            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded text-xs uppercase tracking-wider transition">
+                                Send Event Signal
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard signal summary -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-emerald-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Dispatcher</span>
+                        <span id="summary-dispatcher-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-dispatcher-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for loop telemetry</div>
+                </div>
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-cyan-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Recovery</span>
+                        <span id="summary-recovery-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-recovery-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for recovery surface</div>
+                </div>
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-amber-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Quota</span>
+                        <span id="summary-quota-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-quota-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for freshness data</div>
+                </div>
+            </div>
+
+            <!-- Dashboard summary widgets -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Swarm Activity Feed -->
+                <div class="glass-panel p-5 rounded-xl space-y-4">
+                    <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                        Swarm Activity Feed
+                    </h3>
+                    <div class="space-y-2 max-h-[220px] overflow-y-auto" id="dashboard-activity">
+                        <!-- Items rendered by javascript -->
+                    </div>
+                </div>
+                <!-- Workspaces Summary -->
+                <div class="glass-panel min-w-0 p-5 rounded-xl space-y-4">
+                    <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                        Active Workspace Contexts
+                    </h3>
+                    <div class="max-w-full overflow-x-auto">
+                        <table class="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
+                                    <th class="py-2 px-3">Context Name</th>
+                                    <th class="py-2 px-3">Branch</th>
+                                    <th class="py-2 px-3">Status</th>
+                                    <th class="py-2 px-3">Files</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-workspaces">
+                                <!-- Items rendered by javascript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- Canonical AGY Activity -->
+                <div id="agy-activity-panel" class="glass-panel p-5 rounded-xl space-y-4 lg:col-span-2">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">AGY Exact-Run Activity</h3>
+                        <span id="agy-activity-policy" class="px-2 py-1 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-200">No wall-clock cap · monitor only</span>
+                    </div>
+                    <p class="text-xs text-slate-500">Durable process-tree, CPU, I/O, log, and artifact activity receipts. Quiet or suspect is a review signal—not an automatic kill.</p>
+                    <div id="agy-activity-summary" class="text-xs text-slate-400">Loading canonical AGY activity…</div>
+                    <div id="agy-activity-runs" class="grid grid-cols-1 xl:grid-cols-2 gap-3"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 2: INGESTION QUEUE (the standalone stats + loop + queue history) -->

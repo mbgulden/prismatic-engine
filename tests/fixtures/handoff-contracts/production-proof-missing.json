@@ -1,0 +1,57 @@
+{
+  "handoff_id": "GRO-549:production-proof-missing",
+  "source": {
+    "agent": "fred"
+  },
+  "target": {
+    "agent": "fred",
+    "required_capabilities": [
+      "production_deploy",
+      "browser_proof"
+    ]
+  },
+  "work": {
+    "issue": "GRO-549",
+    "scope": "production route repair",
+    "base": "origin/main",
+    "allowed_paths": [
+      "prismatic/gateway/server.py"
+    ],
+    "production_facing": true
+  },
+  "acceptance": {
+    "expected_markers": [
+      "PRODUCTION_ROUTE_FIXED_OK"
+    ],
+    "not_claiming": [
+      "canonical_full_suite_green"
+    ]
+  },
+  "retry": {
+    "on_missing_result": "pause_and_require_review",
+    "on_verification_failure": "return_to_source_with_evidence"
+  },
+  "evidence": {
+    "required_artifacts": [
+      "PR URL",
+      "commit SHA"
+    ],
+    "production_proof": {
+      "required": true,
+      "artifacts": []
+    }
+  },
+  "result": {
+    "status": "pass",
+    "changed_paths": [
+      "prismatic/gateway/server.py"
+    ],
+    "artifacts": [
+      "PR URL",
+      "commit SHA"
+    ],
+    "claims": [
+      "production fixed"
+    ]
+  }
+}

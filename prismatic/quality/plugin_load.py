@@ -132,22 +132,37 @@ class PluginLoadResult:
 
 
 def read_core_version(repo_root: Path | None = None) -> str:
-    """Read the engine version from pyproject.toml.
+    """Read the engine version from runtime prismatic package or pyproject.toml.
 
-    Falls back to "0.0.0" if pyproject.toml is missing or malformed.
+    Falls back to "0.0.0" if version cannot be determined.
     Never raises — gate should fail with a clear message, not crash.
     """
+    try:
+        import prismatic
+
+        ver = getattr(prismatic, "__version__", None)
+        if ver and isinstance(ver, str) and ver != "0.0.0":
+            return ver
+    except Exception:
+        pass
+
+    try:
+        import importlib.metadata
+
+        return importlib.metadata.version("prismatic-engine")
+    except Exception:
+        pass
+
     root = repo_root or _find_repo_root()
     pyproject = root / "pyproject.toml"
-    if not pyproject.exists():
-        return "0.0.0"
-    try:
-        text = pyproject.read_text()
-        match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-        if match:
-            return match.group(1)
-    except OSError:
-        pass
+    if pyproject.exists():
+        try:
+            text = pyproject.read_text(encoding="utf-8")
+            match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+            if match:
+                return match.group(1)
+        except OSError:
+            pass
     return "0.0.0"
 
 
@@ -245,7 +260,9 @@ def verify_shipped_plugins_load(
     if repo_root is None:
         repo_root = _find_repo_root()
     if plugins_dir is None:
-        plugins_dir = repo_root / "plugins"
+        from prismatic.plugin_architecture import default_plugins_dir
+
+        plugins_dir = default_plugins_dir()
     if core_version is None:
         core_version = read_core_version(repo_root)
 

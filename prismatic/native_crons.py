@@ -18,7 +18,32 @@ CRON_STATE_DELETED = "deleted"
 QUEUE_STATES = {CRON_STATE_ACTIVE, CRON_STATE_PAUSED}
 NON_QUEUE_STATES = {CRON_STATE_DEACTIVATED, CRON_STATE_DELETED}
 
-Action = Literal["pause", "resume", "deactivate", "activate", "delete", "run"]
+Action = Literal["pause", "resume", "deactivate", "activate", "delete", "run", "recover"]
+
+
+def validate_cron_dag_cycles(crons: Sequence[NativeCron]) -> list[str]:
+    """Detect circular dependencies in depends_on DAG using Depth-First Search."""
+    graph = {c.id: set(c.depends_on) for c in crons}
+    visited: set[str] = set()
+    rec_stack: set[str] = set()
+    cycles: list[str] = []
+
+    def dfs(node: str, path: list[str]) -> None:
+        visited.add(node)
+        rec_stack.add(node)
+        for dep in graph.get(node, []):
+            if dep not in visited:
+                dfs(dep, path + [dep])
+            elif dep in rec_stack:
+                cycle_str = " -> ".join(path + [dep])
+                cycles.append(cycle_str)
+        rec_stack.remove(node)
+
+    for cron_id in graph:
+        if cron_id not in visited:
+            dfs(cron_id, [cron_id])
+
+    return cycles
 
 
 def repo_root() -> Path:
@@ -95,36 +120,36 @@ SEO_NATIVE_CRONS: list[NativeCron] = [
     ),
     NativeCron(
         id="seo.aot-weekly-rankings",
-        name="SEO — AOT weekly rankings change report",
+        name="SEO — Managed site weekly rankings change report",
         schedule="0 4 * * 1",
         command=["python3", "scripts/seo/aot_kpi_tracker.py"],
         cwd=".",
         group="seo",
-        description="Pull weekly Active Oahu + competitor keyword snapshots and preserve the last good baseline.",
-        tags=["seo", "active-oahu", "rankings", "ubersuggest"],
+        description="Pull weekly target domain + competitor keyword snapshots and preserve the last good baseline.",
+        tags=["seo", "site-rankings", "rankings", "ubersuggest"],
         depends_on=["seo.ubersuggest-token-refresh"],
     ),
     NativeCron(
         id="seo.aot-competitor-velocity",
-        name="SEO — AOT competitor content velocity",
+        name="SEO — Competitor content velocity",
         schedule="0 6 * * 0",
         command=["python3", "scripts/seo/competitor_velocity.py"],
         cwd=".",
         group="seo",
-        description="Monitor competitor top-page movement and alert when new content enters Active Oahu territory.",
-        tags=["seo", "active-oahu", "competitor-monitoring", "ubersuggest"],
+        description="Monitor competitor top-page movement and alert when new content enters monitored territory.",
+        tags=["seo", "competitor-monitoring", "ubersuggest"],
         depends_on=["seo.ubersuggest-token-refresh"],
     ),
     NativeCron(
         id="seo.aot-full-sweep",
-        name="SEO — AOT full competitive sweep",
+        name="SEO — Full competitive sweep",
         schedule="manual",
         command=["python3", "scripts/seo/seo_full_sweep.py"],
         cwd=".",
         group="seo",
-        description="On-demand seven-phase competitive SEO sweep for Active Oahu.",
+        description="On-demand seven-phase competitive SEO sweep for monitored domain.",
         state=CRON_STATE_DEACTIVATED,
-        tags=["seo", "active-oahu", "competitive-audit", "manual"],
+        tags=["seo", "competitive-audit", "manual"],
         depends_on=["seo.ubersuggest-token-refresh"],
     ),
     NativeCron(
@@ -155,61 +180,61 @@ SEO_NATIVE_CRONS: list[NativeCron] = [
         command=["python3", "scripts/seo/gsc_query_page_export.py"],
         cwd=".",
         group="seo",
-        description="Export Google Search Console query/page rows for sc-domain:activeoahutours.com as the own-site source of truth.",
-        tags=["seo", "active-oahu", "gsc", "own-site-truth"],
+        description="Export Google Search Console query/page rows for monitored domain as the own-site source of truth.",
+        tags=["seo", "gsc", "own-site-truth"],
     ),
     NativeCron(
         id="seo.aot-counter-content-briefs",
-        name="SEO — AOT counter-content brief generator",
+        name="SEO — Counter-content brief generator",
         schedule="30 7 * * 0",
         command=["python3", "scripts/seo/gsc_ubersuggest_countercontent.py"],
         cwd=".",
         group="seo",
         description="Pair weekly competitor velocity data with GSC own-site evidence and produce counter-content briefs.",
-        tags=["seo", "active-oahu", "gsc", "ubersuggest", "content-briefs"],
+        tags=["seo", "gsc", "ubersuggest", "content-briefs"],
         depends_on=["seo.gsc-query-page-export", "seo.aot-competitor-velocity"],
     ),
     NativeCron(
         id="seo.aot-internal-link-orphan-audit",
-        name="SEO — AOT internal link/orphan audit",
+        name="SEO — Internal link/orphan audit",
         schedule="15 8 * * 1",
         command=["python3", "scripts/seo/internal_link_orphan_audit.py"],
         cwd=".",
         group="seo",
-        description="Crawl the static AOT site export to build a link graph, find orphan pages, and surface internal-link quality issues.",
-        tags=["seo", "active-oahu", "internal-links", "orphan-pages"],
+        description="Crawl the static site export to build a link graph, find orphan pages, and surface internal-link quality issues.",
+        tags=["seo", "internal-links", "orphan-pages"],
     ),
     NativeCron(
         id="seo.aot-structured-data-drift-audit",
-        name="SEO — AOT structured data drift audit",
+        name="SEO — Structured data drift audit",
         schedule="45 8 * * 1",
         command=["python3", "scripts/seo/structured_data_drift_audit.py"],
         cwd=".",
         group="seo",
         description="Parse static HTML JSON-LD blocks, count schema types, and flag parse/schema drift.",
-        tags=["seo", "active-oahu", "schema", "structured-data"],
+        tags=["seo", "schema", "structured-data"],
     ),
     NativeCron(
         id="seo.aot-sitemap-gsc-verification",
-        name="SEO — AOT sitemap/GSC verification",
+        name="SEO — Sitemap/GSC verification",
         schedule="manual",
         command=["python3", "scripts/seo/sitemap_gsc_verification.py"],
         cwd=".",
         group="seo",
         description="Verify live sitemap.xml against Google Search Console sitemap API. Manual/post-deploy because submission is gated by Google auth.",
         state=CRON_STATE_DEACTIVATED,
-        tags=["seo", "active-oahu", "gsc", "sitemap", "manual", "post-deploy"],
+        tags=["seo", "gsc", "sitemap", "manual", "post-deploy"],
         depends_on=["seo.gsc-query-page-export"],
     ),
     NativeCron(
         id="seo.aot-lighthouse-seo-a11y-monitor",
-        name="SEO — AOT Lighthouse SEO/A11y monitor",
+        name="SEO — Lighthouse SEO/A11y monitor",
         schedule="30 9 * * 1",
         command=["python3", "scripts/seo/lighthouse_seo_a11y_monitor.py"],
         cwd=".",
         group="seo",
-        description="Run rendered Lighthouse SEO/A11y/Best-Practices checks on priority AOT routes, with static fallback artifacts when Lighthouse is unavailable.",
-        tags=["seo", "active-oahu", "lighthouse", "accessibility", "post-deploy"],
+        description="Run rendered Lighthouse SEO/A11y/Best-Practices checks on priority routes, with static fallback artifacts when Lighthouse is unavailable.",
+        tags=["seo", "lighthouse", "accessibility", "post-deploy"],
     ),
 ]
 
@@ -324,6 +349,23 @@ class NativeCronStore:
                 crons[index] = cron
                 self.save(crons)
                 return {"success": result["status"] == "success", "cron": cron.to_dict(), "run": result}
+            elif action == "recover":
+                # Replay up to 3 missed executions
+                replays = []
+                for _ in range(3):
+                    res = run_native_cron(cron)
+                    replays.append(res)
+                    if res["status"] != "success":
+                        break
+                last_res = replays[-1]
+                cron.last_run_at = last_res["ran_at"]
+                cron.last_status = last_res["status"]
+                cron.last_exit_code = last_res["exit_code"]
+                cron.last_stdout = last_res["stdout"][-4000:]
+                cron.last_stderr = last_res["stderr"][-4000:]
+                crons[index] = cron
+                self.save(crons)
+                return {"success": last_res["status"] == "success", "cron": cron.to_dict(), "replays_count": len(replays), "replays": replays}
             else:
                 raise ValueError(f"Unsupported native cron action: {action}")
             cron.updated_at = _now()

@@ -20,26 +20,27 @@ governance:
 # ── Lane Definitions ────────────────────────────────────
 # Which agent owns which paths. Agents can only write to files within their lanes.
 lanes:
-  fred:
-    - "src/"
+  orchestrator:
+    - "config/"
     - "infra/"
     - "deploy/"
     - ".github/"
-  ned:
-    - "scripts/"
+  architect:
+    - "specs/"
+    - "architecture/"
+    - "designs/"
+  executor:
+    - "src/"
     - "prismatic/"
     - "plugins/"
-    - "src/"
+    - "scripts/"
+  verifier:
     - "tests/"
-  agy:
-    - "research/"
-    - "assets/"
-  kai:
-    - "content/"
-    - "active-oahu/"
-  jules:
-    - "src/"
-    - "tests/"
+    - "verification/"
+  curator:
+    - "docs/"
+    - "reports/"
+    - "ledger/"
 
 # ── Pipeline Configuration ──────────────────────────────
 pipeline:

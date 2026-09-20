@@ -1,0 +1,157 @@
+{
+  "delivery_cadence": {
+    "daily": {
+      "kind": "daily"
+    },
+    "monthly": {
+      "kind": "monthly"
+    },
+    "weekly": {
+      "kind": "weekly"
+    }
+  },
+  "domain": "activeoahutours.com",
+  "expected_data_layer_events": [
+    "booking_click",
+    "booking_complete"
+  ],
+  "extends": "hd-engine",
+  "extends_note": "Active Oahu Tours booking funnel derived from HDE's framework. Drops Sanctuary + delivery_onboarding; adds booking_provider FAREHARBOR domain events and GSC queries.",
+  "ga4_recommended_events": [
+    "begin_checkout",
+    "purchase"
+  ],
+  "metrics": {
+    "funnel_booking.begin_checkout": {
+      "event": "begin_checkout",
+      "id": "begin_checkout",
+      "label": "begin_checkout",
+      "source": "ga4"
+    },
+    "funnel_booking.booking_click": {
+      "event": "booking_click",
+      "front_of_card": true,
+      "id": "booking_click",
+      "label": "Booking click",
+      "source": "ga4"
+    },
+    "funnel_booking.booking_conversion_rate": {
+      "format": "percent",
+      "formula": "booking_complete / booking_click",
+      "front_of_card": true,
+      "id": "booking_conversion_rate",
+      "label": "Click \u2192 complete conversion",
+      "source": "derived"
+    },
+    "funnel_booking.booking_revenue_notes": {
+      "id": "booking_revenue_notes",
+      "label": "Booking-revenue provenance note",
+      "source": "internal"
+    },
+    "funnel_booking.booking_revenue_usd": {
+      "event": "fareharbor.imported.completed",
+      "id": "booking_revenue_usd",
+      "label": "Imported booking revenue (USD)",
+      "source": "internal"
+    },
+    "funnel_booking.booking_start": {
+      "event": "booking_start",
+      "id": "booking_start",
+      "label": "Booking start",
+      "source": "ga4"
+    },
+    "funnel_booking.generate_lead_total": {
+      "event": "generate_lead",
+      "front_of_card": true,
+      "id": "generate_lead_total",
+      "label": "Leads generated (off-site)",
+      "source": "ga4"
+    },
+    "funnel_booking.purchase_total": {
+      "event": "purchase",
+      "front_of_card": true,
+      "id": "purchase_total",
+      "label": "Bookings completed",
+      "source": "ga4"
+    },
+    "funnel_top.tour_filter_used": {
+      "event": "tour_filter_used",
+      "id": "tour_filter_used",
+      "label": "Filter interactions",
+      "source": "ga4"
+    },
+    "funnel_top.tour_page_view": {
+      "filter": "path =~ /tours/",
+      "id": "tour_page_view",
+      "label": "Tour page views",
+      "source": "ga4"
+    },
+    "generate_lead": {
+      "event": "generate_lead",
+      "format": "number",
+      "front_of_card": false,
+      "id": "generate_lead",
+      "label": "Generate Lead",
+      "source": "ga4"
+    },
+    "purchase": {
+      "event": "purchase",
+      "format": "number",
+      "front_of_card": false,
+      "id": "purchase",
+      "label": "Purchase",
+      "source": "ga4"
+    },
+    "search_gsc.weekly_avg_position": {
+      "filter": "sc-domain:activeoahutours.com",
+      "id": "weekly_avg_position",
+      "label": "Weekly avg position",
+      "source": "gsc"
+    },
+    "search_gsc.weekly_organic_clicks": {
+      "filter": "sc-domain:activeoahutours.com",
+      "id": "weekly_organic_clicks",
+      "label": "Weekly organic clicks",
+      "source": "gsc"
+    },
+    "search_gsc.weekly_organic_impressions": {
+      "filter": "sc-domain:activeoahutours.com",
+      "id": "weekly_organic_impressions",
+      "label": "Weekly organic impressions",
+      "source": "gsc"
+    },
+    "site_hygiene.indexed_pct": {
+      "format": "percent",
+      "id": "indexed_pct",
+      "label": "Indexed pages / sitemap",
+      "source": "gsc"
+    },
+    "site_hygiene.sitemap_coverage_pct": {
+      "format": "percent",
+      "id": "sitemap_coverage_pct",
+      "label": "Sitemap GA4 coverage",
+      "source": "verifier"
+    }
+  },
+  "name": "active-oahu-funnel",
+  "owner": "ned",
+  "schema_version": "1.0",
+  "share_targets": {
+    "credential_file_env": "AOT_GOOGLE_SERVICE_ACCOUNT_JSON",
+    "dashboard_route": "/pwp/kpi/",
+    "dashboard_section_label": "Active Oahu KPI tracker",
+    "email_to_default": "mbgulden@gmail.com",
+    "email_to_env": "AOT_KPI_EMAIL_TO",
+    "google_sheet_id_env": "AOT_KPI_SHEET_ID"
+  },
+  "site": {
+    "expected_dataLayer_events": [
+      "booking_click",
+      "booking_complete"
+    ],
+    "operator": "ned",
+    "title": "Active Oahu Tours"
+  },
+  "site_slug": "active-oahu",
+  "tracking_property": "G-PRRRLMBR8Z"
+}

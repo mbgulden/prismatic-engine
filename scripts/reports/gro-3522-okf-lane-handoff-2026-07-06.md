@@ -1,5 +1,7 @@
 # GRO-3522 OKF lane handoff — 2026-07-06
 
+> **Historical blocked handoff — not current authority.** Preserved branch artifacts below remain lineage evidence only. Current precedence: `docs/index.md`; machine registry: `okf/index.yaml`.
+
 ## Summary
 
 Ned prepared the canonical merge winner map for GRO-3522 and verified it locally, but the publishable OKF portion is outside Ned's current push lane.

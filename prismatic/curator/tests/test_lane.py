@@ -321,8 +321,11 @@ def test_tick_dispatch_uses_github_pr_handoff_identifier(tmp_path: Path, monkeyp
 
 def test_github_webhook_publishes_header_event_type(monkeypatch):
     import asyncio
+    import hashlib as hashlib_module
+    import hmac as hmac_module
     import json as json_module
     import prismatic.gateway.event_bus as event_bus
+    import prismatic.gateway.server as server_module
     from prismatic.gateway.server import github_webhook
 
     published = []
@@ -331,13 +334,20 @@ def test_github_webhook_publishes_header_event_type(monkeypatch):
         async def publish(self, **kwargs):
             published.append(kwargs)
 
+    body = json_module.dumps({"action": "opened"}).encode()
+    secret = "test-github-secret"
+    sig = "sha256=" + hmac_module.new(
+        secret.encode(), body, hashlib_module.sha256
+    ).hexdigest()
+
     class Request:
-        headers = {"X-GitHub-Event": "pull_request"}
+        headers = {"X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sig}
 
         async def body(self):
-            return json_module.dumps({"action": "opened"}).encode()
+            return body
 
     monkeypatch.setattr(event_bus, "get_event_bus", lambda: Bus())
+    monkeypatch.setattr(server_module, "get_github_secrets", lambda: [secret])
     asyncio.run(github_webhook(Request()))  # type: ignore[arg-type]
 
     assert published == [

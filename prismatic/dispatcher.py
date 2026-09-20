@@ -51,6 +51,11 @@ from .telemetry import get_collector
 from .capability_router import default_capability_registry, route_issue
 from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 from .mode_switch import get_mode_switch
+from .handoff_contracts import (
+    HandoffValidationResult,
+    extract_handoff_packet,
+    validation_result,
+)
 from .linear_rate_limit import (
     LinearRateLimitCircuitOpen,
     ensure_linear_circuit_closed,
@@ -222,6 +227,56 @@ def check_active_processes() -> int:
     return released
 
 
+def _handoff_preflight_message(identifier: str, result: HandoffValidationResult) -> str:
+    errors = "\n".join(f"- {error}" for error in result.errors)
+    if not errors:
+        errors = "- unknown handoff contract validation failure"
+    return (
+        "🚫 **Handoff contract preflight failed**\n\n"
+        f"Issue/task: `{identifier}`\n"
+        f"Status: `{result.status}`\n"
+        f"Reason: `{result.reason}`\n"
+        f"Target agent: `{result.target_agent or 'needs_manual_review'}`\n\n"
+        f"Errors:\n{errors}\n\n"
+        "No agent was launched. Fix the handoff packet and rerun dispatch."
+    )
+
+
+def handoff_dispatch_preflight(
+    container: Any, agent_name: str, identifier: str = ""
+) -> HandoffValidationResult | None:
+    """Fail closed for invalid embedded handoff packets before launching agents.
+
+    Missing handoff metadata means the issue/task is not using the GRO-549
+    handoff contract yet and should continue through the existing dispatch path.
+    """
+    packet = extract_handoff_packet(container)
+    if packet is None:
+        return None
+    result = validation_result(packet)
+    if result.ok and result.target_agent != agent_name:
+        return HandoffValidationResult(
+            ok=False,
+            status="blocked",
+            reason="target_agent_mismatch",
+            errors=(
+                f"handoff target agent {result.target_agent!r} does not match "
+                f"dispatch lane {agent_name!r}",
+            ),
+            target_agent=result.target_agent,
+        )
+    return result
+
+
+def _mark_handoff_preflight_failure(
+    issue_id: str, identifier: str, result: HandoffValidationResult
+) -> None:
+    try:
+        add_comment(issue_id, _handoff_preflight_message(identifier, result))
+    except Exception:
+        pass
+
+
 def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int:
     if local_task_queue is None:
         try:
@@ -232,12 +287,61 @@ def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int
             return 0
     dispatched = 0
     for task in local_task_queue.list_queued(limit=25):
+        preflight = handoff_dispatch_preflight(task, task.agent, task.id)
+        if preflight is not None and not preflight.ok:
+            status = "needs_manual_review" if preflight.is_manual_review else "blocked"
+            local_task_queue.update_status(
+                task.id,
+                status,
+                metadata_patch={
+                    "handoff_preflight_status": preflight.status,
+                    "handoff_preflight_reason": preflight.reason,
+                    "handoff_preflight_errors": list(preflight.errors),
+                },
+            )
+            print(
+                f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
+                f"for local task {task.id}: {preflight.reason}"
+            )
+            # Fail closed: a blocked/manual-review task must not proceed to
+            # affinity checks or launching. The task stays blocked in the
+            # queue until the handoff packet is fixed.
+            continue
+        # Validate node affinity if specified
+        task_meta = getattr(task, "metadata", None)
+        if isinstance(task_meta, dict):
+            affinity = extract_node_affinity(task_meta)
+            if affinity:
+                aff_ok, aff_reason = check_node_affinity(affinity)
+                if not aff_ok:
+                    local_task_queue.update_status(
+                        task.id,
+                        "blocked",
+                        metadata_patch={
+                            "handoff_preflight_status": "blocked",
+                            "handoff_preflight_reason": f"node affinity failed: {aff_reason}",
+                        },
+                    )
+                    print(
+                        f"[dispatcher] 🚫 Node affinity check failed for local task {task.id}: {aff_reason}"
+                    )
+                    continue
+
         launcher = AGENT_LAUNCHERS.get(task.agent)
+
         if not launcher:
             continue
         result = launcher(task.id, title=task.title, workspace=task.workspace)
         if result:
-            local_task_queue.update_status(task.id, "dispatched")
+            metadata_patch = None
+            if preflight is not None:
+                metadata_patch = {
+                    "handoff_preflight_status": preflight.status,
+                    "handoff_preflight_reason": preflight.reason,
+                }
+            local_task_queue.update_status(
+                task.id, "dispatched", metadata_patch=metadata_patch
+            )
             dispatched += 1
     return dispatched
 
@@ -1168,6 +1272,7 @@ def record_launch_record(
     sandbox_path: str | None = None,
     worktree_path: str | None = None,
     branch: str | None = None,
+    execution_context: str | None = None,
     status: str = "launched",
     db_path: str | None = None,
 ) -> str:
@@ -1189,6 +1294,7 @@ def record_launch_record(
         worktree_path=wt_path,
         branch=branch_name,
         sandbox_path=sandbox,
+        execution_context=execution_context,
     )
     target_db = db_path or _launch_records_db_path()
     db_dir = os.path.dirname(target_db)
@@ -1234,50 +1340,212 @@ def record_launch_record(
 # Agent Configuration
 # ═══════════════════════════════════════════════════════════════
 
-AGENT_CONFIG: dict[str, dict[str, Any]] = {
-    "fred": {
-        "executable": AGY_PATH,  # fred is a Hermes/AGY instance
-        "mode": "signal",
-        "timeout": 300,
-        "next_label": "agent::kai",
-        "description": "Hermes orchestrator — first in pipeline",
-    },
-    "kai": {
-        "executable": "kai",
-        "mode": "signal",
-        "timeout": 600,
-        "next_label": "agent::agy",
-        "description": "Active Oahu Tours bot — review & deploy",
-    },
-    "agy": {
-        "executable": AGY_PATH,
-        "mode": "launch",
-        "timeout": 900,
-        "next_label": "agent::jules",
-        "description": "Antigravity CLI — code generation",
-    },
-    "george": {
-        "executable": "hermes --profile george",
-        "mode": "visible_hermes",
-        "timeout": 600,
-        "next_label": "",
-        "description": "Prismatic workflow/dashboard verification guard",
-    },
-    "jules": {
-        "executable": JULES_PATH,
-        "mode": "launch",
-        "timeout": 600,
-        "next_label": "agent::codex",
-        "description": "Jules CLI — testing & QA",
-    },
-    "codex": {
-        "executable": CODEX_PATH,
-        "mode": "launch",
-        "timeout": 1200,
-        "next_label": "",  # terminal — pipeline complete
-        "description": "Codex CLI — final polish & PR",
-    },
-}
+def _build_dynamic_agent_config() -> dict[str, dict[str, Any]]:
+    """Dynamically discover and construct agent configuration dictionary."""
+    config: dict[str, dict[str, Any]] = {}
+    try:
+        from prismatic.agents.discovery import AgentDiscoveryService
+        profiles = AgentDiscoveryService.get_agents()
+        for p in profiles:
+            agent_id = p.agent_id.lower()
+            harness = str((p.metadata or {}).get("harness", "") or "").lower()
+            if not harness:
+                if "agy" in agent_id or "antigravity" in agent_id:
+                    harness = "antigravity"
+                elif "jules" in agent_id:
+                    harness = "jules"
+                elif "codex" in agent_id:
+                    harness = "codex"
+                else:
+                    harness = "hermes"
+
+            if "antigravity" in harness or "agy" in harness:
+                exe = AGY_PATH
+                mode = "launch"
+            elif "jules" in harness:
+                exe = JULES_PATH
+                mode = "launch"
+            elif "codex" in harness:
+                exe = CODEX_PATH
+                mode = "launch"
+            else:
+                exe = f"hermes --profile {p.agent_id}"
+                mode = "signal"
+            config[agent_id] = {
+                "executable": exe,
+                "mode": mode,
+                "timeout": 600,
+                "next_label": "",
+                "description": f"{p.name} — {p.role}",
+                "model": p.active_model,
+                "harness": harness,
+            }
+    except Exception:
+        pass
+
+    # Dispatch lanes for registered launchers that discovery does not cover
+    # (jules/codex use external binaries configured via JULES_PATH/CODEX_PATH
+    # and have mode-switch transitions registered in dispatch_once).
+    for agent_id, exe in (("jules", JULES_PATH), ("codex", CODEX_PATH)):
+        if agent_id not in config:
+            config[agent_id] = {
+                "executable": exe,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": f"{agent_id} — external agent launcher",
+                "harness": agent_id,
+            }
+
+    if not config:
+        config = {
+            "orchestrator": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": "Sovereign Orchestration Agent",
+            },
+            "architect": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 900,
+                "next_label": "",
+                "description": "System Architecture & Spec Agent",
+            },
+            "executor": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 1200,
+                "next_label": "",
+                "description": "Code Execution & Refactoring Agent",
+            },
+            "verifier": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 600,
+                "next_label": "",
+                "description": "Deterministic Verification & Test Agent",
+            },
+            "curator": {
+                "executable": AGY_PATH,
+                "mode": "launch",
+                "timeout": 300,
+                "next_label": "",
+                "description": "Ledger & Audit Curation Agent",
+            },
+        }
+    return config
+
+
+class DynamicAgentConfigDict(dict):
+    """Dict proxy that transparently refreshes discovered agents if empty."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_refresh = 0.0
+        self._ttl = 30.0
+        self._refreshing = False
+
+    def _ensure_fresh(self) -> None:
+        if self._refreshing:
+            return
+        now = time.time()
+        if super().__len__() == 0 or (now - self._last_refresh > self._ttl):
+            self._refreshing = True
+            try:
+                fresh = _build_dynamic_agent_config()
+                self.clear()
+                self.update(fresh)
+                self._last_refresh = now
+            finally:
+                self._refreshing = False
+
+    def __getitem__(self, key: Any) -> Any:
+        self._ensure_fresh()
+        return super().__getitem__(key)
+
+    def __iter__(self) -> Any:
+        self._ensure_fresh()
+        return super().__iter__()
+
+    def __len__(self) -> int:
+        self._ensure_fresh()
+        return super().__len__()
+
+    def __contains__(self, key: Any) -> bool:
+        self._ensure_fresh()
+        return super().__contains__(key)
+
+    def keys(self) -> Any:
+        self._ensure_fresh()
+        return super().keys()
+
+    def values(self) -> Any:
+        self._ensure_fresh()
+        return super().values()
+
+    def items(self) -> Any:
+        self._ensure_fresh()
+        return super().items()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._ensure_fresh()
+        return super().get(key, default)
+
+
+AGENT_CONFIG: dict[str, dict[str, Any]] = DynamicAgentConfigDict(_build_dynamic_agent_config())
+
+
+# Jules host-path pre-screen: Jules sessions cannot safely inspect host-only
+# paths such as the operator home directory or systemd state. Route those bounded ops to Ned
+# before launch so capacity is not consumed by an impossible Jules task.
+HOME_UBUNTU_MARKER = "/home/" + "ubuntu"
+_HOST_LEVEL_PATTERNS = [
+    HOME_UBUNTU_MARKER,
+    "~/.config",
+    "/etc",
+    "systemd",
+    "crontab",
+]
+
+
+def detect_host_level_patterns(issue: dict[str, Any]) -> list[str]:
+    text = f"{issue.get('title') or ''}\n{issue.get('description') or ''}".lower()
+    matches: list[str] = []
+    for pattern in _HOST_LEVEL_PATTERNS:
+        if pattern.lower() in text:
+            matches.append(pattern)
+    return matches
+
+
+def reroute_jules_host_path_issue(issue: dict[str, Any], matches: list[str]) -> bool:
+    issue_id = str(issue.get("id") or "")
+    identifier = str(issue.get("identifier") or issue_id)
+    if not issue_id:
+        return False
+    labels = get_issue_labels(issue_id)
+    existing = [label for label in labels if label.get("name") != "agent:jules"]
+    ned_label = get_label_id("agent:ned")
+    if not ned_label:
+        return False
+    label_ids: list[str] = []
+    for label in existing:
+        label_id = label.get("id")
+        if label_id:
+            label_ids.append(label_id)
+    if ned_label not in label_ids:
+        label_ids.append(ned_label)
+    if not set_labels(issue_id, label_ids):
+        return False
+    safe_matches = ", ".join(str(match)[:80] for match in matches[:8])
+    add_comment(
+        issue_id,
+        "Jules host-path pre-screen: rerouted "
+        f"{identifier} from agent:jules to agent:ned because Jules cannot safely access host-level paths/patterns: "
+        f"{safe_matches}. Added agent:ned; preserved other labels.",
+    )
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1636,6 +1904,176 @@ def launch_visible_hermes_agent(
         return None
 
 
+AGY_SHARED_SKILL_PACKS = [
+    "shared/prismatic-completed-work-contract",
+    "shared/prismatic-proof-packet",
+    "shared/prismatic-non-claims",
+    "shared/prismatic-safe-file-scope",
+]
+
+AGY_AGENT_SKILL_PACKS = [
+    "agy/agy-structured-result-packet",
+    "agy/agy-one-task-scope",
+    "agy/agy-dashboard-work",
+    "agy/agy-model-preflight",
+]
+
+
+def _redact_agent_context_text(value: str) -> str:
+    """Best-effort redaction before writing work-packet context files."""
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s`'\"]+",
+        r"\1=[REDACTED]",
+        value,
+    )
+    redacted = re.sub(r"ghp_[A-Za-z0-9_]{20,}", "[REDACTED_GITHUB_TOKEN]", redacted)
+    redacted = re.sub(
+        r"github_pat_[A-Za-z0-9_]{20,}", "[REDACTED_GITHUB_TOKEN]", redacted
+    )
+    redacted = re.sub(
+        r"xox[baprs]-[A-Za-z0-9-]{10,}", "[REDACTED_SLACK_TOKEN]", redacted
+    )
+    redacted = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]", redacted)
+    return redacted
+
+
+def _write_agy_context_pack(
+    *,
+    context_dir: Path,
+    issue_id: str,
+    identifier: str,
+    title_or_task: str,
+    expected_marker: str,
+    blocked_marker: str,
+    labels: list[str] | None,
+    worktree_path: str,
+    log_path: Path,
+) -> dict[str, str]:
+    """Write Kai/Michael-style work packet files for AGY print-mode launches.
+
+    Keep the CLI prompt small and put durable workflow memory in files. AGY is
+    instructed to read the work packet, then emit the same compact completed-work
+    packet contract Fred documented for future agent lanes.
+    """
+    context_dir.mkdir(parents=True, exist_ok=True)
+    safe_title = _redact_agent_context_text(title_or_task or identifier or issue_id)
+    safe_labels = [_redact_agent_context_text(str(label)) for label in (labels or [])]
+    shared_packs = ",".join(AGY_SHARED_SKILL_PACKS)
+    agent_packs = ",".join(AGY_AGENT_SKILL_PACKS)
+
+    work_packet = f"""# AGY Work Packet — {identifier}
+
+Status marker: `AGY_CLI_CONTEXT_PACK_OK`
+
+## Assignment
+
+| Field | Value |
+|---|---|
+| agent | `agy` |
+| issue_id | `{issue_id}` |
+| identifier | `{identifier}` |
+| title_or_task | `{safe_title}` |
+| worktree_path | `{worktree_path}` |
+| output_log | `{log_path}` |
+
+## Labels
+
+```text
+{chr(10).join(safe_labels) if safe_labels else "none_provided"}
+```
+
+## Scope rules
+
+1. Work only this assignment.
+2. Do not launch other agents.
+3. Do not enable auto-merge.
+4. Do not deploy production.
+5. Do not create a real GitHub PR unless this exact packet explicitly says it is authorized.
+6. Keep detailed command/test output in a log or artifact file; stdout must end with the compact packet.
+
+## Required final compact output
+
+```text
+skill_pack_state=loaded
+shared_skill_packs={shared_packs}
+agent_skill_packs={agent_packs}
+packet_contract_version=prismatic-completed-work-v1
+packet_validation=passed
+COMMAND=<exact command/proof you ran or observation-only proof>
+RESULT=<PASS|BLOCKED|FAIL>
+LOG=<path or summary>
+SCOPE=<what you verified>
+AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>
+NOT_CLAIMING=<explicit non-claims>
+MARKER={expected_marker}
+```
+
+If blocked, use `MARKER={blocked_marker}` and include a concrete blocker.
+"""
+
+    packet_contract = f"""# AGY Packet Contract
+
+This is the standardized Prismatic completed-work output contract. It is the
+same contract used by Fred/George/Kai review lanes so AGY output can flow into
+completed-work ingestion, dashboard status, Linear writeback, raw-output repair,
+and future merge/review gates without bespoke parsing.
+
+## Skill packs represented in this packet
+
+```text
+{chr(10).join([*AGY_SHARED_SKILL_PACKS, *AGY_AGENT_SKILL_PACKS])}
+```
+
+## Non-claims to include unless explicitly proven and authorized
+
+```text
+auto_merge_enabled
+production_deploy
+real_github_pr_created
+live_Linear_mutations_without_approval
+bulk_agy_dispatch
+canonical_full_suite_green
+```
+"""
+
+    context_pack = f"""# AGY CLI Context Pack
+
+Read these files before working:
+
+1. `WORK_PACKET.md` — assignment, scope, proof, marker, and output contract.
+2. `PACKET_CONTRACT.md` — standardized output/non-claims contract.
+
+## Launch optimization
+
+The dispatcher intentionally keeps the `agy --print` prompt tiny and stores
+workflow memory here on disk. This reduces prompt bloat while preserving the
+standardized work-packet theory Michael/Kai have been using: durable context in
+files, compact packet on stdout, infrastructure fallback when output is malformed.
+
+## Expected marker
+
+```text
+{expected_marker}
+```
+
+## Blocked marker
+
+```text
+{blocked_marker}
+```
+"""
+
+    files = {
+        "work_packet": context_dir / "WORK_PACKET.md",
+        "packet_contract": context_dir / "PACKET_CONTRACT.md",
+        "context_pack": context_dir / "CONTEXT_PACK.md",
+    }
+    files["work_packet"].write_text(work_packet, encoding="utf-8")
+    files["packet_contract"].write_text(packet_contract, encoding="utf-8")
+    files["context_pack"].write_text(context_pack, encoding="utf-8")
+    return {key: str(path) for key, path in files.items()}
+
+
 def launch_agy(
     issue_id: str,
     task: str = "",
@@ -1697,51 +2135,32 @@ def launch_agy(
             if (identifier or issue_id) == "GRO-3954"
             else f"AGY_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_BLOCKED"
         )
-        shared_skill_packs = [
-            "shared/prismatic-completed-work-contract",
-            "shared/prismatic-proof-packet",
-            "shared/prismatic-non-claims",
-            "shared/prismatic-safe-file-scope",
-        ]
-        agy_skill_packs = [
-            "agy/agy-structured-result-packet",
-            "agy/agy-one-task-scope",
-            "agy/agy-dashboard-work",
-            "agy/agy-model-preflight",
-        ]
-        prompt = (
-            f"You are AGY working one Prismatic Engine Linear task: {identifier or issue_id}.\n"
-            f"Issue/title: {task or title or identifier or issue_id}\n\n"
-            "MANDATORY SKILL PACKS — treat these as loaded/called before you work:\n"
-            + "\n".join(f"- {pack}" for pack in [*shared_skill_packs, *agy_skill_packs])
-            + "\n\n"
-            "Do only this scoped task. Do not launch other agents, do not enable auto-merge, "
-            "do not deploy production, and do not create real GitHub PRs unless explicitly assigned.\n\n"
-            "You MUST finish by printing a compact completed-work packet to stdout with exact lines. "
-            "If you cannot complete the task, print RESULT=BLOCKED and a concrete blocker.\n"
-            "The dispatcher captures stdout into the AGY output log and the reconciler only classifies exact packet lines.\n\n"
-            "Required final lines:\n"
-            "skill_pack_state=loaded\n"
-            f"shared_skill_packs={','.join(shared_skill_packs)}\n"
-            f"agent_skill_packs={','.join(agy_skill_packs)}\n"
-            "packet_contract_version=prismatic-completed-work-v1\n"
-            "packet_validation=passed\n"
-            "COMMAND=<exact command/proof you ran or observation-only proof>\n"
-            "RESULT=<PASS|BLOCKED|FAIL>\n"
-            "LOG=<path or summary>\n"
-            "SCOPE=<what you verified>\n"
-            "AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>\n"
-            "NOT_CLAIMING=<explicit non-claims>\n"
-            f"MARKER={expected_marker}  # use MARKER={blocked_marker} when RESULT=BLOCKED\n"
-        )
         run_log_dir = Path(
             os.environ.get("PRISMATIC_AGENT_RUN_LOG_DIR", "/tmp/prismatic-agent-runs")
         )
         run_log_dir.mkdir(parents=True, exist_ok=True)
         log_token = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier or issue_id)[:80]
-        log_path = (
-            run_log_dir
-            / f"agy-{log_token}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.log"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = run_log_dir / f"agy-{log_token}-{timestamp}.log"
+        worktree_path = os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()
+        context_dir = run_log_dir / f"agy-{log_token}-{timestamp}-context"
+        context_files = _write_agy_context_pack(
+            context_dir=context_dir,
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            title_or_task=task or title or identifier or issue_id,
+            expected_marker=expected_marker,
+            blocked_marker=blocked_marker,
+            labels=labels,
+            worktree_path=worktree_path,
+            log_path=log_path,
+        )
+        prompt = (
+            f"You are AGY working one Prismatic Engine task: {identifier or issue_id}.\n"
+            f"Read this context pack first: {context_files['context_pack']}\n"
+            f"Then follow this work packet exactly: {context_files['work_packet']}\n"
+            "Keep stdout compact. Finish with the exact standardized completed-work packet lines from WORK_PACKET.md.\n"
+            f"Expected success marker: {expected_marker}. Blocked marker: {blocked_marker}.\n"
         )
         cmd = [
             resolved_agy_path,
@@ -1751,7 +2170,9 @@ def launch_agy(
             "--print-timeout",
             os.environ.get("PRISMATIC_AGY_PRINT_TIMEOUT", "45m0s"),
             "--add-dir",
-            os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd(),
+            worktree_path,
+            "--add-dir",
+            str(context_dir),
             "--log-file",
             str(log_path),
         ]
@@ -1805,9 +2226,11 @@ def launch_agy(
                 [
                     "set +e",
                     "printf '%s\\n' 'AGY_OUTPUT_CAPTURE_WRAPPER_STARTED' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'context_pack_path={context_files['context_pack']}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'work_packet_path={context_files['work_packet']}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
                     "printf '%s\\n' 'skill_pack_state=loaded' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
-                    "printf '%s\\n' 'shared_skill_packs=shared/prismatic-completed-work-contract,shared/prismatic-proof-packet,shared/prismatic-non-claims,shared/prismatic-safe-file-scope' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
-                    "printf '%s\\n' 'agent_skill_packs=agy/agy-structured-result-packet,agy/agy-one-task-scope,agy/agy-dashboard-work,agy/agy-model-preflight' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'shared_skill_packs={','.join(AGY_SHARED_SKILL_PACKS)}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'agent_skill_packs={','.join(AGY_AGENT_SKILL_PACKS)}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
                     "printf '%s\\n' 'packet_contract_version=prismatic-completed-work-v1' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
                     f'{quoted_cmd} >> "$PRISMATIC_AGY_OUTPUT_LOG" 2>&1',
                     "rc=$?",
@@ -1871,6 +2294,21 @@ def launch_agy(
             labels=labels,
             cycle_id=cycle_id,
             request_id=request_id,
+            execution_context=json.dumps(
+                {
+                    "agent": "agy",
+                    "issue_id": issue_id,
+                    "identifier": identifier or issue_id,
+                    "context_pack_dir": str(context_dir),
+                    "context_pack": context_files,
+                    "output_log": str(log_path),
+                    "worktree_path": worktree_path,
+                    "expected_marker": expected_marker,
+                    "blocked_marker": blocked_marker,
+                    "marker": "AGY_CLI_CONTEXT_PACK_OK",
+                },
+                sort_keys=True,
+            ),
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event(
@@ -1882,6 +2320,156 @@ def launch_agy(
         return None
 
 
+JULES_SHARED_SKILL_PACKS = [
+    "shared/prismatic-completed-work-contract",
+    "shared/prismatic-proof-packet",
+    "shared/prismatic-non-claims",
+    "shared/prismatic-safe-file-scope",
+]
+
+JULES_AGENT_SKILL_PACKS = [
+    "jules/jules-session-result-packet",
+    "jules/jules-bounded-review-scope",
+    "jules/jules-session-handle-capture",
+]
+
+
+def _write_jules_context_pack(
+    *,
+    context_dir: Path,
+    issue_id: str,
+    identifier: str,
+    title_or_task: str,
+    expected_marker: str,
+    blocked_marker: str,
+    labels: list[str] | None,
+    worktree_path: str,
+    log_path: Path,
+) -> dict[str, str]:
+    """Write durable Jules context files for async ``jules new`` sessions."""
+    context_dir.mkdir(parents=True, exist_ok=True)
+    safe_title = _redact_agent_context_text(title_or_task or identifier or issue_id)
+    safe_labels = [_redact_agent_context_text(str(label)) for label in (labels or [])]
+    shared_packs = ",".join(JULES_SHARED_SKILL_PACKS)
+    agent_packs = ",".join(JULES_AGENT_SKILL_PACKS)
+
+    work_packet = f"""# Jules Work Packet — {identifier}
+
+Status marker: `JULES_CLI_SESSION_CONTEXT_PACK_OK`
+
+## Assignment
+
+| Field | Value |
+|---|---|
+| agent | `jules` |
+| issue_id | `{issue_id}` |
+| identifier | `{identifier}` |
+| title_or_task | `{safe_title}` |
+| worktree_path | `{worktree_path}` |
+| session_capture_log | `{log_path}` |
+
+## Labels
+
+```text
+{chr(10).join(safe_labels) if safe_labels else "none_provided"}
+```
+
+## Jules scope rules
+
+1. Treat this as one bounded Jules review/test/QA session.
+2. Do not launch other agents.
+3. Do not enable auto-merge or deploy production.
+4. Do not create or merge real GitHub PRs unless explicitly authorized in this packet.
+5. Keep noisy detail in Jules session output or artifacts; final pulled results must normalize into the compact packet below.
+
+## Required normalized result packet
+
+```text
+skill_pack_state=loaded
+shared_skill_packs={shared_packs}
+agent_skill_packs={agent_packs}
+packet_contract_version=prismatic-completed-work-v1
+packet_validation=passed
+COMMAND=<jules new / remote pull command or observation proof>
+RESULT=<PASS|BLOCKED|FAIL>
+LOG=<Jules session log/result path>
+SCOPE=<what Jules reviewed/tested>
+AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>
+NOT_CLAIMING=<explicit non-claims>
+MARKER={expected_marker}
+```
+
+If blocked, use `MARKER={blocked_marker}` with the concrete blocker.
+"""
+
+    packet_contract = f"""# Jules Packet Contract
+
+Jules is async/session-based on this host. Dispatch must use `jules new`, store
+the session capture log/handle, and later reconcile `jules remote pull` output
+into the same Prismatic completed-work packet contract used by AGY/Fred/George/Kai.
+
+## Skill packs represented
+
+```text
+{chr(10).join([*JULES_SHARED_SKILL_PACKS, *JULES_AGENT_SKILL_PACKS])}
+```
+
+## Non-claims to include unless explicitly proven and authorized
+
+```text
+auto_merge_enabled
+production_deploy
+real_github_pr_created
+live_Linear_mutations_without_approval
+bulk_jules_dispatch
+canonical_full_suite_green
+```
+"""
+
+    context_pack = f"""# Jules CLI Context Pack
+
+Read these files before working:
+
+1. `WORK_PACKET.md` — assignment, bounded scope, markers, and result packet shape.
+2. `PACKET_CONTRACT.md` — standardized output/non-claims contract.
+
+## Launch optimization
+
+The dispatcher intentionally uses the installed Jules CLI shape:
+
+```text
+jules new <compact prompt>
+```
+
+It does not use unsupported AGY-style flags such as `--issue`, `--task`,
+`--print`, `--log-file`, `--add-dir`, or `--model`. Durable workflow memory
+lives in this context directory; the Jules session handle/output is captured in
+the launch log for later reconciliation.
+
+## Expected marker
+
+```text
+{expected_marker}
+```
+
+## Blocked marker
+
+```text
+{blocked_marker}
+```
+"""
+
+    files = {
+        "work_packet": context_dir / "WORK_PACKET.md",
+        "packet_contract": context_dir / "PACKET_CONTRACT.md",
+        "context_pack": context_dir / "CONTEXT_PACK.md",
+    }
+    files["work_packet"].write_text(work_packet, encoding="utf-8")
+    files["packet_contract"].write_text(packet_contract, encoding="utf-8")
+    files["context_pack"].write_text(context_pack, encoding="utf-8")
+    return {key: str(path) for key, path in files.items()}
+
+
 def launch_jules(
     issue_id: str,
     task: str = "",
@@ -1891,31 +2479,87 @@ def launch_jules(
     cycle_id: str | None = None,
     request_id: str | None = None,
 ) -> subprocess.Popen | None:
-    """Launch the Jules CLI for the given issue.
+    """Launch an async Jules CLI session for the given issue.
 
-    Args:
-        issue_id: Linear issue UUID or identifier.
-        task: Optional task description.
-
-    Returns:
-        ``subprocess.Popen`` handle, or ``None`` if launch failed.
+    Jules on this host uses ``jules new`` session creation rather than AGY-style
+    ``--issue``/``--task`` flags. The dispatcher therefore writes durable context
+    files, launches a compact prompt, captures the session output log, and stores
+    enough metadata for a later ``jules remote pull`` reconciliation step.
     """
-    if not os.path.exists(JULES_PATH):
+    resolved_jules_path = (
+        JULES_PATH if os.path.isabs(JULES_PATH) else shutil.which(JULES_PATH)
+    )
+    if not resolved_jules_path or not os.path.exists(resolved_jules_path):
         print(f"[dispatcher] Jules binary not found at {JULES_PATH}")
         return None
 
     try:
         if not task and title:
             task = title
-        cmd = [JULES_PATH, "--issue", issue_id]
-        if task:
-            cmd.extend(["--task", task])
+        expected_marker = f"JULES_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_OK"
+        blocked_marker = f"JULES_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_BLOCKED"
+        run_log_dir = Path(
+            os.environ.get("PRISMATIC_AGENT_RUN_LOG_DIR", "/tmp/prismatic-agent-runs")
+        )
+        run_log_dir.mkdir(parents=True, exist_ok=True)
+        log_token = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier or issue_id)[:80]
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = run_log_dir / f"jules-{log_token}-{timestamp}.log"
+        worktree_path = os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()
+        context_dir = run_log_dir / f"jules-{log_token}-{timestamp}-context"
+        context_files = _write_jules_context_pack(
+            context_dir=context_dir,
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            title_or_task=task or title or identifier or issue_id,
+            expected_marker=expected_marker,
+            blocked_marker=blocked_marker,
+            labels=labels,
+            worktree_path=worktree_path,
+            log_path=log_path,
+        )
+        prompt = (
+            f"You are Jules working one bounded Prismatic Engine review/test task: {identifier or issue_id}.\n"
+            f"Read this context pack first: {context_files['context_pack']}\n"
+            f"Then follow this work packet exactly: {context_files['work_packet']}\n"
+            "When your session result is pulled, it must normalize into the compact completed-work packet in WORK_PACKET.md.\n"
+            f"Expected success marker: {expected_marker}. Blocked marker: {blocked_marker}.\n"
+        )
+        cmd = [resolved_jules_path, "new", prompt]
+        jules_repo = os.environ.get("PRISMATIC_JULES_REPO")
+        if jules_repo:
+            cmd = [resolved_jules_path, "new", "--repo", jules_repo, prompt]
 
+        from prismatic.jules_capacity import record_jules_launch
+
+        stable_launch_identity = request_id or (
+            f"jules:{identifier or issue_id}:{cycle_id}" if cycle_id else None
+        )
+        capacity_launch_key = record_jules_launch(
+            issue_id=identifier or issue_id,
+            repository=os.environ.get("PRISMATIC_JULES_REPO") or worktree_path,
+            source_path=str(log_path),
+            launch_identity=stable_launch_identity,
+            request_id=request_id,
+            lifecycle_status="accepted",
+        )
+        out_handle = open(log_path, "a", encoding="utf-8")
+        out_handle.write("JULES_SESSION_CAPTURE_STARTED\n")
+        out_handle.write(f"context_pack_path={context_files['context_pack']}\n")
+        out_handle.write(f"work_packet_path={context_files['work_packet']}\n")
+        out_handle.write(f"capacity_launch_key={capacity_launch_key}\n")
+        out_handle.write("skill_pack_state=loaded\n")
+        out_handle.write(f"shared_skill_packs={','.join(JULES_SHARED_SKILL_PACKS)}\n")
+        out_handle.write(f"agent_skill_packs={','.join(JULES_AGENT_SKILL_PACKS)}\n")
+        out_handle.write("packet_contract_version=prismatic-completed-work-v1\n")
+        out_handle.flush()
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdout=out_handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            cwd=worktree_path,
+            start_new_session=True,
         )
         run_id = record_launch_record(
             agent_name="jules",
@@ -1926,6 +2570,23 @@ def launch_jules(
             labels=labels,
             cycle_id=cycle_id,
             request_id=request_id,
+            execution_context=json.dumps(
+                {
+                    "agent": "jules",
+                    "issue_id": issue_id,
+                    "identifier": identifier or issue_id,
+                    "context_pack_dir": str(context_dir),
+                    "context_pack": context_files,
+                    "capacity_launch_key": capacity_launch_key,
+                    "session_capture_log": str(log_path),
+                    "worktree_path": worktree_path,
+                    "expected_marker": expected_marker,
+                    "blocked_marker": blocked_marker,
+                    "reconcile_hint": "jules remote list --session && jules remote pull --session <session_id>",
+                    "marker": "JULES_CLI_SESSION_CONTEXT_PACK_OK",
+                },
+                sort_keys=True,
+            ),
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event(
@@ -1934,6 +2595,36 @@ def launch_jules(
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
+        try:
+            from prismatic.jules_capacity import (
+                record_jules_launch,
+                update_jules_lifecycle,
+            )
+
+            if "capacity_launch_key" in locals():
+                update_jules_lifecycle(
+                    launch_key=locals()["capacity_launch_key"],
+                    lifecycle_status="failed",
+                    error_class="cli_error",
+                )
+            else:
+                record_jules_launch(
+                    issue_id=identifier or issue_id,
+                    repository=os.environ.get("PRISMATIC_JULES_REPO")
+                    or (os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()),
+                    source_path=str(locals().get("log_path", "")) or None,
+                    launch_identity=request_id
+                    or (
+                        f"jules:{identifier or issue_id}:{cycle_id}"
+                        if cycle_id
+                        else None
+                    ),
+                    request_id=request_id,
+                    lifecycle_status="failed",
+                    error_class="cli_error",
+                )
+        except Exception:
+            pass
         return None
 
 
@@ -2123,6 +2814,103 @@ def resolve_assigned_agent(row_or_payload: dict[str, Any]) -> AssignedAgentResol
     )
 
 
+def extract_node_affinity(payload_or_row: dict[str, Any]) -> str | None:
+    """Extract requested node affinity (e.g. 'webtop-hermes', 'lightbringer-windows', 'any') from task/event."""
+    if not isinstance(payload_or_row, dict):
+        return None
+
+    # 1. Direct keys
+    for key in ("node_affinity", "affinity", "node", "target_node"):
+        val = payload_or_row.get(key)
+        if val and isinstance(val, str) and val.strip():
+            return val.strip().lower()
+
+    # 2. Metadata nested dict
+    meta = payload_or_row.get("metadata")
+    if isinstance(meta, dict):
+        for key in ("node_affinity", "affinity", "node", "target_node"):
+            val = meta.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip().lower()
+
+    # 3. Data nested dict
+    data = payload_or_row.get("data")
+    if isinstance(data, dict):
+        for key in ("node_affinity", "affinity", "node", "target_node"):
+            val = data.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip().lower()
+
+    # 4. Labels in payload/data
+    labels_obj = payload_or_row.get("labels") or (isinstance(data, dict) and data.get("labels"))
+    label_names: list[str] = []
+    if isinstance(labels_obj, list):
+        for item in labels_obj:
+            if isinstance(item, dict):
+                label_names.append(str(item.get("name", "")))
+            elif isinstance(item, str):
+                label_names.append(item)
+    elif isinstance(labels_obj, dict):
+        nodes = labels_obj.get("nodes", [])
+        if isinstance(nodes, list):
+            for item in nodes:
+                if isinstance(item, dict):
+                    label_names.append(str(item.get("name", "")))
+                elif isinstance(item, str):
+                    label_names.append(item)
+
+    for lname in label_names:
+        lname_clean = lname.strip().lower().replace("::", ":")
+        if lname_clean.startswith("node:") or lname_clean.startswith("affinity:"):
+            return lname_clean.split(":", 1)[1].strip()
+        if lname_clean.startswith("node-"):
+            return lname_clean[5:].strip()
+
+    return None
+
+
+def check_node_affinity(node_affinity: str | None) -> tuple[bool, str]:
+    """Check whether the requested node affinity is online and valid in the distributed mesh.
+
+    Returns (allowed, reason).
+    Allowed affinities:
+      - None, '', 'any', 'all', '*': always allowed.
+      - Hostname/IP: matches online nodes in /api/mesh/nodes or Tailscale LocalAPI.
+    """
+    if not node_affinity or node_affinity.strip().lower() in {"", "any", "all", "none", "*"}:
+        return (True, "affinity: any node accepted")
+
+    target = node_affinity.strip().lower()
+
+    try:
+        from prismatic.mesh.tailscale import get_tailscale_mesh_client
+        client = get_tailscale_mesh_client()
+        nodes = client.list_nodes_sync()
+        for node in nodes:
+            node_host = (node.hostname or "").lower()
+            node_dns = (node.dns_name or "").lower()
+            node_ips = [ip.lower() for ip in node.tailscale_ips]
+            if target == node_host or target in node_host or node_host in target or target == node_dns or target in node_ips:
+                if node.online:
+                    return (True, f"affinity target node '{node.hostname}' is online in mesh")
+                else:
+                    return (False, f"affinity target node '{node.hostname}' is offline in mesh")
+
+        # Check local hostname fallback
+        import socket
+        local_host = socket.gethostname().lower()
+        if target in local_host or local_host in target:
+            return (True, f"affinity target node '{target}' matches local host '{local_host}'")
+
+        return (False, f"affinity target node '{target}' not found in mesh")
+    except Exception as exc:
+        import socket
+        local_host = socket.gethostname().lower()
+        if target in local_host or local_host in target:
+            return (True, f"affinity target node '{target}' matches local host '{local_host}' (mesh check fallback: {exc})")
+        return (False, f"mesh node check failed: {exc}")
+
+
 def preflight_assigned_agent(
     row: dict[str, Any],
     resolution: AssignedAgentResolution,
@@ -2149,6 +2937,28 @@ def preflight_assigned_agent(
             "blocked_preflight", False, f"agent disabled: {agent}"
         )
     launcher_map = launchers or AGENT_LAUNCHERS
+    payload = _assigned_agent_payload(row)
+
+    # Validate node affinity target in distributed mesh
+    affinity = extract_node_affinity(row) or extract_node_affinity(payload)
+    if affinity:
+        aff_ok, aff_reason = check_node_affinity(affinity)
+        if not aff_ok:
+            return AssignedAgentPreflight(
+                "blocked_preflight", False, f"node affinity check failed: {aff_reason}"
+            )
+
+    handoff_result = handoff_dispatch_preflight(
+        payload, agent, str(row.get("identifier") or "")
+    )
+    if handoff_result is not None and not handoff_result.ok:
+        return AssignedAgentPreflight(
+            handoff_result.status
+            if handoff_result.is_manual_review
+            else "blocked_preflight",
+            False,
+            handoff_result.reason,
+        )
     if agent not in launcher_map:
         return AssignedAgentPreflight(
             "blocked_preflight", False, f"no launcher for {agent}"
@@ -2192,6 +3002,7 @@ def preflight_assigned_agent(
     return AssignedAgentPreflight("passed", True, "ok")
 
 
+
 def dispatch_assigned_agent_event(
     row: dict[str, Any],
     *,
@@ -2230,6 +3041,8 @@ def dispatch_assigned_agent_event(
         status = (
             "deferred_rate_limit"
             if preflight.status == "deferred_rate_limit"
+            else "needs_manual_review"
+            if preflight.status == "needs_manual_review"
             else "blocked_preflight"
         )
         update_assigned_dispatch_state(
@@ -2384,6 +3197,8 @@ def record_assigned_agent_result_writeback(
     result_summary: str = "",
     blocker_summary: str = "",
     dry_run: bool | None = None,
+    raw_output_text: str = "",
+    raw_output_artifact_path: str = "",
 ) -> dict[str, Any]:
     """Persist agent completion/blocker result and safe Linear writeback state.
 
@@ -2434,6 +3249,43 @@ def record_assigned_agent_result_writeback(
         }
     item = normalize_row(row)
     resolved_event_id = str(item.get("event_id") or event_id)
+    raw_output_capture: dict[str, Any] | None = None
+    if raw_output_text.strip():
+        try:
+            from .agent_raw_output_queue import persist_raw_output
+
+            target_agent = str(
+                item.get("target_agent")
+                or item.get("claim_owner")
+                or item.get("agent_name")
+                or "assigned-agent"
+            )
+            source_event_id = ":".join(
+                part
+                for part in (
+                    "assigned_agent_result_writeback",
+                    target_agent,
+                    str(item.get("identifier") or identifier),
+                    str(item.get("run_id") or run_id),
+                )
+                if part
+            )
+            captured = persist_raw_output(
+                raw_text=raw_output_text,
+                agent=target_agent,
+                task_id=str(item.get("identifier") or identifier),
+                source_event_id=source_event_id,
+                raw_text_or_artifact_path=raw_output_artifact_path,
+                expected_agent=target_agent,
+            )
+            raw_output_capture = {
+                "ok": True,
+                "raw_output_id": captured.raw_output_id,
+                "normalization_status": captured.normalization_status,
+                "source_event_id": captured.source_event_id,
+            }
+        except Exception as exc:  # fail-safe: writeback state remains source of truth
+            raw_output_capture = {"ok": False, "reason": str(exc)}
     preview = _assigned_result_preview(
         identifier=str(item.get("identifier") or identifier),
         target_agent=str(
@@ -2469,6 +3321,7 @@ def record_assigned_agent_result_writeback(
             "item": updated,
             "writeback_preview": preview,
             "linear_mutation": False,
+            "raw_output_capture": raw_output_capture,
         }
     # Authorized live mutation remains intentionally unimplemented in this slice;
     # proving dry-run writeback is the safe acceptance target.
@@ -2488,6 +3341,7 @@ def record_assigned_agent_result_writeback(
         "item": updated,
         "writeback_preview": preview,
         "linear_mutation": False,
+        "raw_output_capture": raw_output_capture,
     }
 
 
@@ -3519,6 +4373,7 @@ def dispatch_once(
         "linear_call_budget_exhausted": 0,
         "poll_cache_hits": 0,
         "poll_cache_misses": 0,
+        "host_path_rerouted": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -3738,6 +4593,15 @@ def dispatch_once(
             # Skip if already dispatched this cycle
             if dedup.is_processed(issue_id, label, cycle_id):
                 continue
+
+            if agent_name == "jules":
+                host_matches = detect_host_level_patterns(issue)
+                if host_matches and reroute_jules_host_path_issue(issue, host_matches):
+                    counts["host_path_rerouted"] = (
+                        counts.get("host_path_rerouted", 0) + 1
+                    )
+                    dedup.mark_processed(issue_id, label, cycle_id)
+                    continue
 
             launcher = AGENT_LAUNCHERS.get(agent_name)
             if not launcher:

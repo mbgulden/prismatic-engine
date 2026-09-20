@@ -1,0 +1,44 @@
+{
+  "agent": "agy",
+  "STATUS": "ERROR",
+  "PRODUCER_STATUS": "ERROR",
+  "ACCEPTANCE_DECISION": "PENDING",
+  "TASK_ID": "GRO-4457",
+  "ATTEMPT_ID": "attempt-20260804-03",
+  "BASE_HEAD": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+  "CANDIDATE_HEAD": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+  "CANDIDATE_TREE": "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e",
+  "CHANGED_PATHS": [],
+  "COMMAND": [
+    "npm run build"
+  ],
+  "RESULT": "FAIL",
+  "LOG": "artifacts/logs/attempt-20260804-03.log",
+  "LOG_SHA256": "1026d8b4ea2dd69f9fb03f2a41df555e8d58a0e66185fd60063bf440e8f0be38",
+  "result_artifacts": [
+    "artifacts/logs/attempt-20260804-03.log"
+  ],
+  "SCOPE": "Build pipeline execution",
+  "merge_lane": "manual-review",
+  "risk_level": "high",
+  "AD_HOC_OR_CANONICAL": "canonical suite",
+  "PROOF_CLASSES": [
+    "build"
+  ],
+  "SIDE_EFFECTS": {
+    "push": false,
+    "pr": false,
+    "merge": false,
+    "deploy": false,
+    "linear_updated": false
+  },
+  "BLOCKERS": [
+    "Fatal compilation error: SyntaxError in src/index.ts line 42"
+  ],
+  "NOT_CLAIMING": [
+    "Successful build",
+    "Unit test pass"
+  ],
+  "NEXT_ACTION": "needs-fred-cleanup",
+  "MARKER": "AGY_TASK_RESULT_PACKET_OK"
+}

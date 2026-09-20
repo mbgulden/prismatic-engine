@@ -1,0 +1,72 @@
+{
+  "schema_version": 2.0,
+  "bundle_type": "sprite/game asset",
+  "deliverables": [
+    "assets/spritesheet.png"
+  ],
+  "content_hashes": {
+    "assets/spritesheet.png": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "provenance": {
+    "toolchain": "aseprite-v1.3",
+    "builder": "agy-game-dev-agent"
+  },
+  "source_revision": {
+    "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+    "branch": "feature/gro-4112-universal-manifest"
+  },
+  "path_scope": {
+    "allowed_paths": [
+      "assets/**/*"
+    ],
+    "touched_paths": [
+      "assets/spritesheet.png"
+    ]
+  },
+  "privacy_retention": {
+    "privacy_level": "public",
+    "retention_status": "retained",
+    "retention_reasons": [
+      "game_assets"
+    ],
+    "retention_policy": "default"
+  },
+  "type_specific_proofs": {
+    "sprite_game_asset": {
+      "frame_count": 8,
+      "spritesheet": "assets/spritesheet.json",
+      "collision_boxes": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 32
+        }
+      ]
+    }
+  },
+  "preview_handles": [
+    "assets/spritesheet.png"
+  ],
+  "licenses": [
+    "Proprietary"
+  ],
+  "non_claims": [],
+  "candidate_sha_destination": {
+    "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "destination_branch": "main"
+  },
+  "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+  "integration_receipt": {
+    "receipt_id": "rec-sprite",
+    "timestamp": "2026-07-21T08:01:00Z",
+    "status": "integrated"
+  },
+  "rollback": {
+    "revert_instructions": "git revert",
+    "script_path": "scripts/revert_sprite.sh"
+  },
+  "post_integration_proof": "spritesheet-parsing-validation-ok",
+  "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+}

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/pwp-kpi-registry.schema.json",
+  "title": "PWP Publish-KPI-Tracker — site registry (config/seo_sites.json)",
+  "description": "Canonical site registry. Each site in this list is eligible to receive a PWP publish-kpi-tracker per-site *.kpi.json under plugins/pwp/capabilities/publish_kpi_tracker/sites/<slug>.kpi.json. The PWP capability operator reads this file as the source of truth for which sites to register and what their canonical GA4 measurement ID + custom events are.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sites"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version of the registry file itself, not the per-site kpi schema. Bumped manually when fields are added or removed."
+    },
+    "default_tracking_property_env": {
+      "type": "string",
+      "description": "Optional default env-var name to use for tracking_property when a site has no explicit ga4_measurement_id. Sites can still override per-site via the env-var named in `ga4_measurement_env`."
+    },
+    "pwp_kpi_capability": {
+      "type": "object",
+      "description": "Top-level PWP capability directive applied to every site in this registry. Per-site overrides live under each site entry as `pwp_kpi_override`.",
+      "additionalProperties": true,
+      "properties": {
+        "enabled":   { "type": "boolean", "default": true },
+        "operator":  { "type": "string", "default": "ned" },
+        "shares":    {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "google_sheet_id_env": { "type": "string" },
+            "credential_file_env": { "type": "string" },
+            "email_to_env":        { "type": "string" },
+            "email_to_default":    { "type": "string" }
+          }
+        }
+      }
+    },
+    "default_metric_specs": {
+      "type": "object",
+      "description": "Per-source default metric specs that apply to every site unless overridden. Keyed by metric id; values are objects with at minimum {label, source, format, front_of_card} so the per-site *.kpi.json file can be built without explicit metric definitions.",
+      "additionalProperties": { "$ref": "#/$defs/metric" }
+    },
+    "sites": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/site" }
+    }
+  },
+  "$defs": {
+    "site": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["slug", "name", "domain"],
+      "properties": {
+        "slug":  { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+        "name":  { "type": "string", "minLength": 1 },
+        "domain":{ "type": "string", "format": "hostname" },
+        "origin":{ "type": "string", "format": "uri" },
+        "gsc_property":      { "type": "string" },
+        "sitemap_url":       { "type": "string", "format": "uri" },
+        "site_dir_candidates": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ga4_property_env":      { "type": "string" },
+        "ga4_property_id":       { "type": "string" },
+        "ga4_measurement_id":   { "type": "string", "pattern": "^G-[A-Z0-9]{4,12}$" },
+        "ga4_measurement_env":  { "type": "string" },
+        "gtm_container_id":     { "type": "string" },
+        "gtm_container_env":    { "type": "string" },
+        "expected_data_layer_events": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+        },
+        "expected_ga4_recommended_events": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["select_item","select_content","view_item","view_cart","add_to_cart","begin_checkout","add_payment_info","add_shipping_info","purchase","complete_registration","refund"]
+          }
+        },
+        "booking_provider":  { "type": "string" },
+        "booking_revenue_notes": { "type": "string" },
+        "pwp_kpi_override": {
+          "type": "object",
+          "description": "Per-site override of registry-level PWP capability directives. Mostly used to disable KPI tracking for sites that should not appear in the dashboard, or to override the operator.",
+          "additionalProperties": true,
+          "properties": {
+            "enabled":  { "type": "boolean" },
+            "operator": { "type": "string" },
+            "extends":  { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" }
+          }
+        },
+        "pwp_kpi_metric_specs": {
+          "type": "object",
+          "description": "Per-site metric specs (overrides default_metric_specs). The PWP operator applies default_metric_specs first, then applies this site-specific override.",
+          "additionalProperties": { "$ref": "#/$defs/metric" }
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id":         { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "label":      { "type": "string" },
+        "source":     {
+          "type": "string",
+          "enum": ["ga4","stripe","telegram","internal","derived","gsc","mcp","sheets","ci","verifier"]
+        },
+        "event":      { "type": "string" },
+        "metric":     { "type": "string" },
+        "field":      { "type": "string" },
+        "filter":     { "type": "string" },
+        "format":     { "type": "string", "enum": ["number","percent","currency","duration"] },
+        "formula":    { "type": "string" },
+        "source_urls":{ "type": "array", "items": { "type": "string" } },
+        "front_of_card": { "type": "boolean" }
+      }
+    }
+  }
+}

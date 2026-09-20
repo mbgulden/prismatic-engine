@@ -1,0 +1,51 @@
+        <div id="section-plugins" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-5">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Plugin Governance Catalog</h2>
+                        <p class="text-xs text-slate-500 mt-1">PE-owned readiness, risk, approval gates, MCP/API/artifact coverage, and production blockers for every loaded plugin manifest.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="loadPluginGovernance()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh Catalog</button>
+                    </div>
+                </div>
+                <div id="plugin-dashboard-health-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 text-xs"></div>
+                <div id="plugin-first-run-empty-state" class="hidden rounded-2xl border border-dashed border-indigo-500/30 bg-indigo-950/10 p-4 text-sm text-slate-300">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <div class="text-indigo-300 font-bold uppercase tracking-wider text-xs">First-run plugin setup</div>
+                            <p class="mt-1 text-slate-400">No plugin records yet? Start with a catalog check, then run the release smoke to prove the dashboard, policy gate, jobs, and artifacts are wired.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="copyDashboardCommand('python scripts/plugin_architecture catalog')" class="copy-cli-command rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-600/20">Copy catalog CLI</button>
+                            <button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command rounded-lg border border-emerald-500/30 bg-emerald-600/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-600/20">Copy release smoke</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="plugin-onboarding-hints" class="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs"></div>
+                <div id="plugin-error-explanation" class="hidden rounded-xl border border-red-500/30 bg-red-950/20 p-3 text-xs text-red-100"></div>
+                <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
+                    <div class="space-y-4 min-w-0">
+                        <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-policy-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-policy-decision" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-artifact-inventory" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-audit-events" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-job-timeline" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-approval-controls" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-governance-cards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
+                    </div>
+                    <aside id="plugin-detail-drawer" class="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 h-fit lg:sticky lg:top-4">
+                        <div class="text-slate-500 uppercase tracking-wider font-bold">Plugin detail drawer</div>
+                        <p class="mt-2 text-slate-400">Select a plugin, job, or artifact row to inspect governance, timeline, provenance, approvals, and next commands.</p>
+                    </aside>
+                </div>
+                <div id="plugin-doc-links" class="flex flex-wrap gap-2 text-xs"></div>
+            </div>
+        </div>
+
+        <!-- SECTION 8: PWP PLUGIN -->

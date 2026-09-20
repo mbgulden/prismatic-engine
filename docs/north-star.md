@@ -1,5 +1,11 @@
 # Prismatic Engine North Star
 
+**Status:** Canonical
+**Owner:** Prismatic Engine maintainers
+**Governing principle:** **Don’t trust, Verify.**
+
+Prismatic treats generation as a proposal and verified evidence as completion. The engine must guide work with executable constraints, independently verify exact artifacts and state transitions, solve findings without weakening gates, and preserve enough knowledge for future humans and agents to understand why the system exists and how it remains safe.
+
 ## One-sentence North Star
 
 Prismatic Engine lets a user install the engine, get immediate value, attach governed capabilities as needed, operate them visibly from the dashboard, and detach them without losing state, artifacts, provenance, or audit history.
@@ -64,6 +70,8 @@ Dashboard = intended main user touchpoint for most commands, tools, functions, a
 
 In the desired end state, a normal user should not need to know shell commands for daily operations. The dashboard should make most actions available as validated UI controls backed by the same PE Core APIs that agents and CLI commands use.
 
+Canonical unattended AGY execution follows that rule today: `prismatic agy` is a headless facade over `AGYCLIHarness`, durable admission/run/artifact receipts, and independent verification—not a competing source of truth. A future dashboard control must call the same harness contract and project the same lifecycle states. See `docs/contracts/canonical-agy-cli-workflow.md`.
+
 Dashboard-first does **not** mean removing Telegram. Telegram remains useful for:
 
 - lock-screen notifications
@@ -72,7 +80,7 @@ Dashboard-first does **not** mean removing Telegram. Telegram remains useful for
 - human steering when away from the dashboard
 - compact summaries of completed or blocked runs
 
-But the dashboard should become the durable source of truth for:
+The dashboard should become the authoritative operator view, backed by durable systems of record, for:
 
 - plugin catalog and connection state
 - job creation and lifecycle control

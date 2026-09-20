@@ -66,6 +66,25 @@ curl -s http://127.0.0.1:9000/api/plugins/governance | python -m json.tool
 curl -s http://127.0.0.1:9000/api/plugins/audit-events | python -m json.tool
 ```
 
+Inspect the canonical unattended AGY contract before integrating or launching AGY:
+
+```bash
+prismatic agy contract
+```
+
+See [Canonical AGY CLI workflow](docs/contracts/canonical-agy-cli-workflow.md). Rendering is side-effect free; real launch additionally requires upstream admission and `--execute`.
+
+Prismatic repositories include a safe `.agents/` workspace bundle for Antigravity. Installed-wheel users can audit or install the same managed bundle into any workspace:
+
+```bash
+prismatic agy customizations validate
+prismatic agy customizations audit --config-root "$HOME/.gemini"
+prismatic agy customizations install --workspace /path/to/project --dry-run
+prismatic agy customizations install --workspace /path/to/project
+```
+
+Installation is explicit, idempotent, conflict-preserving, and secret-free; it does not modify global AGY state. See [Portable Antigravity customizations](docs/contracts/antigravity-customizations.md).
+
 ---
 
 ## Minimal demo
@@ -131,6 +150,9 @@ Core files:
 
 Deep dive:
 
+- [Canonical documentation index and precedence](docs/index.md)
+- [Verification Engine architecture](docs/architecture/verification-engine.md)
+- [Verification contract](docs/contracts/verification-contract.md)
 - [North Star](docs/north-star.md)
 - [Dashboard-primary touchpoint](docs/dashboard-primary-touchpoint.md)
 - [OKF evidence map](docs/okf-evidence-map.md)

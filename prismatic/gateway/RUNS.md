@@ -24,3 +24,28 @@ PY
 
 If `/runs` looks stale, first verify the gateway and supervisor are using the
 same database path.
+
+## PWP KPI Dashboard Surface (GRO-4919, added 2026-09-13)
+
+The `publish_kpi_tracker` capability's `build_dashboard()` writes its rendered
+multi-site KPI pages into a "publish_root" that the PWP dashboard host serves
+at `/pwp/kpi/` (see `site_builder.py` `dashboard_route` and the generated
+`render_index` asset hrefs). The gateway now provides that serving layer:
+
+- `GET /pwp/kpi/` → multi-site index (`index.html`)
+- `GET /pwp/kpi/{filename}` → per-site pages (`<slug>.html`), `pwp-publish-kpi.css`,
+  `dashboard_data.json`, and `<slug>.prior.json`. Leaf files only; path
+  traversal and non-`.html/.json/.css` names are rejected.
+
+Behavior notes:
+
+- The dashboard is rendered into the stable PWP state dir
+  (`$PRISMATIC_STATE_DIR/pwp/kpi-dashboard/`, default `~/.prismatic/pwp/kpi-dashboard/`)
+  and re-rendered at most every 5 minutes (TTL), so metric snapshots update
+  without a restart. Runtime values come from the per-site `<slug>.runtime.json`
+  snapshots plus any live-mode adapters with credentials; missing values render
+  as "—".
+- The import path is `prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker`.
+  The older `/api/pwp/kpi/*` cluster imports `plugins.pwp...`, which does not
+  resolve in the deployed gateway (no top-level `plugins` package) — do not
+  copy that path into new code.

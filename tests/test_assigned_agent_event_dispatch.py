@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sqlite3
 import sys
@@ -579,6 +580,9 @@ def test_agy_print_mode_wrapper_records_skill_packs_and_forces_blocked_packet(
     monkeypatch.setenv("PRISMATIC_AGENT_RUN_LOG_DIR", str(run_dir))
     monkeypatch.setenv("PRISMATIC_AGY_USE_SYSTEMD_SCOPE", "0")
     monkeypatch.setenv("PRISMATIC_AGY_FORCE_PACKET_WRAPPER", "1")
+    from prismatic.providers.github import GitHubProvider
+
+    monkeypatch.setattr(GitHubProvider, "has_credentials", lambda self: True)
     monkeypatch.setattr(dispatcher, "AGY_PATH", str(fake_agy))
 
     proc = dispatcher.launch_agy(
@@ -594,6 +598,8 @@ def test_agy_print_mode_wrapper_records_skill_packs_and_forces_blocked_packet(
     assert logs
     text = logs[0].read_text(encoding="utf-8")
     assert "AGY_OUTPUT_CAPTURE_WRAPPER_STARTED" in text
+    assert "context_pack_path=" in text
+    assert "work_packet_path=" in text
     assert "skill_pack_state=loaded" in text
     assert "shared/prismatic-completed-work-contract" in text
     assert "agy/agy-structured-result-packet" in text
@@ -604,11 +610,258 @@ def test_agy_print_mode_wrapper_records_skill_packs_and_forces_blocked_packet(
     with sqlite3.connect(state_dir / "event_router.db") as con:
         rows = list(
             con.execute(
-                "select command_json from launch_records where identifier='GRO-3954'"
+                "select command_json, execution_context "
+                "from launch_records where identifier='GRO-3954'"
             )
         )
     assert rows
     command_json = rows[0][0]
+    execution_context = json.loads(rows[0][1])
     assert "PRISMATIC_AGY_OUTPUT_LOG=" in command_json
     assert "bash" in command_json
     assert "agy/agy-model-preflight" in command_json
+    assert "--add-dir" in command_json
+    assert "CONTEXT_PACK.md" in command_json
+    assert "AGY_CLI_CONTEXT_PACK_OK" in rows[0][1]
+
+    context_pack = Path(execution_context["context_pack"]["context_pack"])
+    work_packet = Path(execution_context["context_pack"]["work_packet"])
+    packet_contract = Path(execution_context["context_pack"]["packet_contract"])
+    assert context_pack.exists()
+    assert work_packet.exists()
+    assert packet_contract.exists()
+    assert "durable context in" in context_pack.read_text(encoding="utf-8")
+    work_packet_text = work_packet.read_text(encoding="utf-8")
+    assert "AGY_CLI_CONTEXT_PACK_OK" in work_packet_text
+    assert "MARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_OK" in work_packet_text
+    assert "MARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_BLOCKED" in work_packet_text
+    packet_contract_text = packet_contract.read_text(encoding="utf-8")
+    assert (
+        "standardized Prismatic completed-work output contract" in packet_contract_text
+    )
+
+
+def test_agy_context_pack_redacts_token_like_assignment(tmp_path):
+    from prismatic import dispatcher
+
+    files = dispatcher._write_agy_context_pack(
+        context_dir=tmp_path / "context",
+        issue_id="GRO-SECRET",
+        identifier="GRO-SECRET",
+        title_or_task="Fix bug token=super-secret-value",
+        expected_marker="AGY_ASSIGNED_AGENT_GRO_SECRET_OK",
+        blocked_marker="AGY_ASSIGNED_AGENT_GRO_SECRET_BLOCKED",
+        labels=["agent:agy", "api_key=should-not-leak"],
+        worktree_path="/tmp/worktree",
+        log_path=tmp_path / "agy.log",
+    )
+
+    text = "\n".join(Path(path).read_text(encoding="utf-8") for path in files.values())
+    assert "super-secret-value" not in text
+    assert "should-not-leak" not in text
+    assert "token=[REDACTED]" in text
+    assert "api_key=[REDACTED]" in text
+
+
+def test_jules_cli_context_pack_uses_new_session_and_records_context(
+    tmp_path, monkeypatch
+):
+    from prismatic import dispatcher
+
+    state_dir = tmp_path / "state"
+    run_dir = tmp_path / "runs"
+    fake_jules = tmp_path / "jules"
+    fake_jules.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'JULES_FAKE_ARGS=%s\\n' \"$*\"\n"
+        "printf 'Created session: jules-session-123\\n'\n"
+        "case \" $* \" in *' --issue '*|*' --task '*|*' --print '*|*' --log-file '*|*' --model '*) exit 7;; esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_jules.chmod(0o755)
+
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state_dir))
+    monkeypatch.setenv(
+        "PRISMATIC_LAUNCH_RECORDS_DB_PATH", str(state_dir / "event_router.db")
+    )
+    monkeypatch.setenv("PRISMATIC_AGENT_RUN_LOG_DIR", str(run_dir))
+    monkeypatch.setenv("PRISMATIC_WORKTREE_PATH", str(tmp_path))
+    monkeypatch.setattr(dispatcher, "JULES_PATH", str(fake_jules))
+
+    proc = dispatcher.launch_jules(
+        "GRO-JULES",
+        title="Review bounded task token=do-not-leak",
+        identifier="GRO-JULES",
+        labels=["agent:jules", "api_key=do-not-leak-either"],
+    )
+    assert proc is not None
+    assert proc.wait(timeout=20) == 0
+
+    logs = list(run_dir.glob("jules-GRO-JULES-*.log"))
+    assert logs
+    text = logs[0].read_text(encoding="utf-8")
+    assert "JULES_SESSION_CAPTURE_STARTED" in text
+    assert "context_pack_path=" in text
+    assert "work_packet_path=" in text
+    assert "skill_pack_state=loaded" in text
+    assert "jules/jules-session-handle-capture" in text
+    assert "JULES_FAKE_ARGS=new" in text
+    assert "Created session: jules-session-123" in text
+
+    with sqlite3.connect(state_dir / "event_router.db") as con:
+        row = con.execute(
+            "select command_json, execution_context "
+            "from launch_records where identifier='GRO-JULES'"
+        ).fetchone()
+    assert row
+    command_json, execution_context_json = row
+    execution_context = json.loads(execution_context_json)
+    assert "JULES_CLI_SESSION_CONTEXT_PACK_OK" in execution_context_json
+    assert "jules remote list --session" in execution_context["reconcile_hint"]
+    assert "--issue" not in command_json
+    assert "--task" not in command_json
+    assert "--print" not in command_json
+    assert "--log-file" not in command_json
+    assert "--model" not in command_json
+    assert '"new"' in command_json
+
+    context_pack = Path(execution_context["context_pack"]["context_pack"])
+    work_packet = Path(execution_context["context_pack"]["work_packet"])
+    packet_contract = Path(execution_context["context_pack"]["packet_contract"])
+    assert context_pack.exists()
+    assert work_packet.exists()
+    assert packet_contract.exists()
+    context_text = context_pack.read_text(encoding="utf-8")
+    work_packet_text = work_packet.read_text(encoding="utf-8")
+    packet_contract_text = packet_contract.read_text(encoding="utf-8")
+    assert "jules new <compact prompt>" in context_text
+    assert "unsupported AGY-style flags" in context_text
+    assert "JULES_CLI_SESSION_CONTEXT_PACK_OK" in work_packet_text
+    assert "MARKER=JULES_ASSIGNED_AGENT_GRO_JULES_OK" in work_packet_text
+    assert "MARKER=JULES_ASSIGNED_AGENT_GRO_JULES_BLOCKED" in work_packet_text
+    assert "same Prismatic completed-work packet contract" in packet_contract_text
+    combined_text = "\n".join([context_text, work_packet_text, packet_contract_text])
+    assert "do-not-leak" not in combined_text
+    assert "do-not-leak-either" not in combined_text
+    assert "token=[REDACTED]" in combined_text
+    assert "api_key=[REDACTED]" in combined_text
+
+
+def _handoff_packet(agent: str = "fred") -> dict:
+    return {
+        "handoff_id": "handoff-gro-549",
+        "source": {"agent": "george", "system": "linear"},
+        "target": {"agent": agent, "required_capabilities": ["handoff_validation"]},
+        "work": {
+            "issue": "GRO-549",
+            "scope": "test assigned-agent handoff gate",
+            "base": "main",
+            "allowed_paths": ["docs"],
+            "production_facing": False,
+        },
+        "acceptance": {
+            "expected_markers": ["FRED_HANDOFF_CURRENT_EVENT_PATH_REPAIR_OK"],
+            "not_claiming": ["merge", "deploy"],
+        },
+        "retry": {"on_missing_result": "manual_review"},
+        "evidence": {
+            "required_artifacts": ["/tmp/proof.log"],
+            "production_proof": {"required": False, "artifacts": []},
+        },
+        "result": {
+            "status": "pass",
+            "changed_paths": ["docs/handoff.md"],
+            "artifacts": ["/tmp/proof.log"],
+            "claims": [],
+        },
+    }
+
+
+def test_assigned_agent_event_nested_handoff_contract_blocks_mismatch_before_launcher(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    item = payload("GRO-HANDOFF-MISMATCH", "fred")
+    item["data"]["handoff_contract"] = _handoff_packet("agy")
+    enqueue(q, item)
+    calls: list[str] = []
+
+    result = dispatch_identifier(dispatcher, "GRO-HANDOFF-MISMATCH")
+    row = latest(q)
+
+    assert result["status"] == "blocked_preflight"
+    assert result["wakes"] == []
+    assert calls == []
+    assert row["preflight_status"] == "blocked_preflight"
+    assert row["dispatch_status"] == "blocked_preflight"
+    assert row["last_error"] == "target_agent_mismatch"
+
+
+def test_assigned_agent_event_invalid_nested_handoff_blocks_and_persists_reason(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    item = payload("GRO-HANDOFF-BAD", "fred")
+    bad = _handoff_packet("fred")
+    bad["result"] = {"status": "pass", "changed_paths": ["secret.txt"], "artifacts": []}
+    item["data"]["metadata"] = {"handoff_contract": bad}
+    enqueue(q, item)
+
+    result = dispatch_identifier(dispatcher, "GRO-HANDOFF-BAD")
+    row = latest(q)
+
+    assert result["status"] == "blocked_preflight"
+    assert result["wakes"] == []
+    assert result["reason"] == "handoff_contract_invalid"
+    assert row["preflight_status"] == "blocked_preflight"
+    assert row["dispatch_status"] == "blocked_preflight"
+    assert row["last_error"] == "handoff_contract_invalid"
+
+
+def test_assigned_agent_event_missing_handoff_metadata_still_dispatches(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-HANDOFF-MISSING", "fred"))
+
+    result = dispatch_identifier(dispatcher, "GRO-HANDOFF-MISSING")
+    row = latest(q)
+
+    assert result["status"] == "dispatched"
+    assert result["wakes"] == ["fred"]
+    assert row["dispatch_status"] == "dispatched"
+
+
+def test_result_writeback_captures_raw_output_before_preview_normalization(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_DB", str(tmp_path / "raw.sqlite3"))
+    enqueue(q, payload("GRO-TEST-WB-RAW", "fred"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-RAW")
+    raw_output = "Fred raw prose before packet normalization"
+
+    result = dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="completed",
+        result_summary="Fixture agent completed acceptance checks.",
+        raw_output_text=raw_output,
+        raw_output_artifact_path="/tmp/fred-proof.log",
+    )
+
+    assert result["raw_output_capture"]["ok"] is True
+    assert result["raw_output_capture"]["source_event_id"].startswith(
+        "assigned_agent_result_writeback:fred:GRO-TEST-WB-RAW:"
+    )
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+
+    row = RawAgentOutputStore(tmp_path / "raw.sqlite3").get(
+        result["raw_output_capture"]["raw_output_id"]
+    )
+    assert row.task_id == "GRO-TEST-WB-RAW"
+    assert row.raw_text_or_artifact_path == "/tmp/fred-proof.log"
+    assert row.normalization_status in {
+        "rejected_repairable",
+        "rejected_rerun_required",
+    }

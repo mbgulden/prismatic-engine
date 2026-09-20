@@ -1,0 +1,7 @@
+{
+  "paused_cron_id": "seo.aot-weekly-rankings",
+  "deactivated_cron_id": "seo.aot-competitor-velocity",
+  "deleted_cron_id": "seo.aot-full-sweep",
+  "manual_cron_id": "seo.aot-sitemap-gsc-verification",
+  "expected_admitted_count": 0
+}

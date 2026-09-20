@@ -1,0 +1,149 @@
+"""Tests for Dynamic Harness Discovery and Hermes Profile Runner."""
+
+import pytest
+from fastapi.testclient import TestClient
+from prismatic.gateway.server import app
+from prismatic.harnesses.discovery import HarnessDiscoveryManager
+from prismatic.worker.harness import HermesProfileRunner
+from prismatic.worker.protocol import WorkerJob
+
+
+def _has_antigravity() -> bool:
+    return bool(HarnessDiscoveryManager().discover_antigravity())
+
+
+def _has_hermes_profiles() -> bool:
+    return bool(HarnessDiscoveryManager().discover_hermes_profiles())
+
+
+def _has_hermes_binary() -> bool:
+    return HermesProfileRunner().is_available()
+
+
+requires_antigravity = pytest.mark.skipif(
+    not _has_antigravity(),
+    reason="requires a host with the Antigravity (agy) binary installed",
+)
+requires_hermes_profiles = pytest.mark.skipif(
+    not _has_hermes_profiles(),
+    reason="requires a host with Hermes profiles installed",
+)
+requires_hermes_binary = pytest.mark.skipif(
+    not _has_hermes_binary(),
+    reason="requires the hermes binary on PATH",
+)
+
+
+@requires_antigravity
+def test_harness_discovery_manager_antigravity():
+    mgr = HarnessDiscoveryManager()
+    harnesses = mgr.discover_antigravity()
+    assert len(harnesses) > 0
+    ids = [h.id for h in harnesses]
+    assert any("gemini-3.8-flash-high" in hid for hid in ids)
+    assert any("claude-sonnet-4-6" in hid for hid in ids)
+    first = harnesses[0]
+    assert first.kind == "agy"
+    assert "antigravity" in first.tags
+    assert first.status == "online"
+
+
+@requires_hermes_profiles
+def test_harness_discovery_manager_hermes():
+    mgr = HarnessDiscoveryManager()
+    harnesses = mgr.discover_hermes_profiles()
+    assert len(harnesses) > 0
+    targets = [h.target for h in harnesses]
+    assert "george" in targets
+    assert "kai" in targets
+    george_h = next(h for h in harnesses if h.target == "george")
+    assert george_h.kind == "hermes"
+    assert "HERMES_HOME" in george_h.env
+    assert "review" in george_h.tags
+
+
+@requires_hermes_binary
+def test_hermes_profile_runner_execution(monkeypatch):
+    import subprocess
+    runner = HermesProfileRunner()
+    assert runner.is_available() is True
+
+    # Deterministic mocked test
+    def mock_subprocess_run(cmd, capture_output=True, text=True, timeout=None, env=None):
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout="HERMES_PROFILE_OK\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(HermesProfileRunner, "_try_gateway_socket_dispatch", staticmethod(lambda *args, **kwargs: None))
+    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+
+    job = WorkerJob(
+        id="job-hermes-discovery-test",
+        task_id="GRO-HERMES-DISCOVERY",
+        command="Respond with: HERMES_PROFILE_OK",
+        tags=["hermes:george"],
+        metadata={"harness": "hermes", "profile": "george", "live_gateway": False},
+        timeout_seconds=30,
+    )
+    result = runner.execute(job)
+    assert result.exit_code == 0
+    assert "HERMES_PROFILE_OK" in result.stdout
+    assert result.artifacts["harness"] == "hermes"
+    assert result.artifacts["profile"] == "george"
+
+
+@requires_hermes_binary
+def test_hermes_profile_runner_gateway_socket_dispatch(monkeypatch):
+    runner = HermesProfileRunner()
+
+    def mock_socket_dispatch(socket_path, prompt, chat_id="8190664947", timeout=600.0):
+        return {
+            "status": "completed",
+            "response": "FRED_TELEGRAM_STREAMING_VERIFIED",
+        }
+
+    monkeypatch.setattr(HermesProfileRunner, "_try_gateway_socket_dispatch", staticmethod(mock_socket_dispatch))
+
+    # Fake socket presence
+    import pathlib
+    monkeypatch.setattr(pathlib.Path, "is_socket", lambda self: True)
+
+    job = WorkerJob(
+        id="job-hermes-telegram-stream-test",
+        task_id="GRO-HERMES-TELEGRAM",
+        command="Execute Fred audit task",
+        tags=["hermes:orchestrator"],
+        metadata={"harness": "hermes", "profile": "orchestrator", "chat_id": "8190664947"},
+        timeout_seconds=30,
+    )
+    result = runner.execute(job)
+    assert result.exit_code == 0
+    assert "FRED_TELEGRAM_STREAMING_VERIFIED" in result.stdout
+    assert result.artifacts["mode"] == "live_gateway_telegram"
+    assert result.artifacts["streamed_to"] == "telegram:8190664947"
+
+
+@requires_antigravity
+@requires_hermes_profiles
+def test_gateway_harnesses_endpoints():
+    client = TestClient(app)
+
+    # 1. GET /api/gateway/harnesses
+    res = client.get("/api/gateway/harnesses")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["total"] > 0
+    harness_ids = [h["id"] for h in data["harnesses"]]
+    assert any(h.startswith("agy:") for h in harness_ids)
+    assert any(h.startswith("hermes:") for h in harness_ids)
+
+    # 2. POST /api/gateway/harnesses/discover
+    res_disc = client.post("/api/gateway/harnesses/discover", json={"auto_bench": False})
+    assert res_disc.status_code == 200
+    disc_data = res_disc.json()
+    assert disc_data["ok"] is True
+    assert disc_data["total"] >= len(harness_ids)

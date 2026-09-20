@@ -19,7 +19,12 @@ Config:
 from __future__ import annotations
 
 import argparse
-import fcntl
+import asyncio
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import json
 import os
 import subprocess
@@ -27,20 +32,49 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from prismatic.core.locking import SwarmLockManager
 
 # ── Event Emission via IPC Bridge ─────────────────────
 try:
-    from prismatic.gateway.ipc_bridge import DEFAULT_SOCKET_PATH, send_event_via_socket
+    from prismatic.gateway.ipc_bridge import send_event_via_socket
+
     _HAS_IPC = True
 except ImportError:
     _HAS_IPC = False
 
 
-def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any) -> None:
-    """Emit a lock event to the IPC bridge (best-effort, no-op if unavailable)."""
+def _emit_lock_event(
+    event_type: str, filepath: str, agent_id: str, **extra: Any
+) -> None:
+    """Emit a lock event to the IPC bridge or in-process event bus."""
     if not _HAS_IPC:
         return
+
+    # If running inside an active asyncio event loop, dispatch directly to EventBus
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+
+            bus = get_event_bus()
+            loop.create_task(
+                bus.publish(
+                    event_type=event_type,
+                    source=f"lock:{agent_id}",
+                    payload={"file": filepath, "agent": agent_id, **extra},
+                )
+            )
+            return
+        except Exception:
+            pass
+
     try:
         send_event_via_socket(
             event_type=event_type,
@@ -50,6 +84,7 @@ def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any
     except Exception:
         pass  # Best-effort — don't let event emission break locking
 
+
 # ── Constants ──────────────────────────────────────────
 def _default_prismatic_home() -> Path:
     """Resolve the portable Prismatic home directory."""
@@ -57,7 +92,7 @@ def _default_prismatic_home() -> Path:
 
 
 LOCK_FILE = _default_prismatic_home() / ".antigravity" / "swarm_locks.json"
-STALE_TTL_MS = 300_000  # 5 minutes
+STALE_TTL_MS = 3_600_000  # 5 minutes
 
 
 # ── Lock Registry Operations ───────────────────────────
@@ -75,7 +110,14 @@ def _configured_lock_file(repo_root: Path | None = None) -> Path:
                 config = yaml.safe_load(config_path.read_text()) or {}
                 configured = config.get("locks", {}).get("file")
                 if configured:
-                    return Path(os.path.expandvars(str(configured))).expanduser()
+                    expanded = Path(os.path.expandvars(str(configured))).expanduser()
+                    # A ${VAR} reference that survives expansion names an env
+                    # var not set on this machine (e.g. a stranger's laptop
+                    # without PRISMATIC_HOME). Fall back to the portable
+                    # default rather than creating a literal "${VAR}/..."
+                    # directory in the repo.
+                    if "$" not in str(expanded):
+                        return expanded
             except Exception:
                 # Locking must stay available even if a local config is malformed.
                 pass
@@ -90,9 +132,11 @@ def _read_locks() -> list[dict[str, Any]]:
     try:
         with open(lock_file) as f:
             data = json.load(f)
-            if not isinstance(data, list):
-                return []
-            return data
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return list(data.values())
+            return []
     except (json.JSONDecodeError, OSError):
         return []
 
@@ -175,99 +219,69 @@ def _prune_stale(locks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int
 # ── Commands ───────────────────────────────────────────
 
 
+def _get_lock_manager() -> SwarmLockManager:
+    from prismatic.core.locking import SwarmLockManager
+
+    lock_file = _configured_lock_file()
+    return SwarmLockManager(lock_file=lock_file, stale_ttl_ms=STALE_TTL_MS)
+
+
 def cmd_lock(filepath: str, agent_id: str) -> int:
     """Claim a file for an agent."""
     filepath = _make_relative(filepath)
+    mgr = _get_lock_manager()
 
-    with _lock_file():
-        locks = _read_locks()
-        locks, removed = _prune_stale(locks)
-        if removed:
-            print(f"  Pruned {removed} stale lock(s)")
-
-        # Check if already locked
-        for lock in locks:
-            if lock["filePath"] == filepath:
-                if lock["agentId"] == agent_id:
-                    # Same agent re-locking — update heartbeat
-                    lock["lastHeartbeat"] = int(time.time() * 1000)
-                    _write_locks(locks)
-                    print(f"✅ Lock refreshed: {filepath} (held by {agent_id})")
-                    return 0
-                else:
-                    print(
-                        f"❌ LOCKED: {filepath} is held by {lock['agentId']} "
-                        f"(since {_format_time(lock['timestamp'])})"
-                    )
-                    return 1
-
-        # Acquire new lock
-        now_ms = int(time.time() * 1000)
-        locks.append({
-            "filePath": filepath,
-            "agentId": agent_id,
-            "timestamp": now_ms,
-            "lastHeartbeat": now_ms,
-        })
-        _write_locks(locks)
-
-    print(f"🔒 Locked: {filepath} → {agent_id}")
-    _emit_lock_event("lock", filepath, agent_id)
-    return 0
+    success = mgr.acquire(filepath, agent_id, timeout_s=0.1)
+    if success:
+        print(f"🔒 Locked: {filepath} → {agent_id}")
+        return 0
+    else:
+        status = mgr.get_status()
+        held_by = next(
+            (entry["agentId"] for entry in status if entry["filePath"] == filepath),
+            "another agent",
+        )
+        print(f"❌ LOCKED: {filepath} is held by {held_by}")
+        return 1
 
 
 def cmd_unlock(filepath: str, agent_id: str) -> int:
     """Release a file lock."""
     filepath = _make_relative(filepath)
+    mgr = _get_lock_manager()
 
-    with _lock_file():
-        locks = _read_locks()
-        locks, removed = _prune_stale(locks)
-        if removed:
-            print(f"  Pruned {removed} stale lock(s)")
-
-        for i, lock in enumerate(locks):
-            if lock["filePath"] == filepath:
-                if lock["agentId"] != agent_id:
-                    print(
-                        f"❌ Cannot unlock: {filepath} is held by {lock['agentId']}, "
-                        f"not {agent_id}"
-                    )
-                    return 1
-                removed_lock = locks.pop(i)
-                _write_locks(locks)
-                print(
-                    f"🔓 Unlocked: {filepath} (was held by {agent_id} "
-                    f"for {_duration_ms(removed_lock['timestamp'])})"
-                )
-                _emit_lock_event("unlock", filepath, agent_id, duration_ms=removed_lock["timestamp"])
-                return 0
-
-    print(f"⚠️  Not locked: {filepath}")
-    return 0
+    success = mgr.release(filepath, agent_id)
+    if success:
+        print(f"🔓 Unlocked: {filepath} (was held by {agent_id})")
+        return 0
+    else:
+        status = mgr.get_status()
+        existing = next(
+            (entry for entry in status if entry["filePath"] == filepath), None
+        )
+        if existing:
+            print(
+                f"❌ Cannot unlock: {filepath} is held by {existing['agentId']}, not {agent_id}"
+            )
+            return 1
+        print(f"⚠️  Not locked: {filepath}")
+        return 0
 
 
 def cmd_status() -> int:
-    """Show all active locks with stale pruning."""
-    with _lock_file():
-        locks = _read_locks()
-        locks, removed = _prune_stale(locks)
-        if removed:
-            _write_locks(locks)
+    """Show all active locks."""
+    mgr = _get_lock_manager()
+    locks = mgr.get_status()
 
     if not locks:
         print("No active locks.")
-        if removed:
-            print(f"  (Pruned {removed} stale lock(s))")
         return 0
 
     print(f"Active locks ({len(locks)}):")
-    if removed:
-        print(f"  (Pruned {removed} stale lock(s))")
     print()
 
     now_ms = int(time.time() * 1000)
-    for lock in sorted(locks, key=lambda l: l["timestamp"]):
+    for lock in sorted(locks, key=lambda entry: entry["timestamp"]):
         age_ms = now_ms - lock["lastHeartbeat"]
         age_str = _duration_ms(lock["lastHeartbeat"], suffix=" ago")
         staleness = ""
@@ -283,20 +297,12 @@ def cmd_status() -> int:
 def cmd_heartbeat(filepath: str, agent_id: str) -> int:
     """Refresh the heartbeat timestamp for a lock."""
     filepath = _make_relative(filepath)
+    mgr = _get_lock_manager()
 
-    with _lock_file():
-        locks = _read_locks()
-        locks, removed = _prune_stale(locks)
-
-        for lock in locks:
-            if lock["filePath"] == filepath and lock["agentId"] == agent_id:
-                lock["lastHeartbeat"] = int(time.time() * 1000)
-                _write_locks(locks)
-                print(f"💓 Heartbeat: {filepath} ({agent_id})")
-                _emit_lock_event("heartbeat", filepath, agent_id)
-                if removed:
-                    print(f"  Pruned {removed} stale lock(s)")
-                return 0
+    success = mgr.heartbeat(filepath, agent_id)
+    if success:
+        print(f"💓 Heartbeat: {filepath} ({agent_id})")
+        return 0
 
     print(f"⚠️  No lock found for {filepath} by {agent_id}")
     return 1
@@ -308,6 +314,7 @@ def cmd_heartbeat(filepath: str, agent_id: str) -> int:
 def _format_time(ts_ms: int) -> str:
     """Format a millisecond timestamp as a human-readable string."""
     from datetime import datetime, timezone
+
     dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
     return dt.strftime("%H:%M:%S UTC")
 

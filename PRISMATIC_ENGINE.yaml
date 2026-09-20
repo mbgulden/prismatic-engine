@@ -40,7 +40,7 @@ agents:
   ned:
     role: Code Execution & Task Agent
     lanes:
-      owner: ["scripts/", "prismatic/", "plugins/"]
+      owner: ["scripts/", "prismatic/", "plugins/", "tests/"]
       read_only: ["content/", "assets/", "designs/", "research/"]
     branch_prefix: "ned/"
 

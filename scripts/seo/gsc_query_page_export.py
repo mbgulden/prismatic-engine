@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from seo_cron_common import date_window, gsc_search_analytics, gsc_sites, stamp, state_dir, write_json, write_text, AOT_GSC_PROPERTY
 
 # Native cron contract: exports Search Console `searchAnalytics/query` rows for
-# `sc-domain:activeoahutours.com`; URL encoding and HTTP calls live in
+# the primary monitored domain; URL encoding and HTTP calls live in
 # seo_cron_common.gsc_search_analytics.
 
 

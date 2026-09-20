@@ -17,19 +17,19 @@ _SPEC.loader.exec_module(site_registry)
 
 
 def test_load_managed_sites_resolves_env_ga4_property(monkeypatch) -> None:
-    monkeypatch.setenv("AOT_GA4_PROPERTY_ID", "123456789")
-    monkeypatch.setenv("AOT_GTM_CONTAINER_ID", "GTM-TEST123")
-    monkeypatch.setenv("AOT_GA4_MEASUREMENT_ID", "G-TEST123")
+    monkeypatch.setenv("PRISMATIC_GA4_PROPERTY_ID", "123456789")
+    monkeypatch.setenv("PRISMATIC_GTM_CONTAINER_ID", "GTM-TEST123")
+    monkeypatch.setenv("PRISMATIC_GA4_MEASUREMENT_ID", "G-TEST123")
     sites = site_registry.load_managed_sites(REPO_ROOT / "config" / "seo_sites.json")
-    active = next(site for site in sites if site.slug == "active-oahu")
+    site = next(s for s in sites if s.slug == "prismatic-core")
 
-    assert active.domain == "activeoahutours.com"
-    assert active.gsc_property == "sc-domain:activeoahutours.com"
-    assert active.effective_ga4_property_id == "123456789"
-    assert active.effective_gtm_container_id == "GTM-TEST123"
-    assert active.effective_ga4_measurement_id == "G-TEST123"
-    assert "booking_click" in active.expected_data_layer_events
-    assert active.effective_sitemap_url == "https://activeoahutours.com/sitemap.xml"
+    assert site.domain == "engine.prismatic.local"
+    assert site.gsc_property == "sc-domain:engine.prismatic.local"
+    assert site.effective_ga4_property_id == "123456789"
+    assert site.effective_gtm_container_id == "GTM-TEST123"
+    assert site.effective_ga4_measurement_id == "G-TEST123"
+    assert "page_view" in site.expected_data_layer_events
+    assert site.effective_sitemap_url == "https://engine.prismatic.local/sitemap.xml"
 
 
 def test_scaffold_site_outputs_gsc_and_ga_setup_shape() -> None:

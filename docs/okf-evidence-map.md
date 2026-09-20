@@ -1,5 +1,11 @@
 # OKF evidence map
 
+**Status:** Canonical human view
+**Owner:** Prismatic Engine maintainers
+**Machine-readable registry:** `okf/index.yaml`
+
+The registry is the validation input; this document is the operator-readable explanation. The validator fails on objective-ID or system-of-record drift in the canonical parity table; other semantic discrepancies must be resolved through independent review rather than silently choosing one.
+
 ## Purpose
 
 This document closes the OKF documentation gap for Prismatic Engine public-launch and plugin-governance work where the infrastructure already exists but the objective/key-result/function/evidence framing was scattered across docs, scripts, dashboard markers, and audit reports.
@@ -12,6 +18,23 @@ Objective → Key Result → Function → Evidence
 
 The goal is to make every real workflow visible, auditable, and eventually operable from the dashboard.
 
+## Canonical registry parity
+
+The validator requires this table to contain every machine-readable objective ID exactly once with a byte-exact matching system of record. Other explanatory tables remain human guidance and require semantic review.
+
+<!-- OKF_REGISTRY_PARITY_BEGIN -->
+| Objective ID | System of record |
+|---|---|
+| `verified-agent-output` | Git object identity + versioned verification receipts + Merge Factory attestations |
+| `provider-neutral-verification` | versioned verification receipts + Merge Factory attestations + Git object identity |
+| `systemic-orchestration-correctness` | durable state stores and event/lease records |
+| `canonical-knowledge` | docs/index.md + okf/index.yaml + accepted ADRs |
+| `sustainable-maintainability` | versioned quality, incident, rollback, and evidence metrics |
+| `canonical-agy-execution` | canonical AGY manifest + launch/process receipts + exact task and executable digests |
+| `authoritative-operator-view` | plugin/job/artifact/audit and orchestration stores |
+| `hermes-fleet-prismatic-integration` | SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts |
+<!-- OKF_REGISTRY_PARITY_END -->
+
 ## Documentation rule
 
 If a workflow exists in PE Core, it should have:
@@ -23,6 +46,31 @@ If a workflow exists in PE Core, it should have:
 5. owner boundary,
 6. risk/policy note,
 7. current surface and target dashboard surface.
+
+## Verification Engine OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Agent output is accepted only with independent evidence | Reviewed SHA equals candidate head; required proof classes pass | Merge Factory admission, lease, lock, and judge attestation | exact-SHA review, validated clean-room receipt, installed-artifact and post-merge proof | Git object identity + receipt store + Merge Factory attestations | CLI/API/provider adapters |
+| Merge evidence is portable across Git providers | One approved independent clean-room backend emits a valid exact-head receipt; provider status cannot override it | provider-neutral policy runner, receipt validator, merge judge, and thin provider adapters | versioned receipt, clean-checkout identity, command/log/artifact digests, verifier identity, freshness/revocation decision | receipt store + Git object identity + Merge Factory attestation | canonical policy; Linear epic GRO-4203; runner operational |
+| Orchestration remains correct under replay and contention | cap is never exceeded; stale holders cannot mutate | atomic leases, fencing, idempotent cohort, recovery drills | barrier/race/adversarial tests and retained recovery evidence | durable orchestration stores | CLI/API |
+| Verification remains effective | planted faults are detected and stale policies are surfaced | meta-verification maintenance loop | seeded-fault detection and verifier-drift reports | verification evidence ledger | CI/operations |
+| Agent speed remains sustainable | accepted value rises without hidden debt | quality/debt maintenance loop | escaped defects, rollback, rework, evidence latency, 30/90/180-day burden | versioned quality/incident metrics | reports/dashboard target |
+
+## Canonical AGY execution OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Unattended AGY work follows one durable workflow | Every PE launch uses `/goal`, a hash-bound binary/task, and a unique tmux anchor | `prismatic agy contract|render|launch|wait` | manifest, launch receipt, process receipt, plan/result/log artifacts | canonical AGY manifest + launch/process receipts + exact task and executable digests | CLI/harness/contract |
+| Long AGY work remains observable without arbitrary termination | No wall-clock deadline; exact process-tree CPU/I/O/log/artifact activity is classified as working/quiet/suspect without auto-kill | `prismatic.agy_activity` + `/api/gateway/agy/activity` | activity receipts, API tests, dashboard source/generated markers | canonical AGY activity receipts | Dashboard AGY Exact-Run Activity panel |
+| AGY failure is contained and attributable | Explicit cancellation and terminal cleanup use child-subreaper adoption and exact PID/start-tick verification for the full descendant tree before session teardown or slot release; stdout/stderr/diagnostics remain separate; drift fails closed | `launch_tmux()` / `wait_tmux()` / `AGYCLIHarness.cancel()` | normal-exit and cancellation tests with detached SIGTERM-ignoring `setsid()` descendants plus retained receipts | launch/process/cancel receipt store | CLI/harness/dashboard |
+| Producer completion does not authorize acceptance | Every result remains pending independent exact-artifact verification | canonical result marker + downstream verifier/merge judge | result digest, reviewed commit/tree, independent receipt | result artifact + verification receipt + Git identity | contract; event binding pending |
+
+## Hermes Multi-Agent Fleet Integration OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Multi-agent fleet executes concurrently without collisions | Zero concurrent write collisions; token growth capped at 48k tokens (75% of 65k context); multi-surface telemetry synced | Distributed SwarmLock leases, automated fleet hygiene (`prismatic fleet sync`), and Telegram edit-streaming | `docs/okf-hermes-prismatic-fleet-integration.md`, `docs/UNIFIED_STREAMING_SWARM_AUDIT.md`, `tests/test_fleet_manager.py`, `tests/test_multi_agent_concurrency_barrage.py` | SwarmLock leases + Prismatic signals + Hermes state.db + Telegram edit receipts | Telegram/Signals SSE/Hermes Desktop (9119)/SwarmLock API |
 
 ## Public-launch OKF map
 
@@ -66,7 +114,7 @@ If a workflow exists in PE Core, it should have:
 
 | Objective | Key result | Function/workflow | Evidence | Current surface | Target dashboard surface |
 |---|---|---|---|---|---|
-| Dashboard becomes source of truth | Dashboard mirrors jobs/artifacts/audit events from headless runs | dashboard Plugins tab | dashboard markers + visual QA | dashboard/API | Dashboard-first command center |
+| Dashboard becomes the authoritative operator view | Dashboard mirrors durable jobs/artifacts/audit events without inventing live state | dashboard Plugins tab | dashboard markers + visual QA | dashboard/API | Dashboard-first command center |
 | Users need fewer shell commands | Common diagnostics can be launched from UI | future diagnostic job actions | public/security/release smoke outputs | CLI today | Dashboard diagnostic runner |
 | Approvals are contextual | UI shows policy reason, risk, affected job/artifact, and audit trail before approval | approval controls + policy detail | dashboard markers/tests | dashboard basic controls | Rich approval workflow |
 | Telegram remains useful but secondary | Telegram sends urgent alerts that link to dashboard records | Telegram adapter/future notification center | message + dashboard link | Telegram/headless | Dashboard notification center + Telegram fallback |
@@ -123,3 +171,4 @@ Fallback CLI/API command
 | Media blueprint structured governance | next slice |
 | Business plugin blueprint pack | following slice |
 | Dashboard OKF/evidence board implementation | future implementation |
+| Provider-neutral verification policy | accepted in ADR-0002; implementation tracked by GRO-4203 |

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.example/schemas/okf-index.schema.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "owner",
+    "governing_principle",
+    "objectives"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "status": {
+      "const": "canonical"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "governing_principle": {
+      "const": "Don't trust, Verify"
+    },
+    "objectives": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "objective",
+          "owner",
+          "system_of_record",
+          "key_results",
+          "functions",
+          "evidence",
+          "current_surface",
+          "review_after"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "system_of_record": {
+            "type": "string",
+            "minLength": 1
+          },
+          "key_results": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "functions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "current_surface": {
+            "type": "string"
+          },
+          "review_after": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

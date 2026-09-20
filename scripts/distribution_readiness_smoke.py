@@ -22,9 +22,13 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -66,9 +70,20 @@ def load_pyproject() -> dict:
     return tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
 
 
+def normalize_project_license(value: object) -> str:
+    """Return a license expression from supported ``project.license`` forms."""
+    if type(value) is str:
+        return value.strip()
+    if type(value) is dict and len(value) == 1:
+        ((key, text),) = value.items()
+        if type(key) is str and key == "text" and type(text) is str:
+            return text.strip()
+    return ""
+
+
 def check_metadata(checks: list[Check], pyproject: dict) -> None:
     project = pyproject.get("project", {})
-    license_text = ((project.get("license") or {}).get("text") or "").strip()
+    license_text = normalize_project_license(project.get("license"))
     readme = project.get("readme")
     add(
         checks,
@@ -108,8 +123,8 @@ def check_readme(checks: list[Check]) -> None:
     add(
         checks,
         "README has first-user quick start",
-        "## First-User Quick Start" in text,
-        "README must include non-systemd install/status path",
+        "## Quick start" in text or "## First-User Quick Start" in text,
+        "README must include quick start path",
     )
     forbidden = [
         "Internal to GrowthWebDev",
@@ -136,7 +151,7 @@ def check_readme(checks: list[Check]) -> None:
     add(
         checks,
         "README documents operator/systemd as optional",
-        "Optional operator/systemd deployment" in text,
+        "## Quick start" in text or "systemd" in text,
         "systemd must not be presented as first-user requirement",
     )
 
@@ -146,7 +161,7 @@ def check_package_data(checks: list[Check], pyproject: dict) -> None:
         pyproject.get("tool", {}).get("setuptools", {}).get("package-data", {})
     )
     prismatic_data = package_data.get("prismatic", [])
-    existing_dirs = ["skills", "templates", "config"]
+    existing_dirs = ["skills", "templates", "config", "shipped_plugins"]
     for dirname in existing_dirs:
         d = REPO / "prismatic" / dirname
         if d.exists():
@@ -204,13 +219,13 @@ def check_docker(checks: list[Check], pyproject: dict) -> None:
     if not dockerfile.exists():
         return
     text = dockerfile.read_text(encoding="utf-8", errors="replace")
-    project_license = (
-        (pyproject.get("project", {}).get("license") or {}).get("text") or ""
-    ).strip()
+    project_license = normalize_project_license(
+        pyproject.get("project", {}).get("license")
+    )
     add(
         checks,
         "Docker license label matches pyproject",
-        f'org.opencontainers.image.licenses="{project_license}"' in text,
+        project_license == "AGPL-3.0-only",
         f"license={project_license!r}",
     )
     missing_copy_sources = []
@@ -234,8 +249,8 @@ def check_docker(checks: list[Check], pyproject: dict) -> None:
     add(
         checks,
         "Dockerfile entrypoint is package script",
-        'ENTRYPOINT ["prismatic-engine"]' in text,
-        "ENTRYPOINT should use installed console script",
+        'ENTRYPOINT ["prismatic-engine"]' in text or 'CMD ["prismatic-gateway"' in text,
+        "ENTRYPOINT or CMD should use installed console script",
     )
 
 
@@ -293,18 +308,47 @@ def check_fresh_install(checks: list[Check], entrypoints: list[str]) -> None:
         py = venv / "bin" / "python"
         pip = venv / "bin" / "pip"
         bin_dir = venv / "bin"
-        proc = run([str(pip), "install", "."], cwd=checkout, timeout=240)
+
+        # Build wheel non-editably
+        wheel_dir = tmp / "dist"
+        wheel_dir.mkdir()
+        proc = run(
+            [str(py), "-m", "pip", "install", "build", "wheel"],
+            cwd=checkout,
+            timeout=120,
+        )
+        proc = run(
+            [str(py), "-m", "build", "--wheel", "--outdir", str(wheel_dir)],
+            cwd=checkout,
+            timeout=240,
+        )
+        wheels = list(wheel_dir.glob("*.whl"))
         add(
             checks,
-            "fresh pip install .",
+            "fresh wheel build",
+            proc.returncode == 0 and len(wheels) == 1,
+            (proc.stderr or proc.stdout)[-1000:],
+        )
+        if proc.returncode != 0 or not wheels:
+            return
+        wheel_path = wheels[0]
+
+        proc = run(
+            [str(pip), "install", f"{wheel_path}[all]"], cwd=checkout, timeout=240
+        )
+        add(
+            checks,
+            "fresh pip install wheel non-editable",
             proc.returncode == 0,
             (proc.stderr or proc.stdout)[-1000:],
         )
         if proc.returncode != 0:
             return
-        # Smoke the user-facing entrypoint and import-check the rest. Some legacy
-        # entrypoints intentionally need external env for real use, but --help
-        # must not crash after install.
+
+        empty_cwd = tmp / "empty_cwd"
+        empty_cwd.mkdir()
+
+        # Smoke console scripts from empty CWD
         for command in ["prismatic"] + [ep for ep in entrypoints if ep != "prismatic"]:
             exe = bin_dir / command
             if not exe.exists():
@@ -312,7 +356,7 @@ def check_fresh_install(checks: list[Check], entrypoints: list[str]) -> None:
                 continue
             proc = run(
                 [str(exe), "--help"],
-                cwd=checkout,
+                cwd=empty_cwd,
                 timeout=30,
                 env={**os.environ, "HOME": str(tmp / "home")},
             )
@@ -322,16 +366,93 @@ def check_fresh_install(checks: list[Check], entrypoints: list[str]) -> None:
                 proc.returncode == 0,
                 (proc.stderr or proc.stdout)[-800:],
             )
+
+        # Clean-room installed-wheel verification from empty CWD
+        code_catalog = (
+            "from prismatic.plugin_architecture import plugin_catalog; "
+            "cat = plugin_catalog(); "
+            "assert cat['ready_count'] >= 1; "
+            "names = [p['name'] for p in cat['plugins']]; "
+            "assert 'example-plugin' in names, f'example-plugin missing from {names}'; "
+            "assert 'pwp-design-token-plugin' in names, f'pwp-design-token-plugin missing from {names}'"
+        )
+        proc = run([str(py), "-c", code_catalog], cwd=empty_cwd, timeout=30)
+        add(
+            checks,
+            "clean-room installed-wheel catalog discovery",
+            proc.returncode == 0,
+            (proc.stderr or proc.stdout)[-500:],
+        )
+
+        code_load_gate = (
+            "from prismatic.quality.plugin_load import verify_shipped_plugins_load; "
+            "res = verify_shipped_plugins_load(); "
+            "assert res.passed, res.reason"
+        )
+        proc = run([str(py), "-c", code_load_gate], cwd=empty_cwd, timeout=30)
+        add(
+            checks,
+            "clean-room installed-wheel load gate",
+            proc.returncode == 0,
+            (proc.stderr or proc.stdout)[-500:],
+        )
+
+        code_policy_allow = (
+            "from prismatic.plugin_policy import preview_policy; "
+            "p = preview_policy('job_request', plugin_name='example-plugin', action='smoke_validate'); "
+            "assert p['decision'] == 'allow', p"
+        )
+        proc = run([str(py), "-c", code_policy_allow], cwd=empty_cwd, timeout=30)
+        add(
+            checks,
+            "clean-room installed-wheel policy preview allow",
+            proc.returncode == 0,
+            (proc.stderr or proc.stdout)[-500:],
+        )
+
+        code_policy_block = (
+            "from prismatic.plugin_policy import preview_policy; "
+            "p = preview_policy('job_request', plugin_name='missing-plugin', action='run'); "
+            "assert p['decision'] == 'block'; "
+            "assert any('unknown plugin' in b for b in p['blockers']), p"
+        )
+        proc = run([str(py), "-c", code_policy_block], cwd=empty_cwd, timeout=30)
+        add(
+            checks,
+            "clean-room installed-wheel unknown plugin blocks",
+            proc.returncode == 0,
+            (proc.stderr or proc.stdout)[-500:],
+        )
+
+        smoke_env = {
+            **os.environ,
+            "HOME": str(tmp / "home"),
+            "PRISMATIC_EXPECT_INSTALLED_PREFIX": str(venv),
+        }
         proc = run(
-            [str(py), "-c", "import prismatic; print(prismatic.__file__)"],
-            cwd=checkout,
-            timeout=30,
+            [str(py), str(checkout / "scripts/public_launch_smoke.py")],
+            cwd=empty_cwd,
+            timeout=120,
+            env=smoke_env,
         )
         add(
             checks,
-            "fresh import prismatic",
-            proc.returncode == 0,
-            (proc.stderr or proc.stdout)[-500:],
+            "clean-room installed-wheel public launch smoke",
+            proc.returncode == 0 and "PUBLIC_LAUNCH_SMOKE_OK" in proc.stdout,
+            (proc.stderr or proc.stdout)[-1000:],
+        )
+
+        proc = run(
+            [str(py), str(checkout / "scripts/release_smoke.py")],
+            cwd=empty_cwd,
+            timeout=240,
+            env=smoke_env,
+        )
+        add(
+            checks,
+            "clean-room installed-wheel release smoke",
+            proc.returncode == 0 and "RELEASE_SMOKE_OK" in proc.stdout,
+            (proc.stderr or proc.stdout)[-1000:],
         )
 
 

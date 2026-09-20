@@ -1,0 +1,32 @@
+# Task Closeout Report — GRO-4457
+
+agent=agy
+STATUS=BLOCKED
+PRODUCER_STATUS=BLOCKED
+ACCEPTANCE_DECISION=PENDING
+TASK_ID=GRO-4457
+ATTEMPT_ID=attempt-20260804-02
+BASE_HEAD=1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+CANDIDATE_HEAD=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
+CANDIDATE_TREE=9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e
+CHANGED_PATHS=["prismatic/gateway/server.py"]
+COMMAND=["pytest tests/test_gateway.py"]
+RESULT=BLOCKED
+LOG=artifacts/logs/attempt-20260804-02.log
+LOG_SHA256=2c57ad42b9fa1199638e35e4b499f6096ffa62fd807833dfd9a5376e6c6bf635
+result_artifacts=["artifacts/logs/attempt-20260804-02.log"]
+SCOPE=Attempted WebSocket token auth security update
+merge_lane=backend-api
+risk_level=medium
+AD_HOC_OR_CANONICAL=ad-hoc targeted
+PROOF_CLASSES=["focused"]
+SIDE_EFFECTS={"push": false, "pr": false, "merge": false, "deploy": false, "linear_updated": false}
+BLOCKERS=["Missing authorization header propagation on gateway proxy route"]
+NOT_CLAIMING=["Full test suite pass", "Clean lint check"]
+NEXT_ACTION=blocked
+MARKER=AGY_TASK_RESULT_PACKET_OK
+
+---
+
+## Blocker Details
+Gateway proxy route stripped incoming `Authorization` header during request forwarding.

@@ -118,15 +118,27 @@ class TestChatAGYCapabilityCheckStatus(unittest.TestCase):
 
 
 class TestChatAGYCapabilityListAndGet(unittest.TestCase):
-    """v0.1 contract: empty list, None on get."""
+    """Verifies empty fallback and live session discovery."""
 
-    def test_list_sessions_returns_empty_list(self):
-        cap = ChatAGYCapability()
-        self.assertEqual(cap.list_sessions(), [])
+    def test_list_sessions_empty_when_no_brain_dirs(self):
+        with patch.dict(os.environ, {"AGY_BRAIN_DIR": "/nonexistent/brain/dir"}):
+            cap = ChatAGYCapability()
+            self.assertEqual(cap.list_sessions(), [])
 
-    def test_get_session_returns_none(self):
+    def test_get_session_returns_none_for_missing(self):
         cap = ChatAGYCapability()
-        self.assertIsNone(cap.get_session("any-id"))
+        self.assertIsNone(cap.get_session("definitely-nonexistent-session-id"))
+
+    def test_list_and_get_sessions_live_discovery(self):
+        cap = ChatAGYCapability()
+        sessions = cap.list_sessions(limit=10)
+        self.assertIsInstance(sessions, list)
+        if sessions:
+            s_id = sessions[0]["id"]
+            detail = cap.get_session(s_id)
+            self.assertIsNotNone(detail)
+            self.assertEqual(detail["id"], s_id)
+            self.assertEqual(detail["agent"], "agy")
 
 
 class TestChatAGYCapabilityRegistryRegistration(unittest.TestCase):
@@ -140,8 +152,6 @@ class TestChatAGYCapabilityRegistryRegistration(unittest.TestCase):
         cap = default_registry.get("chat.agy")
         self.assertIsNotNone(cap)
         ok, msg = cap.check_status()
-        # ok is True or False depending on the host; we only assert the
-        # call returns a tuple and the message is a string.
         self.assertIsInstance(ok, bool)
         self.assertIsInstance(msg, str)
 
@@ -152,7 +162,6 @@ class TestChatGatewayEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from fastapi.testclient import TestClient
-        # The gateway server module pulls in heavy deps; load it lazily.
         from prismatic.gateway.server import app
         cls.client = TestClient(app)
 
@@ -160,15 +169,12 @@ class TestChatGatewayEndpoints(unittest.TestCase):
         r = self.client.get("/chat/sessions")
         self.assertEqual(r.status_code, 200)
         self.assertIsInstance(r.json(), list)
-        # v0.1 contract: empty list
-        self.assertEqual(r.json(), [])
 
     def test_get_chat_session_returns_404_for_any_id(self):
-        r = self.client.get("/chat/sessions/does-not-exist")
+        r = self.client.get("/chat/sessions/definitely-does-not-exist-999")
         self.assertEqual(r.status_code, 404)
         body = r.json()
         self.assertEqual(body.get("detail", {}).get("error"), "session_not_found")
-        self.assertIn("v0.1", body.get("detail", {}).get("reason", ""))
 
 
 if __name__ == "__main__":

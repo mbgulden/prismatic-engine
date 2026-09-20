@@ -1,5 +1,7 @@
 # GRO-3520 — Merge Backlog Triage Partial Delivery / Handoff
 
+> **Historical blocked handoff — not current authority.** Branch-only OKF proposals below remain lineage evidence. Current precedence: `docs/index.md`; machine registry: `okf/index.yaml`.
+
 ## Result
 
 Ned completed the in-lane companion API portion and preserved the full OKF patch locally, but the repository pre-push lane gate rejects OKF paths for Ned. The issue should not be treated as complete until a docs/OKF lane agent publishes the OKF artifacts.

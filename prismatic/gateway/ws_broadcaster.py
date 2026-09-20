@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import threading
-from typing import Any, Set
+from typing import Any
 
 import websockets
 from websockets.asyncio.server import ServerConnection
@@ -58,7 +58,7 @@ class WSBroadcaster:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._server: Any = None
-        self._clients: Set[ServerConnection] = set()
+        self._clients: set[ServerConnection] = set()
         self._active = False
 
     # ── Public API ────────────────────────────────────
@@ -137,6 +137,37 @@ class WSBroadcaster:
 
     async def _handle_client(self, websocket: ServerConnection) -> None:
         """Handle a new WebSocket client connection."""
+        # Authenticate connection. Auth is required by default when
+        # PRISMATIC_WS_TOKENS is configured, unless explicitly disabled.
+        import secrets
+
+        ws_auth_env = os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "").strip().lower()
+        allowed_raw = os.environ.get("PRISMATIC_WS_TOKENS", "").strip()
+        auth_disabled = ws_auth_env in ("0", "false", "no")
+        auth_required = (ws_auth_env in ("1", "true", "yes")) or (
+            bool(allowed_raw) and not auth_disabled
+        )
+        if auth_required:
+            req_headers = getattr(websocket, "request_headers", {}) or getattr(
+                getattr(websocket, "request", None), "headers", {}
+            )
+            auth_hdr = req_headers.get("Authorization", "").strip()
+            token = ""
+            # Strict: only exact "Bearer <token>" header is accepted.
+            if auth_hdr.startswith("Bearer "):
+                token = auth_hdr[7:].strip()
+                if not token or any(c.isspace() for c in token):
+                    token = ""
+            allowed_tokens = [t.strip() for t in allowed_raw.split(",") if t.strip()]
+            valid = (
+                bool(token)
+                and any(secrets.compare_digest(token, t) for t in allowed_tokens)
+            )
+            if not valid:
+                logger.warning("Rejecting unauthenticated WebSocket connection")
+                await websocket.close(1008, "Unauthorized")
+                return
+
         self._clients.add(websocket)
         logger.info("Dashboard connected (total=%d)", len(self._clients))
 

@@ -7,8 +7,11 @@ webhooks, systemd, or hosted infrastructure.
 
 from __future__ import annotations
 
+import atexit
+import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -38,6 +41,9 @@ def run(cmd: list[str], *, cwd: Path) -> str:
 
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
+    expected_prefix = os.environ.get("PRISMATIC_EXPECT_INSTALLED_PREFIX")
+    if not expected_prefix and str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
     tmp = Path(tempfile.mkdtemp(prefix="prismatic-public-smoke-"))
     state = tmp / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -48,18 +54,62 @@ def main() -> int:
     os.environ.setdefault(
         "PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state / "plugin_artifacts.json")
     )
+    control_token = secrets.token_urlsafe(32)
+    control_auth_file = state / "control-auth.json"
+    control_auth_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "credentials": [
+                    {
+                        "actor": "public-launch-smoke",
+                        "token_sha256": hashlib.sha256(
+                            control_token.encode("utf-8")
+                        ).hexdigest(),
+                        "roles": ["operator"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    control_auth_file.chmod(0o600)
+    os.environ["PRISMATIC_CONTROL_AUTH_FILE"] = str(control_auth_file)
+    control_headers = {"Authorization": f"Bearer {control_token}"}
+
+    def cleanup_control_auth() -> None:
+        control_auth_file.unlink(missing_ok=True)
+        if os.environ.get("PRISMATIC_CONTROL_AUTH_FILE") == str(control_auth_file):
+            os.environ.pop("PRISMATIC_CONTROL_AUTH_FILE", None)
+
+    atexit.register(cleanup_control_auth)
 
     def import_core() -> None:
-        import prismatic  # noqa: F401
+        import prismatic
         from prismatic.plugin_policy import decision_payload
 
+        expected_prefix = os.environ.get("PRISMATIC_EXPECT_INSTALLED_PREFIX")
+        if expected_prefix:
+            module_path = Path(prismatic.__file__).resolve()
+            prefix = Path(expected_prefix).resolve()
+            if not module_path.is_relative_to(prefix):
+                raise RuntimeError(
+                    f"prismatic imported outside installed prefix: {module_path} not under {prefix}"
+                )
         policy = decision_payload(decision="allow", reason="public smoke")
         assert policy["decision"] == "allow"
 
     def cli_help() -> None:
+        from prismatic.agy_cli import canonical_contract
         from prismatic.cli import run as cli_run
 
         assert cli_run([]) == 0
+        contract = canonical_contract()
+        assert contract["transport"] == "tmux-durable-anchor"
+        assert contract["prompt_prefix"] == "/goal "
+        assert contract["maximum_attempts"] == 3
+        assert contract["runtime_deadline"] is None
+        assert contract["runtime_policy"] == "no-wall-clock-cap-progress-supervised"
 
     def catalog() -> dict[str, Any]:
         out = run([sys.executable, "scripts/plugin_architecture", "catalog"], cwd=repo)
@@ -71,9 +121,7 @@ def main() -> int:
     def plugin_load_gate() -> None:
         from prismatic.quality.plugin_load import verify_shipped_plugins_load
 
-        result = verify_shipped_plugins_load(
-            plugins_dir=repo / "plugins", core_version="0.2.0"
-        )
+        result = verify_shipped_plugins_load(core_version="0.2.0")
         if not result.passed:
             raise RuntimeError(result.reason)
 
@@ -97,13 +145,16 @@ def main() -> int:
             )
         policy = client.post(
             "/api/plugins/policy/preview",
+            headers=control_headers,
             json={
                 "kind": "job_request",
                 "plugin_name": "example-plugin",
                 "action": "smoke_validate",
             },
         )
-        assert policy.status_code == 200
+        assert policy.status_code == 200, (
+            f"policy preview status {policy.status_code}: {policy.text}"
+        )
         assert policy.json()["decision"] == "allow"
 
     def public_docs() -> None:
@@ -204,6 +255,7 @@ def main() -> int:
     catalog_payload = step("plugin catalog", catalog)
     step("plugin load gate", plugin_load_gate)
     step("Gateway API smoke", gateway_smoke)
+    cleanup_control_auth()
     step("public docs", public_docs)
     step("dashboard markers", dashboard_markers)
 

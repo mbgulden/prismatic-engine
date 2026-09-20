@@ -1,9 +1,11 @@
 # Prismatic Engine — Architecture Reference
 
-**Status:** Tier 4 deliverable. Captures the engine as of 2026-06-19.
+**Status:** Transitional reference. Captures a 2026-06-19 architecture generation and is not authoritative where it conflicts with accepted ADRs or the current verification architecture.
 **Audience:** Anyone touching `prismatic/`, integrating a new agent, or debugging cross-module behavior.
 
-This doc links out to source files rather than restating them. The engine is the durable source of truth; this is the map of it.
+Current precedence and verification authority live in [`docs/index.md`](index.md), [`ADR-0001`](decisions/ADR-0001-documentation-source-of-truth.md), and [`Verification Engine architecture`](architecture/verification-engine.md).
+
+This doc links to a historical module map. Runtime schemas and invariants remain authoritative; this reference must be revalidated before operational use.
 
 ## What is the Prismatic Engine?
 

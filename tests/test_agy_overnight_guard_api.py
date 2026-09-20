@@ -45,12 +45,41 @@ def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-API") -> dict:
     }
 
 
+VALID_SOURCE_SHA = "c" * 40
+VALID_BASE_SHA = "d" * 40
+
+
+def durable_agy_packet(
+    tmp_path: Path, issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-API"
+) -> dict:
+    source = tmp_path / f"{issue}-RESULT.md"
+    proof = tmp_path / f"{issue}-proof.log"
+    source.write_text(
+        "RESULT=PASS\nMARKER=AGY_DURABLE_OVERNIGHT_API_OK\n", encoding="utf-8"
+    )
+    proof.write_text("targeted API guard proof passed\n", encoding="utf-8")
+    packet = agy_packet(issue)
+    packet["source_path"] = str(source)
+    packet["source_branch"] = packet.get("branch")
+    packet["source_commit_sha"] = VALID_SOURCE_SHA
+    packet["base_commit_sha"] = VALID_BASE_SHA
+    packet["proof"] = {
+        "result": "PASS",
+        "marker": packet["marker"],
+        "log": str(proof),
+    }
+    packet["verification"]["log_path"] = str(proof)
+    return packet
+
+
 def seed(monkeypatch, tmp_path):
     completed_db = tmp_path / "completed_work.db"
     guard_db = tmp_path / "overnight_guard.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(completed_db))
     monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(guard_db))
-    row = ingest_completed_work(agy_packet(), db_path=completed_db)
+    row = ingest_completed_work(durable_agy_packet(tmp_path), db_path=completed_db)
     return row, guard_db
 
 

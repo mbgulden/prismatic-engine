@@ -1,0 +1,50 @@
+{
+  "handoff_id": "GRO-549:missing-result",
+  "source": {
+    "agent": "agy"
+  },
+  "target": {
+    "agent": "fred",
+    "required_capabilities": [
+      "linear_comment"
+    ]
+  },
+  "work": {
+    "issue": "GRO-549",
+    "scope": "abandoned sandbox recovery",
+    "base": "origin/main",
+    "allowed_paths": [
+      "docs/handoff-contracts-spec.md"
+    ],
+    "production_facing": false
+  },
+  "acceptance": {
+    "expected_markers": [
+      "HANDOFF_CONTRACTS_SPEC_OK"
+    ],
+    "not_claiming": [
+      "runtime_enforcement"
+    ]
+  },
+  "retry": {
+    "max_attempts": 1,
+    "on_missing_result": "pause_and_require_review"
+  },
+  "evidence": {
+    "required_artifacts": [
+      "PR URL",
+      "commit SHA"
+    ],
+    "result_file": "RESULT.md"
+  },
+  "result": {
+    "status": "pass",
+    "changed_paths": [
+      "docs/handoff-contracts-spec.md"
+    ],
+    "artifacts": [],
+    "claims": [
+      "completed without durable output"
+    ]
+  }
+}

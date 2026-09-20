@@ -19,6 +19,7 @@ Usage:
   python3 agy_sandbox_event_supervisor.py --max-concurrent 2 --jitter 5-15 --backoff 8-15
 """
 import os
+import pwd
 import sys
 import json
 import time
@@ -33,6 +34,8 @@ import urllib.error
 import urllib.request
 import sqlite3
 import hashlib
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue, Empty
 from datetime import datetime, timezone, timedelta
@@ -72,8 +75,591 @@ def estimate_cost(issue_id: str, model: str, elapsed_sec: float) -> float:
     return round(max(0.001, estimated), 4)
 
 
-def publish_agent_completed(issue_id: str, payload: dict) -> None:
-    """Publish an agent.completed event to the durable SQLite bus.
+_FAILED_PACKET_VALUES = {"ABANDONED", "BLOCKED", "ERROR", "FAIL", "FAILED"}
+_EMPTY_CHANGED_FILE_VALUES = {"", "[]", "NONE", "NULL"}
+
+
+def assess_result_semantics(result_path: Path, *, minimum_size: int = 1024) -> dict:
+    """Fail closed when RESULT.md explicitly reports failure or missing work.
+
+    Completion markers and peer-review labels are transport signals, not proof
+    that the packet succeeded. This parser intentionally recognizes only
+    explicit failure declarations; richer packet validation remains downstream.
+    """
+    if not result_path.is_file():
+        return {
+            "exists": False,
+            "size": 0,
+            "passed": False,
+            "explicit_failure": False,
+            "reasons": ["result_missing"],
+        }
+
+    text = result_path.read_text(encoding="utf-8", errors="replace")
+    size = result_path.stat().st_size
+    reasons: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip().replace("**", "").replace("`", "")
+        line = re.sub(r"^[*-]\s+", "", line).strip()
+        upper = line.upper()
+        if upper.startswith("# RESULT") and "ABANDONED" in upper:
+            reasons.append("status_abandoned")
+        if upper.startswith("## ERROR") or re.match(r"^ERROR\s*[:=]", upper):
+            reasons.append("explicit_error")
+        if upper.startswith("## MISSING ARTIFACTS"):
+            reasons.append("missing_artifacts")
+
+        match = re.match(r"^([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$", upper)
+        if not match:
+            continue
+        key, value = match.groups()
+        if key in {"RESULT", "STATUS"} and value in _FAILED_PACKET_VALUES:
+            reasons.append(f"{key.lower()}_{value.lower()}")
+        if key.endswith("_RESULT") and value in _FAILED_PACKET_VALUES:
+            reasons.append(f"verifier_{key.lower()}_{value.lower()}")
+        if key == "CHANGED_FILES" and value in _EMPTY_CHANGED_FILE_VALUES:
+            reasons.append("changed_files_empty")
+
+    reasons = list(dict.fromkeys(reasons))
+    if size < minimum_size:
+        reasons.append("result_too_small")
+    explicit_failure = any(reason != "result_too_small" for reason in reasons)
+    return {
+        "exists": True,
+        "size": size,
+        "passed": not reasons,
+        "explicit_failure": explicit_failure,
+        "reasons": reasons,
+    }
+
+
+def semantic_completion(result_path: Path, *, completion_signal: bool) -> dict:
+    """Bind completion signals to RESULT.md semantics."""
+    assessment = assess_result_semantics(result_path)
+    has_done = bool(completion_signal and assessment["passed"])
+    return {
+        **assessment,
+        "has_done": has_done,
+        "has_error": bool(assessment["explicit_failure"]),
+        "has_partial_result": bool(
+            assessment["exists"] and not has_done and not assessment["explicit_failure"]
+        ),
+    }
+
+
+_AGY_PACKET_NAME = "AGY_RESULT_PACKET.json"
+_AGY_COMPLETED_WORK_ROOT = (
+    Path(pwd.getpwuid(os.getuid()).pw_dir) / ".prismatic" / "state" / "agy-completed-work"
+)
+_AGY_COMPLETED_WORK_DB = _AGY_COMPLETED_WORK_ROOT / "agy_completed_work.db"
+_AGY_COMPLETED_WORK_EVIDENCE_DIR = _AGY_COMPLETED_WORK_ROOT / "evidence"
+
+
+def remove_stale_agy_result_outputs(sandbox: Path) -> tuple[str, ...]:
+    """Remove exact result control outputs or fail before launching AGY."""
+    if type(sandbox) is not type(Path()):
+        raise TypeError("sandbox must be an exact platform Path")
+    removed: list[str] = []
+    for name in ("RESULT.md", _AGY_PACKET_NAME):
+        prior_result = sandbox / name
+        if not (prior_result.exists() or prior_result.is_symlink()):
+            continue
+        try:
+            if prior_result.is_dir() and not prior_result.is_symlink():
+                shutil.rmtree(prior_result)
+            else:
+                prior_result.unlink()
+        except OSError as exc:
+            raise RuntimeError("failed to remove stale result control output") from exc
+        removed.append(name)
+    return tuple(removed)
+
+
+def agy_raw_output_db_path() -> Path:
+    """Return supervisor-owned result queue state, never release-local state."""
+    override = os.environ.get("PRISMATIC_AGENT_RAW_OUTPUT_DB")
+    if override:
+        return Path(override).expanduser()
+    return (
+        _SERVICE_ACCOUNT_HOME
+        / ".prismatic"
+        / "state"
+        / "agy-result-boundary"
+        / "agent_raw_output_queue.sqlite3"
+    )
+
+
+def agy_completed_work_db_path() -> Path:
+    """Return the dedicated supervisor-owned completed-work ledger path."""
+    return _AGY_COMPLETED_WORK_DB
+
+
+def agy_completed_work_evidence_dir() -> Path:
+    """Return the dedicated supervisor-owned completed-work evidence path."""
+    return _AGY_COMPLETED_WORK_EVIDENCE_DIR
+
+
+def _bounded_nofollow_read(path: Path, byte_limit: int) -> tuple[bytes, bool]:
+    """Read at most limit+1 bytes from the opened regular-file inode."""
+    fd = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("selected result is not a regular file")
+        chunks: list[bytes] = []
+        remaining = byte_limit + 1
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw_bytes = b"".join(chunks)
+        return raw_bytes, len(raw_bytes) > byte_limit
+    finally:
+        os.close(fd)
+
+
+AGY_RAW_OUTPUT_RECOVERY_MARKER = "AGY_RAW_OUTPUT_RECOVERY_OK"
+AGY_RAW_OUTPUT_RECONCILIATION_GATE_MARKER = "AGY_RAW_OUTPUT_RECONCILIATION_GATE_OK"
+RUNTIME_CONVERGENCE_5_MARKER = "RUNTIME_CONVERGENCE_5_OK"
+_AGY_SOURCE_EVENT_RE = re.compile(
+    r"^agy:(GRO-[A-Za-z0-9][A-Za-z0-9-]*):attempt:([1-9][0-9]*):sha256:([0-9a-f]{64})$"
+)
+_RETRY_DELAYS = (30, 120, 600, 1800, 3600)
+
+
+@dataclass(frozen=True)
+class AgyRawReconciliationResult:
+    raw_output_id: str
+    status: str
+    reason: str
+    completed_work_id: str | None = None
+    classification: str | None = None
+    integration_classification: str | None = None
+    eligible_for_merge: bool = False
+    ingestion_marker: str | None = None
+    integration_marker: str | None = None
+    recovery_marker: str | None = None
+    reconciliation_gate_marker: str | None = None
+    runtime_marker: str | None = None
+
+    def as_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+def _safe_completed_result(raw_output_id, completed_row):
+    from prismatic.agy_completed_work import (
+        AGY_COMPLETED_WORK_INGESTION_MARKER,
+        AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
+    )
+    row_dict = completed_row.as_dict()
+    if (
+        type(completed_row.id) is not str
+        or not completed_row.id.strip()
+        or type(completed_row.ingestion_marker) is not str
+        or completed_row.ingestion_marker != AGY_COMPLETED_WORK_INGESTION_MARKER
+        or type(row_dict) is not dict
+        or type(row_dict.get("integration_marker")) is not str
+        or row_dict.get("integration_marker") != AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
+    ):
+        raise ValueError("invalid completed-work return")
+    return AgyRawReconciliationResult(
+        raw_output_id=raw_output_id,
+        status="succeeded",
+        reason="completed_work_persisted",
+        completed_work_id=completed_row.id,
+        classification=row_dict.get("classification"),
+        integration_classification=row_dict.get("integration_classification"),
+        eligible_for_merge=row_dict.get("eligible_for_merge") is True,
+        ingestion_marker=completed_row.ingestion_marker,
+        integration_marker=row_dict["integration_marker"],
+        recovery_marker=AGY_RAW_OUTPUT_RECOVERY_MARKER,
+        reconciliation_gate_marker=AGY_RAW_OUTPUT_RECONCILIATION_GATE_MARKER,
+        runtime_marker=RUNTIME_CONVERGENCE_5_MARKER,
+    )
+
+
+def _load_succeeded_reconciliation(
+    *, raw_output_id, delivery, completed_work_db_path, completed_work_evidence_dir
+):
+    if delivery.status != "succeeded":
+        return None
+    if type(delivery.completed_work_id) is not str or not delivery.completed_work_id.strip():
+        return AgyRawReconciliationResult(
+            raw_output_id, "succeeded_unavailable", "completed_work_storage_failed"
+        )
+    try:
+        from prismatic.agy_completed_work import AgyCompletedWorkStore
+
+        row = AgyCompletedWorkStore(
+            completed_work_db_path, evidence_dir=completed_work_evidence_dir
+        ).get(delivery.completed_work_id)
+        return _safe_completed_result(raw_output_id, row)
+    except Exception:
+        return AgyRawReconciliationResult(
+            raw_output_id,
+            "succeeded_unavailable",
+            "completed_work_storage_failed",
+            completed_work_id=delivery.completed_work_id,
+        )
+
+
+def _terminal_reconciliation(store, claim, code, disposition, now):
+    if not store.mark_delivery_failed(
+        claim, error_code=code, terminal_disposition=disposition, now=now
+    ):
+        return AgyRawReconciliationResult(
+            claim.raw_output_id, "stale_claim", "stale_claim"
+        )
+    return AgyRawReconciliationResult(
+        claim.raw_output_id, "terminal_failed", code
+    )
+
+
+def _retry_reconciliation(store, claim, code, now):
+    instant = now or datetime.now(timezone.utc)
+    if isinstance(instant, str):
+        instant = datetime.fromisoformat(instant)
+    retry_at = instant + timedelta(seconds=_RETRY_DELAYS[min(claim.retry_count, 4)])
+    if not store.mark_delivery_failed(
+        claim, error_code=code, retry_at=retry_at, now=instant
+    ):
+        return AgyRawReconciliationResult(
+            claim.raw_output_id, "stale_claim", "stale_claim"
+        )
+    delivery = store.get_delivery(claim.raw_output_id)
+    return AgyRawReconciliationResult(
+        claim.raw_output_id, delivery.status, delivery.last_error_code or code
+    )
+
+
+def _reconcile_agy_claim(
+    *, claim, store, completed_work_db_path, completed_work_evidence_dir, now=None
+):
+    try:
+        raw_text, raw_row = store._raw_text_for_delivery_claim(claim)
+    except Exception:
+        return _retry_reconciliation(store, claim, "completed_work_storage_failed", now)
+    if Path(raw_row.raw_text_or_artifact_path).name != _AGY_PACKET_NAME:
+        return _terminal_reconciliation(
+            store, claim, "source_artifact_invalid", "ineligible", now
+        )
+    if raw_row.agent != "agy":
+        return _terminal_reconciliation(store, claim, "agent_ineligible", "ineligible", now)
+    if type(raw_row.task_id) is not str or not re.fullmatch(
+        r"GRO-[A-Za-z0-9][A-Za-z0-9-]*", raw_row.task_id
+    ):
+        return _terminal_reconciliation(store, claim, "task_identity_invalid", "ineligible", now)
+    match = _AGY_SOURCE_EVENT_RE.fullmatch(raw_row.source_event_id or "")
+    if match is None or match.group(1) != raw_row.task_id:
+        return _terminal_reconciliation(
+            store, claim, "source_provenance_invalid", "provenance_invalid", now
+        )
+    if hashlib.sha256(raw_text.encode("utf-8")).hexdigest() != match.group(3):
+        return _terminal_reconciliation(store, claim, "digest_mismatch", "provenance_invalid", now)
+    try:
+        packet = json.loads(raw_text)
+        if type(packet) is not dict:
+            raise ValueError
+    except Exception:
+        return _terminal_reconciliation(store, claim, "raw_json_invalid", "malformed", now)
+    from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
+    if not is_raw_agy_result_packet(packet):
+        return _terminal_reconciliation(store, claim, "raw_dialect_invalid", "malformed", now)
+    try:
+        require_valid_packet(packet)
+    except Exception:
+        return _terminal_reconciliation(store, claim, "packet_schema_invalid", "malformed", now)
+    if packet.get("issue_identifier") != raw_row.task_id:
+        return _terminal_reconciliation(store, claim, "issue_identity_mismatch", "provenance_invalid", now)
+    try:
+        from prismatic.agy_completed_work import AgyCompletedWorkStore
+        completed_row = AgyCompletedWorkStore(
+            completed_work_db_path, evidence_dir=completed_work_evidence_dir
+        ).ingest(packet)
+        result = _safe_completed_result(claim.raw_output_id, completed_row)
+    except Exception:
+        return _retry_reconciliation(store, claim, "completed_work_storage_failed", now)
+    if not store.mark_delivery_succeeded(
+        claim, completed_work_id=result.completed_work_id, now=now
+    ):
+        return AgyRawReconciliationResult(claim.raw_output_id, "stale_claim", "stale_claim")
+    return result
+
+
+def reconcile_agy_raw_output(
+    *, raw_output_id, raw_db_path, completed_work_db_path,
+    completed_work_evidence_dir, lease_owner, now=None
+):
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+    store = RawAgentOutputStore(raw_db_path)
+    delivery = store.get_delivery(raw_output_id)
+    existing = _load_succeeded_reconciliation(
+        raw_output_id=raw_output_id,
+        delivery=delivery,
+        completed_work_db_path=completed_work_db_path,
+        completed_work_evidence_dir=completed_work_evidence_dir,
+    )
+    if existing is not None:
+        return existing
+    claim = store.claim_delivery(raw_output_id, lease_owner=lease_owner, now=now)
+    if claim is None:
+        delivery = store.get_delivery(raw_output_id)
+        existing = _load_succeeded_reconciliation(
+            raw_output_id=raw_output_id,
+            delivery=delivery,
+            completed_work_db_path=completed_work_db_path,
+            completed_work_evidence_dir=completed_work_evidence_dir,
+        )
+        if existing is not None:
+            return existing
+        return AgyRawReconciliationResult(
+            raw_output_id, delivery.status, delivery.last_error_code or "not_claimable",
+            completed_work_id=delivery.completed_work_id,
+        )
+    return _reconcile_agy_claim(
+        claim=claim, store=store, completed_work_db_path=completed_work_db_path,
+        completed_work_evidence_dir=completed_work_evidence_dir, now=now,
+    )
+
+
+def reconcile_pending_agy_raw_outputs(
+    *, raw_db_path, completed_work_db_path, completed_work_evidence_dir,
+    lease_owner, limit=10, now=None
+):
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+    store = RawAgentOutputStore(raw_db_path)
+    claims = store.claim_pending_deliveries(
+        limit=limit, lease_owner=lease_owner, now=now
+    )
+    return tuple(
+        _reconcile_agy_claim(
+            claim=claim, store=store, completed_work_db_path=completed_work_db_path,
+            completed_work_evidence_dir=completed_work_evidence_dir, now=now,
+        )
+        for claim in claims
+    )
+
+
+def run_agy_raw_recovery_batch(*, lease_owner: str, limit: int = 10):
+    try:
+        results = reconcile_pending_agy_raw_outputs(
+            raw_db_path=agy_raw_output_db_path(),
+            completed_work_db_path=agy_completed_work_db_path(),
+            completed_work_evidence_dir=agy_completed_work_evidence_dir(),
+            lease_owner=lease_owner, limit=limit,
+        )
+    except Exception:
+        print("  [raw-recovery] status=storage_failed count=0", flush=True)
+        return ()
+    counts = {}
+    for result in results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+    safe_counts = ",".join(f"{key}:{counts[key]}" for key in sorted(counts)) or "none:0"
+    print(f"  [raw-recovery] {safe_counts}", flush=True)
+    return results
+
+
+def capture_and_validate_agy_result(
+    *,
+    issue_id: str,
+    attempt: int,
+    result_path: Path,
+    packet_path: Path,
+    raw_output_db: Path,
+    completed_work_db: Path,
+    completed_work_evidence_dir: Path,
+) -> dict:
+    """Durably capture selected AGY output before strict packet validation."""
+    path_type = type(Path())
+    if type(issue_id) is not str:
+        raise TypeError("issue_id must be an exact string")
+    if type(attempt) is not int:
+        raise TypeError("attempt must be an exact integer")
+    for name, value in (
+        ("result_path", result_path),
+        ("packet_path", packet_path),
+        ("raw_output_db", raw_output_db),
+        ("completed_work_db", completed_work_db),
+        ("completed_work_evidence_dir", completed_work_evidence_dir),
+    ):
+        if type(value) is not path_type:
+            raise TypeError(f"{name} must be an exact platform Path")
+    if not issue_id or attempt < 1:
+        raise ValueError("issue_id and positive attempt are required")
+    if (
+        not result_path.is_absolute()
+        or not packet_path.is_absolute()
+        or not raw_output_db.is_absolute()
+        or not completed_work_db.is_absolute()
+        or not completed_work_evidence_dir.is_absolute()
+        or packet_path.name != _AGY_PACKET_NAME
+        or packet_path.parent != result_path.parent
+        or ".." in packet_path.parts
+    ):
+        return {
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "unsafe_result_path",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    try:
+        os.lstat(packet_path)
+    except FileNotFoundError:
+        selected = result_path
+        canonical = False
+    except OSError:
+        return {
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "unsafe_canonical_sidecar",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+    else:
+        selected = packet_path
+        canonical = True
+
+    # Lazy imports preserve side-effect-free supervisor import.
+    from prismatic.agent_raw_output_queue import (
+        RawAgentOutputStore,
+        max_raw_payload_bytes,
+    )
+
+    try:
+        raw_bytes, oversized = _bounded_nofollow_read(
+            selected, max_raw_payload_bytes()
+        )
+    except FileNotFoundError:
+        return {
+            "boundary_state": "result_missing",
+            "boundary_reason": "selected_result_missing",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+    except (OSError, ValueError):
+        return {
+            "boundary_state": "canonical_invalid" if canonical else "result_missing",
+            "boundary_reason": "selected_result_unsafe",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    raw_text = raw_bytes.decode("utf-8", errors="replace")
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    source_event_id = f"agy:{issue_id}:attempt:{attempt}:sha256:{digest}"
+    try:
+        row = RawAgentOutputStore(raw_output_db).persist(
+            raw_text=raw_text,
+            agent="agy",
+            task_id=issue_id,
+            source_event_id=source_event_id,
+            raw_text_or_artifact_path=str(selected),
+            expected_agent="agy",
+        )
+    except Exception:
+        return {
+            "boundary_state": "raw_capture_failed",
+            "boundary_reason": "raw_queue_persist_failed",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    if type(row.raw_output_id) is not str or not row.raw_output_id.strip():
+        return {
+            "boundary_state": "raw_capture_failed",
+            "boundary_reason": "raw_queue_identity_missing",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    common = {
+        "raw_capture_succeeded": True,
+        "raw_output_id": row.raw_output_id,
+        "source_event_id": source_event_id,
+        "selected_source": str(selected),
+        "normalization_status": row.normalization_status,
+        "canonical_packet_id": row.canonical_packet_id,
+        "queue_rejection_reason": row.rejection_reason,
+        "queue_repair_hint": row.repair_hint,
+        "completion_eligible": False,
+    }
+    try:
+        reconciliation = reconcile_agy_raw_output(
+            raw_output_id=row.raw_output_id,
+            raw_db_path=raw_output_db,
+            completed_work_db_path=completed_work_db,
+            completed_work_evidence_dir=completed_work_evidence_dir,
+            lease_owner=f"immediate-{os.getpid()}",
+        )
+    except Exception:
+        return {
+            **common,
+            "boundary_state": (
+                "completed_work_persist_failed" if canonical else "legacy_unvalidated"
+            ),
+            "boundary_reason": (
+                "completed_work_ledger_persist_failed"
+                if canonical
+                else "legacy_result_held_unvalidated"
+            ),
+            "completed_work_persisted": False,
+            "delivery_status": "storage_failed",
+        }
+    if not canonical:
+        return {
+            **common,
+            "boundary_state": "legacy_unvalidated",
+            "boundary_reason": row.repair_hint or "legacy_result_held_unvalidated",
+            "delivery_status": reconciliation.status,
+        }
+    if reconciliation.status != "succeeded":
+        canonical_reason = {
+            "issue_identity_mismatch": "active_issue_identity_mismatch",
+            "completed_work_storage_failed": "completed_work_ledger_persist_failed",
+        }.get(reconciliation.reason, "canonical_packet_invalid")
+        if oversized:
+            canonical_reason = "oversized_payload"
+        state = (
+            "completed_work_persist_failed"
+            if reconciliation.status in {"retry_wait", "succeeded_unavailable"}
+            else "canonical_invalid"
+        )
+        return {
+            **common,
+            "boundary_state": state,
+            "boundary_reason": canonical_reason,
+            "completed_work_persisted": False,
+            "delivery_status": reconciliation.status,
+        }
+    return {
+        **common,
+        "boundary_state": "canonical_valid",
+        "boundary_reason": "canonical_packet_accepted",
+        "packet_issue_identifier": issue_id,
+        "completed_work_persisted": True,
+        "completed_work_id": reconciliation.completed_work_id,
+        "completed_work_classification": reconciliation.classification,
+        "completed_work_integration_classification": reconciliation.integration_classification,
+        "completed_work_ingestion_marker": reconciliation.ingestion_marker,
+        "completed_work_integration_marker": reconciliation.integration_marker,
+        "completed_work_eligible_for_merge": reconciliation.eligible_for_merge,
+        "delivery_status": reconciliation.status,
+        "raw_output_recovery_marker": reconciliation.recovery_marker,
+        "raw_output_reconciliation_gate_marker": reconciliation.reconciliation_gate_marker,
+        "runtime_convergence_marker": reconciliation.runtime_marker,
+        "completion_eligible": True,
+    }
+
+
+def publish_agent_completed(
+    issue_id: str, payload: dict, *, topic: str = "agent.completed"
+) -> None:
+    """Publish a semantic result event to the durable SQLite bus.
 
     Bus path resolution (Jul 1 2026 — fixed split with consumer):
       1. PRISMATIC_BUS_DB env var if set (explicit override wins)
@@ -98,7 +684,7 @@ def publish_agent_completed(issue_id: str, payload: dict) -> None:
     max_events = int(os.environ.get("PRISMATIC_BUS_MAX_EVENTS", "10000"))
 
     event_dict = {
-        "type": "agent.completed",
+        "type": topic,
         "source": "supervisor",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": payload
@@ -107,7 +693,7 @@ def publish_agent_completed(issue_id: str, payload: dict) -> None:
     lane = payload.get("lane", "default")
     worker_id = payload.get("worker_id", 0)
     attempt = payload.get("attempt", 1)
-    dedup_key = f"agent.completed:{issue_id}:{lane}:{worker_id}:{attempt}"
+    dedup_key = f"{topic}:{issue_id}:{lane}:{worker_id}:{attempt}"
 
     with _bus_sqlite_lock:
         conn = sqlite3.connect(str(db_path), timeout=5)
@@ -133,7 +719,7 @@ def publish_agent_completed(issue_id: str, payload: dict) -> None:
                 "INSERT OR IGNORE INTO events (dedup_key, topic, payload_json, ts) VALUES (?, ?, ?, ?)",
                 (
                     dedup_key,
-                    "agent.completed",
+                    topic,
                     json.dumps(event_dict, default=str),
                     time.time(),
                 ),
@@ -266,7 +852,20 @@ AGY_BIN = os.environ.get("AGY_BIN", str(Path.home() / ".local" / "bin" / "agy"))
 # Solution: wrap AGY with this sentinel — if no RESULT.md, write one + mark
 # the Linear issue as agent:needs-human-review so the supervisor stops
 # re-dispatching it.
-AGY_ABANDONMENT_GUARD = os.environ.get("AGY_ABANDONMENT_GUARD", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts" / "agy_abandonment_guard.py"))
+# This supervisor can be launched under multiple Hermes profile HOME values. Use
+# the service account's OS home, not the mutable HOME environment variable.
+_SERVICE_ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+AGY_ABANDONMENT_GUARD = os.environ.get(
+    "AGY_ABANDONMENT_GUARD",
+    str(
+        _SERVICE_ACCOUNT_HOME
+        / ".hermes"
+        / "profiles"
+        / "orchestrator"
+        / "scripts"
+        / "agy_abandonment_guard.py"
+    ),
+)
 AGENT_NEEDS_HUMAN_LABEL = "agent:needs-human-review"
 # FIX 2026-06-24: Path("...li") was a typo. Use the actual token dir.
 AGY_TOKEN_DIR = Path(os.environ.get("AGY_TOKEN_DIR", str(Path.home() / ".gemini" / "antigravity-cli")))
@@ -286,7 +885,7 @@ WORKER_STARTUP_STAGGER = (2.0, 8.0)     # Stagger worker threads at boot
 
 # AGY subprocess timeout (24h)
 PRINT_TIMEOUT = "24h0m0s"
-DEFAULT_MODEL = "gemini-3.5-flash"  # medium tier; -high burns daily quota overnight
+DEFAULT_MODEL = "Gemini 3.5 Flash (Medium)"  # AGY CLI display label; -High burns daily quota overnight
 
 # Watchdog: how often to poll Linear for new issues
 # Jul 1 2026: demoted to 600s (10 min) safety net. The bus-subscriber thread
@@ -305,6 +904,17 @@ MIN_ARCHIVE_FREE_GB = float(os.environ.get("AGY_MIN_ARCHIVE_FREE_GB", "50"))
 CRON_JOBS_PATH = Path(os.environ.get("CRON_JOBS_PATH", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "cron" / "jobs.json")))
 AUTO_RESUME_ALERT_ISSUES = [x.strip() for x in os.environ.get("AGY_ALERT_ISSUES", "GRO-2492,GRO-2551").split(",") if x.strip()]
 CIRCUIT_BREAKER_FAILURE_LIMIT = int(os.environ.get("AGY_CIRCUIT_BREAKER_FAILURE_LIMIT", "2"))
+
+
+def agy_cli_child_env() -> dict[str, str]:
+    """Environment for AGY CLI subprocesses only.
+
+    Supervisor state continues to use this process HOME/Path.home(); AGY child
+    processes may need a profile-scoped HOME where `agy models` and auth work.
+    """
+    env = dict(os.environ)
+    env["HOME"] = os.environ.get("AGY_CLI_HOME") or os.environ.get("HOME", str(Path.home()))
+    return env
 
 
 def _read_linear_api_key() -> str | None:
@@ -416,7 +1026,7 @@ def preflight_agy_backend(model: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=45,
-            env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
+            env=agy_cli_child_env(),
         )
     except subprocess.TimeoutExpired:
         return False, "AGY backend probe timed out"
@@ -512,6 +1122,98 @@ class TokenPool:
 
 
 # ── Sandbox creation (kept from original) ──
+def apply_repair_seed_manifest(
+    sandbox: Path,
+    manifest_path: Path,
+    expected_manifest_sha256: str,
+) -> list[str]:
+    """Copy a hash-bound repair snapshot into a newly created sandbox.
+
+    The manifest is explicit recovery input, never implicit dirty-state reuse.
+    All entries are validated before any destination is written.
+    """
+    manifest_path = manifest_path.expanduser()
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise RuntimeError(f"repair seed manifest is not a regular file: {manifest_path}")
+    expected_manifest_sha256 = expected_manifest_sha256.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha256):
+        raise RuntimeError("repair seed manifest SHA-256 must be 64 lowercase hex characters")
+    manifest_bytes = manifest_path.read_bytes()
+    actual_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    if actual_manifest_sha256 != expected_manifest_sha256:
+        raise RuntimeError(
+            "repair seed manifest hash mismatch: "
+            f"expected {expected_manifest_sha256}, got {actual_manifest_sha256}"
+        )
+
+    try:
+        manifest = json.loads(manifest_bytes)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"repair seed manifest is invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("version") != 1:
+        raise RuntimeError("repair seed manifest must be an object with version=1")
+    entries = manifest.get("files")
+    if not isinstance(entries, list) or not entries:
+        raise RuntimeError("repair seed manifest files must be a non-empty list")
+    if len(entries) > 100:
+        raise RuntimeError("repair seed manifest exceeds 100 files")
+
+    sandbox_root = sandbox.resolve(strict=True)
+    staged: list[tuple[Path, bytes, str]] = []
+    destination_targets: set[Path] = set()
+    total_bytes = 0
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"repair seed entry {index} must be an object")
+        source_text = entry.get("source")
+        destination_text = entry.get("destination")
+        expected_file_sha256 = str(entry.get("sha256") or "").lower()
+        if not isinstance(source_text, str) or not Path(source_text).is_absolute():
+            raise RuntimeError(f"repair seed entry {index} source must be absolute")
+        source = Path(source_text)
+        if not source.is_file() or source.is_symlink():
+            raise RuntimeError(f"repair seed entry {index} source is not a regular file")
+        if not isinstance(destination_text, str):
+            raise RuntimeError(f"repair seed entry {index} destination must be a string")
+        destination = Path(destination_text)
+        if destination.is_absolute() or not destination.parts or ".." in destination.parts:
+            raise RuntimeError(f"repair seed entry {index} destination is unsafe")
+        if destination.parts[0] == ".git" or destination.name in {
+            "AGY_TASK.md",
+            "STARTED.md",
+            "RESULT.md",
+            "AGY_RESULT_PACKET.json",
+            "DONE.md",
+        }:
+            raise RuntimeError(f"repair seed entry {index} targets a protected control path")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_file_sha256):
+            raise RuntimeError(f"repair seed entry {index} SHA-256 is invalid")
+        payload = source.read_bytes()
+        total_bytes += len(payload)
+        if total_bytes > 50 * 1024 * 1024:
+            raise RuntimeError("repair seed manifest exceeds 50 MiB total")
+        actual_file_sha256 = hashlib.sha256(payload).hexdigest()
+        if actual_file_sha256 != expected_file_sha256:
+            raise RuntimeError(
+                f"repair seed entry {index} hash mismatch: "
+                f"expected {expected_file_sha256}, got {actual_file_sha256}"
+            )
+        target = (sandbox_root / destination).resolve(strict=False)
+        if not target.is_relative_to(sandbox_root):
+            raise RuntimeError(f"repair seed entry {index} escapes sandbox")
+        if target in destination_targets:
+            raise RuntimeError(f"repair seed entry {index} destination is duplicated")
+        destination_targets.add(target)
+        staged.append((target, payload, destination_text))
+
+    for target, payload, _ in staged:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.repair-seed.tmp")
+        temporary.write_bytes(payload)
+        temporary.replace(target)
+    return [destination for _, _, destination in staged]
+
+
 def create_sandbox(issue_id: str, source: Path) -> Path:
     sandbox = SANDBOX_ROOT / issue_id
     if sandbox.is_symlink():
@@ -746,6 +1448,41 @@ def terminate_all_active_procs(timeout: float = 5.0) -> int:
     return killed
 
 # ── AGY session runner (kept from original) ──
+def build_agy_command(sandbox: Path, prompt: str, model: str) -> list[str]:
+    """Build the filesystem-scoped AGY command without side effects."""
+    if type(sandbox) is not type(Path()):
+        raise TypeError("sandbox must be an exact platform Path")
+    if type(prompt) is not str:
+        raise TypeError("prompt must be an exact string")
+    if type(model) is not str:
+        raise TypeError("model must be an exact string")
+    return [
+        AGY_BIN,
+        "--dir",
+        str(sandbox),
+        "--print",
+        prompt,
+        "--dangerously-skip-permissions",
+        "--print-timeout",
+        PRINT_TIMEOUT,
+        "--sandbox",
+        "--model",
+        model,
+    ]
+
+
+def _start_agy_process(cmd: list[str], logf, sandbox: Path):
+    """Start AGY with isolated child HOME and no writable stdin transport."""
+    return subprocess.Popen(
+        cmd,
+        stdout=logf,
+        stderr=subprocess.STDOUT,
+        stdin=None,
+        cwd=str(sandbox),
+        env=agy_cli_child_env(),
+    )
+
+
 def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Path,
                     model: str, token_pool: TokenPool = None,
                     jitter_range: tuple = LAUNCH_JITTER_RANGE,
@@ -764,6 +1501,10 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         f"(use the Write tool — do NOT just print to stdout).\n"
         f"2. The RESULT.md must include: what you did, files changed, test results (if any), "
         f"commit hashes, and any follow-ups.\n"
+        f"   You MUST also write pure JSON to `{sandbox}/AGY_RESULT_PACKET.json` with marker "
+        f"`AGY_TASK_RESULT_PACKET_OK`, agent=`agy`, issue_identifier=`{issue_id}`, relative "
+        f"result artifact paths (prefer `RESULT.md`), no secrets/generated/cache paths, truthful "
+        f"verification command/result/log/type, and no fabricated source/base/PR values.\n"
         f"3. After RESULT.md is saved, you MUST run the self-review protocol:\n"
         f"   `python3 ~/.hermes/profiles/orchestrator/scripts/agy_self_review.py {issue_id}`\n"
         f"   This is NON-OPTIONAL. It posts a Self-Review comment to Linear and "
@@ -794,16 +1535,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                 f"- Prefer 1-3 targeted tool calls over 20+ speculative searches.\n"
             )
 
-    cmd = [
-        AGY_BIN,
-        "--print",
-        "INJECTED_VIA_STDIN",
-        "--dangerously-skip-permissions",
-        "--print-timeout", PRINT_TIMEOUT,
-        "--sandbox",
-        "--add-dir", str(sandbox),
-        "--model", model,
-    ]
+    cmd = build_agy_command(sandbox, prompt, model)
 
     token_name = token
     if not token_name and token_pool:
@@ -820,19 +1552,17 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
     result_event = threading.Event()
     stagnation_warn_event = threading.Event()
     stagnation_kill_event = threading.Event()
+    # Initialized before subprocess/shutdown paths; semantic assessment overwrites it.
+    has_done = False
 
     try:
-        # Pre-cleanup: delete prior RESULT.md before launch to prevent stale results
+        # Pre-cleanup: stale proof must never survive into a new attempt.
         result_path = sandbox / "RESULT.md"
-        if result_path.exists() or result_path.is_symlink():
-            try:
-                if result_path.is_dir() and not result_path.is_symlink():
-                    shutil.rmtree(result_path)
-                else:
-                    result_path.unlink()
-                print(f"  [{issue_id}] deleted prior RESULT.md from sandbox before launch", flush=True)
-            except OSError as e:
-                print(f"  [{issue_id}] failed to delete prior RESULT.md: {e}", flush=True)
+        for removed_name in remove_stale_agy_result_outputs(sandbox):
+            print(
+                f"  [{issue_id}] deleted prior {removed_name} from sandbox before launch",
+                flush=True,
+            )
 
         # Pre-cleanup: delete prior STARTED.md files to prevent stale acknowledgements
         started_md_tmp = Path("/tmp/agy_sandboxes") / issue_id / "STARTED.md"
@@ -853,25 +1583,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         # AGY actively reasons — we'd incorrectly flag as stagnant).
         logf = open(log_path, "w", buffering=1)
         try:
-            stdin_pipe = subprocess.PIPE
-            proc = subprocess.Popen(
-                cmd,
-                stdout=logf,
-                stderr=subprocess.STDOUT,
-                stdin=stdin_pipe,
-                cwd=str(sandbox),
-                env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
-            )
-            if proc.stdin is not None:
-                import hmac
-                secret = os.environ.get("AGY_TASK_SIGNING_SECRET", "default_secret")
-                signature = hmac.new(secret.encode(), prompt.encode(), hashlib.sha256).hexdigest()
-                payload_data = json.dumps({
-                    "signature": signature,
-                    "payload": prompt
-                })
-                proc.stdin.write(payload_data.encode() + b"\n")
-                proc.stdin.flush()
+            proc = _start_agy_process(cmd, logf, sandbox)
             _register_proc(issue_id, proc)
         except Exception as e:
             logf.close()
@@ -1102,7 +1814,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                         except Exception as stdin_err:
                             print(f"  [{issue_id}] Failed to pipe to stdin: {stdin_err}", flush=True)
                     else:
-                        # SIGTERM + relaunch with broader --allowedTools flag
+                        # SIGTERM + relaunch with the identical bounded command.
                         print(f"  [{issue_id}] Stdin not available. Sending SIGTERM to relaunch...", flush=True)
                         try:
                             proc.terminate()
@@ -1116,39 +1828,11 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                         except Exception:
                             pass
 
-                        # relaunch with broader --allowedTools flag
-                        if "--allowedTools" in cmd:
-                            try:
-                                idx = cmd.index("--allowedTools")
-                                cmd[idx + 1] = "*"
-                            except Exception:
-                                cmd.extend(["--allowedTools", "*"])
-                        else:
-                            cmd.extend(["--allowedTools", "*"])
-
                         print(f"  [{issue_id}] Relaunching with cmd: {cmd}", flush=True)
                         logf.close()
                         logf = open(log_path, "a", buffering=1)
                         try:
-                            stdin_pipe = subprocess.PIPE
-                            proc = subprocess.Popen(
-                                cmd,
-                                stdout=logf,
-                                stderr=subprocess.STDOUT,
-                                stdin=stdin_pipe,
-                                cwd=str(sandbox),
-                                env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
-                            )
-                            if proc.stdin is not None:
-                                import hmac
-                                secret = os.environ.get("AGY_TASK_SIGNING_SECRET", "default_secret")
-                                signature = hmac.new(secret.encode(), prompt.encode(), hashlib.sha256).hexdigest()
-                                payload_data = json.dumps({
-                                    "signature": signature,
-                                    "payload": prompt
-                                })
-                                proc.stdin.write(payload_data.encode() + b"\n")
-                                proc.stdin.flush()
+                            proc = _start_agy_process(cmd, logf, sandbox)
                             _register_proc(issue_id, proc)
                         except Exception as relaunch_err:
                             print(f"  [{issue_id}] Relaunch failed: {relaunch_err}", flush=True)
@@ -1180,7 +1864,6 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         log_content = log_path.read_text() if log_path.exists() else ""
         result_path = sandbox / "RESULT.md"
         has_result = result_path.exists()
-        has_valid_result = has_result and result_path.stat().st_size >= 1024
         lower_log = log_content.lower()
         has_self_review = (
             "self-review passed" in lower_log
@@ -1207,11 +1890,26 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
             print(f"  [{issue_id}] Error fetching issue from Linear: {e}", flush=True)
 
         has_success_confirmed = has_result and has_peer_review_label
-        # RESULT.md alone is progress, not final completion. A zero exit with
-        # RESULT.md but no self-review/DONE is PARTIAL_RESULT.
-        # Self-review script is mandatory for final completion.
-        has_done = ("DONE:" in log_content and has_self_review and has_valid_result) or has_success_confirmed or done_found
-        has_partial_result = has_result and not has_done
+        # RESULT.md alone is progress, not final completion. Completion markers
+        # and peer-review labels remain transport signals until packet semantics
+        # pass fail-closed assessment.
+        completion_signal = (
+            ("DONE:" in log_content and has_self_review)
+            or has_success_confirmed
+            or done_found
+        )
+        result_semantics = semantic_completion(
+            result_path, completion_signal=completion_signal
+        )
+        has_done = result_semantics["has_done"]
+        semantic_error = result_semantics["has_error"]
+        has_partial_result = result_semantics["has_partial_result"]
+        if completion_signal and semantic_error:
+            semantic_reason = ", ".join(result_semantics["reasons"])
+            print(
+                f"  [{issue_id}] 🛑 semantic completion rejected: {semantic_reason}",
+                flush=True,
+            )
         # AGY/Gemini backend transport timeout, NOT our process timeout.
         # The supervisor still launches AGY with --print-timeout 24h0m0s and
         # does not kill active sessions for time. This flag means AGY itself
@@ -1250,8 +1948,13 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
             "elapsed_sec": int(elapsed),
             "exit_code": exit_code,
             "has_done": has_done,
-            "has_error": error_found or has_start_timeout,
-            "error_reason": error_reason if not has_start_timeout else "Task failed to start (STARTED.md not written within 30s)",
+            "has_error": error_found or semantic_error or has_start_timeout,
+            "error_reason": (
+                "Task failed to start (STARTED.md not written within 30s)"
+                if has_start_timeout
+                else error_reason
+                or (", ".join(result_semantics["reasons"]) if semantic_error else "")
+            ),
             "has_result": has_result,
             "has_self_review": has_self_review,
             "has_partial_result": has_partial_result,
@@ -1259,6 +1962,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
             "has_inactivity_kill": killed_for_inactivity,
             "has_start_timeout": has_start_timeout,
             "has_clarify": has_clarify,
+            "result_semantics": result_semantics,
             "log_size": len(log_content),
             "log_path": str(log_path),
             "token": token_name,
@@ -1368,15 +2072,22 @@ import sys as _sys
 # Strip the editable install hook
 _sys.path = [p for p in _sys.path if "__editable__" not in p and "prismatic_engine" not in p]
 
+# The executing supervisor checkout is authoritative. Fall back only when this
+# source file is detached from a complete repository; never let later mutable
+# profile/live paths override a valid immutable/current checkout.
 for path_candidate in [
+    str(Path(__file__).resolve().parent.parent),
     os.getcwd(),
     os.environ.get("PRISMATIC_HOME", str(Path.home() / "work")) + "/prismatic-engine",
     str(Path.home() / "work" / "prismatic-engine"),
 ]:
-    # Only add if the curator.issue_to_task module is present
-    if path_candidate not in _sys.path and \
-       os.path.isfile(os.path.join(path_candidate, "prismatic", "curator", "issue_to_task.py")):
+    if os.path.isfile(
+        os.path.join(path_candidate, "prismatic", "curator", "issue_to_task.py")
+    ):
+        if path_candidate in _sys.path:
+            _sys.path.remove(path_candidate)
         _sys.path.insert(0, path_candidate)
+        break
 
 from prismatic.curator.issue_to_task import (
     BLOCK_LABELS,
@@ -1690,47 +2401,151 @@ def fetch_linear_issues(strict_opt_in: bool = False) -> list:
         return []
 
 
-def fetch_single_linear_issue(identifier: str) -> dict | None:
-    """Fetch a single Linear issue by identifier (e.g. 'GRO-2503').
+def parse_linear_identifier(identifier: str) -> tuple[str, int]:
+    match = re.fullmatch(r"([A-Z][A-Z0-9]{1,15})-([1-9][0-9]*)", identifier.strip().upper())
+    if not match:
+        raise ValueError(f"invalid Linear identifier: {identifier!r}")
+    return match.group(1), int(match.group(2))
 
-    Returns the issue node dict (id, identifier, title, description, ...)
-    or None on failure / not found. Used by --issues mode when there is
-    no /tmp/issue-batches/<id>.txt cache, so AGY_TASK.md has the full
-    issue description instead of a 16-byte placeholder.
-    """
+
+def fetch_single_linear_issue(
+    identifier: str, *, issue_uuid: str | None = None
+) -> dict | None:
+    """Fetch one exact Linear issue by stable UUID or human identifier."""
     import urllib.request
-    key_path = Path(os.environ.get("HERMES_PROFILE_ENV", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / ".env")))
-    if not key_path.exists():
-        return None
-    key = None
-    for line in key_path.read_text().split("\n"):
-        if "LINEAR" in line and "KEY" in line and "=" in line:
-            key = line.split("=", 1)[1].strip().strip("\"'")
-            break
+
+    key = _read_linear_api_key()
     if not key:
         return None
+    try:
+        team_key, issue_number = parse_linear_identifier(identifier)
+    except ValueError as exc:
+        print(f"  [linear-fetch] {exc}", flush=True)
+        return None
+    normalized = f"{team_key}-{issue_number}"
 
-    query = """
-    query($iid: String!) {
-      issue(id: $iid) {
-        id identifier title description priority
-        state { name }
-        labels { nodes { name } }
-      }
-    }
-    """
+    if issue_uuid is not None:
+        issue_uuid = issue_uuid.strip().lower()
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            issue_uuid,
+        ):
+            print(f"  [linear-fetch] invalid issue UUID for {normalized}", flush=True)
+            return None
+        query = """
+        query($issueUuid: String!) {
+          issue(id: $issueUuid) {
+            id identifier title description priority
+            state { name }
+            labels { nodes { name } }
+          }
+        }
+        """
+        variables = {"issueUuid": issue_uuid}
+    else:
+        query = """
+        query($teamKey: String!, $number: Float!) {
+          issues(
+            first: 2
+            filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } }
+          ) {
+            nodes {
+              id identifier title description priority
+              state { name }
+              labels { nodes { name } }
+            }
+          }
+        }
+        """
+        variables = {"teamKey": team_key, "number": float(issue_number)}
+
     req = urllib.request.Request(
         "https://api.linear.app/graphql",
-        data=json.dumps({"query": query, "variables": {"iid": identifier}}).encode(),
+        data=json.dumps({"query": query, "variables": variables}).encode(),
         headers={"Authorization": key, "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
-        return data.get("data", {}).get("issue")
-    except Exception as e:
-        print(f"  [linear-fetch] {identifier} failed: {e}", flush=True)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read())
+        if data.get("errors"):
+            raise RuntimeError(data["errors"][0].get("message", "Linear GraphQL error"))
+        if issue_uuid is not None:
+            matches = [data.get("data", {}).get("issue")]
+        else:
+            matches = data.get("data", {}).get("issues", {}).get("nodes", [])
+        matches = [node for node in matches if node and node.get("identifier") == normalized]
+        if len(matches) != 1:
+            print(
+                f"  [linear-fetch] {normalized} expected one exact match, got {len(matches)}",
+                flush=True,
+            )
+            return None
+        return matches[0]
+    except Exception as exc:
+        print(f"  [linear-fetch] {normalized} failed: {exc}", flush=True)
         return None
+
+
+def _task_headers(task_content: str) -> tuple[str | None, set[str]]:
+    workdir = None
+    labels: set[str] = set()
+    for line in task_content.splitlines()[:15]:
+        if line.startswith("WORKDIR:"):
+            workdir = line.split(":", 1)[1].strip() or None
+        elif line.startswith("LABELS:"):
+            labels = {
+                part.strip()
+                for part in line.split(":", 1)[1].split(",")
+                if part.strip()
+            }
+    return workdir, labels
+
+
+def resolve_exact_task(
+    identifier: str,
+    *,
+    task_file: Path | None = None,
+    linear_issue_uuid: str | None = None,
+    workdir_override: str | None = None,
+    fetch_issue=None,
+) -> dict:
+    """Resolve one exact task with explicit provenance and no mutable cache input."""
+    fetch_issue = fetch_issue or fetch_single_linear_issue
+    issue = None
+    source = ""
+    source_path = None
+    if task_file is not None:
+        task_file = task_file.expanduser()
+        if not task_file.is_file() or task_file.is_symlink():
+            raise RuntimeError(f"explicit task file is not a regular file: {task_file}")
+        task_content = task_file.read_text()
+        source = "explicit_task_file"
+        source_path = str(task_file.resolve())
+    else:
+        if linear_issue_uuid is None:
+            issue = fetch_issue(identifier)
+        else:
+            issue = fetch_issue(identifier, issue_uuid=linear_issue_uuid)
+        if issue is None:
+            raise RuntimeError(
+                f"{identifier}: live Linear fetch failed; exact mode refuses mutable cache fallback"
+            )
+        task_content = build_task_content_from_issue(identifier, issue)
+        source = "linear_uuid" if linear_issue_uuid else "linear_identifier"
+    if not task_content.strip():
+        raise RuntimeError(f"{identifier}: resolved task content is empty")
+    header_workdir, header_labels = _task_headers(task_content)
+    labels = issue_labels(issue) if issue is not None else header_labels
+    workdir = workdir_override or header_workdir or "prismatic"
+    return {
+        "issue_id": identifier,
+        "task_content": task_content,
+        "workdir": workdir,
+        "labels": labels,
+        "task_source": source,
+        "task_source_path": source_path,
+        "task_sha256": hashlib.sha256(task_content.encode()).hexdigest(),
+    }
 
 
 # The functions build_task_content_from_issue and issue_to_task are imported from prismatic.curator.issue_to_task above.
@@ -1768,6 +2583,9 @@ class BusClient:
 
     def publish_completed(self, issue_id: str, payload: dict) -> None:
         publish_agent_completed(issue_id, payload)
+
+    def publish_rejected(self, issue_id: str, payload: dict) -> None:
+        publish_agent_completed(issue_id, payload, topic="agent.result.rejected")
 
     def publish_recovered(self, issue_id: str, payload: dict) -> None:
         publish_agent_recovered(issue_id, payload)
@@ -1930,12 +2748,10 @@ class EventDrivenSupervisor:
         self.quota_client = quota_client or QuotaClient()
 
     def _is_circuit_failure(self, result: dict) -> bool:
-        return bool(
-            result.get("has_inactivity_kill")
-            or result.get("has_backend_timeout")
-            or result.get("has_partial_result")
-            or result.get("has_start_timeout")
-        )
+        # Only the current task's final completed-work-gated success may reset
+        # consecutive failures. Every non-completing outcome remains a circuit
+        # failure, including semantic/identity rejection and ledger failure.
+        return result.get("completion_eligible") is not True
 
     def record_result_for_circuit(self, issue_id: str, result: dict) -> None:
         with self.circuit_lock:
@@ -1992,6 +2808,18 @@ class EventDrivenSupervisor:
         issue_id = task["issue_id"]
         src = resolve_workdir(task["workdir"])
         sandbox = create_sandbox(issue_id, src)
+        manifest_path = task.get("repair_seed_manifest")
+        if manifest_path:
+            seeded = apply_repair_seed_manifest(
+                sandbox,
+                Path(manifest_path),
+                task["repair_seed_sha256"],
+            )
+            print(
+                f"  [{issue_id}] repair seed applied ({len(seeded)} files): "
+                + ", ".join(seeded),
+                flush=True,
+            )
         task_path = write_task_file(issue_id, task["task_content"])
         log_path = LOGS_ROOT / f"{issue_id}.log"
         return sandbox, task_path, log_path
@@ -2065,6 +2893,10 @@ class EventDrivenSupervisor:
 
             issue_id = task["issue_id"]
             lane = task.get("lane", "default")
+            # Per-iteration result state must be reset before any early exit.
+            # Otherwise a prior task's successful result can mark this task
+            # completed/non-requeueable from the finally block.
+            result = None
             with self.active_lock:
                 self.active_count += 1
                 self.idle_event.clear()
@@ -2075,7 +2907,6 @@ class EventDrivenSupervisor:
                     sandbox, task_path, log_path = self.create_sandbox_env(task)
                 except Exception as e:
                     print(f"  [{issue_id}] sandbox failed: {e}", flush=True)
-                    self.mark_completed(issue_id)
                     continue
 
                 # At task pickup (before run_agy_session):
@@ -2158,14 +2989,75 @@ class EventDrivenSupervisor:
                 # it might not have saved the file. Check the file system.
                 result_path = sandbox / "RESULT.md"
                 result["has_result_file"] = result_path.exists() and result_path.stat().st_size >= 1024
-                if result.get("has_done") and not result["has_result_file"]:
+                result_semantics = semantic_completion(
+                    result_path, completion_signal=bool(result.get("has_done"))
+                )
+                result["result_semantics"] = result_semantics
+                if result.get("has_done") and not result_semantics["has_done"]:
+                    print(
+                        f"  [worker-{worker_id}] {issue_id} completion rejected by RESULT.md semantics: "
+                        f"{', '.join(result_semantics['reasons'])}",
+                        flush=True,
+                    )
+                    result["has_done"] = False
+                    result["has_error"] = result_semantics["has_error"]
+                    result["error_reason"] = ", ".join(result_semantics["reasons"])
+                    result["has_partial_result"] = result_semantics["has_partial_result"]
+                elif result.get("has_done") and not result["has_result_file"]:
                     # AGY said DONE but no file or too small — downgrade to "missing_result"
                     print(f"  [worker-{worker_id}] {issue_id} said DONE but no/small RESULT.md found — marking as 🟡 missing_result", flush=True)
                     result["has_done"] = False
                     result["has_missing_result"] = True
 
+                # Resolve attempt before durable capture/publication, preserving
+                # the existing task/label/bus precedence.
+                attempt_value = (
+                    task.get("attempt")
+                    or task.get("attempt_count")
+                    or task.get("retry_count")
+                )
+                attempt = None
+                if attempt_value:
+                    try:
+                        parsed_attempt = int(attempt_value)
+                        if parsed_attempt > 0:
+                            attempt = parsed_attempt
+                    except (TypeError, ValueError):
+                        pass
+                if not attempt:
+                    for lbl in task.get("labels", ()):
+                        if "attempt" in lbl.lower():
+                            digits = "".join(c for c in lbl if c.isdigit())
+                            if digits:
+                                attempt = int(digits)
+                                break
+                if not attempt:
+                    attempt = self.bus_client.get_completed_attempt_count(issue_id) + 1
+                if not attempt:
+                    attempt = 1
+
+                boundary = capture_and_validate_agy_result(
+                    issue_id=issue_id,
+                    attempt=attempt,
+                    result_path=result_path,
+                    packet_path=sandbox / _AGY_PACKET_NAME,
+                    raw_output_db=agy_raw_output_db_path(),
+                    completed_work_db=agy_completed_work_db_path(),
+                    completed_work_evidence_dir=agy_completed_work_evidence_dir(),
+                )
+                completion_eligible = bool(
+                    result.get("has_done")
+                    and result_semantics["has_done"]
+                    and boundary["raw_capture_succeeded"]
+                    and boundary["boundary_state"] == "canonical_valid"
+                    and boundary.get("packet_issue_identifier") == issue_id
+                    and boundary.get("completed_work_persisted") is True
+                )
+                result["result_boundary"] = boundary
+                result["completion_eligible"] = completion_eligible
+
                 # Log status
-                status = ("✅ DONE" if result.get("has_done") else
+                status = ("✅ DONE" if completion_eligible else
                           "🔴 ERROR" if result.get("has_error") else
                           "🛑 INACTIVITY_KILL" if result.get("has_inactivity_kill") else
                           "⏳ AGY_BACKEND_TIMEOUT" if result.get("has_backend_timeout") else
@@ -2179,7 +3071,8 @@ class EventDrivenSupervisor:
 
                 # Publish agent.completed event (GRO-3094)
                 try:
-                    result_status = ("has_done" if result.get("has_done") else
+                    result_status = ("has_done" if completion_eligible else
+                                     boundary["boundary_state"] if result.get("has_done") else
                                      "has_error" if result.get("has_error") else
                                      "has_inactivity_kill" if result.get("has_inactivity_kill") else
                                      "has_backend_timeout" if result.get("has_backend_timeout") else
@@ -2188,23 +3081,6 @@ class EventDrivenSupervisor:
                                      "has_missing_result" if result.get("has_missing_result") else
                                      "exit_other")
                     
-                    # Determine attempt number
-                    attempt = task.get("attempt") or task.get("attempt_count") or task.get("retry_count")
-                    if not attempt:
-                        for lbl in task.get("labels", ()):
-                            if "attempt" in lbl.lower():
-                                digits = "".join(c for c in lbl if c.isdigit())
-                                if digits:
-                                    try:
-                                        attempt = int(digits)
-                                        break
-                                    except ValueError:
-                                        pass
-                    if not attempt:
-                        attempt = self.bus_client.get_completed_attempt_count(issue_id) + 1
-                    if not attempt:
-                        attempt = 1
-
                     elapsed_sec = result.get("elapsed_sec", 0)
                     cost_usd_estimated = estimate_cost(issue_id, self.model, elapsed_sec)
 
@@ -2218,18 +3094,55 @@ class EventDrivenSupervisor:
                         "result_status": result_status,
                         "result_path": str(result_path),
                         "has_result_file": result.get("has_result_file", False),
+                        "result_semantic_pass": result_semantics["passed"],
+                        "result_semantic_reasons": result_semantics["reasons"],
+                        "boundary_state": boundary["boundary_state"],
+                        "boundary_reason": boundary["boundary_reason"],
+                        "raw_output_id": boundary.get("raw_output_id"),
+                        "normalization_status": boundary.get("normalization_status"),
+                        "canonical_packet_id": boundary.get("canonical_packet_id"),
+                        "queue_rejection_reason": boundary.get("queue_rejection_reason"),
+                        "queue_repair_hint": boundary.get("queue_repair_hint"),
+                        "completed_work_persisted": boundary.get(
+                            "completed_work_persisted", False
+                        ),
+                        "completed_work_id": boundary.get("completed_work_id"),
+                        "completed_work_classification": boundary.get(
+                            "completed_work_classification"
+                        ),
+                        "completed_work_integration_classification": boundary.get(
+                            "completed_work_integration_classification"
+                        ),
+                        "completed_work_ingestion_marker": boundary.get(
+                            "completed_work_ingestion_marker"
+                        ),
+                        "completed_work_integration_marker": boundary.get(
+                            "completed_work_integration_marker"
+                        ),
+                        "completed_work_eligible_for_merge": boundary.get(
+                            "completed_work_eligible_for_merge", False
+                        ),
+                        "completion_eligible": completion_eligible,
                         "cost_usd_estimated": cost_usd_estimated,
                         "attempt": attempt
                     }
-                    self.bus_client.publish_completed(issue_id, payload)
-                    print(f"  [{issue_id}] Published agent.completed to event bus WAL with status: {result_status}", flush=True)
+                    if completion_eligible:
+                        self.bus_client.publish_completed(issue_id, payload)
+                        published_topic = "agent.completed"
+                    else:
+                        self.bus_client.publish_rejected(issue_id, payload)
+                        published_topic = "agent.result.rejected"
+                    print(
+                        f"  [{issue_id}] Published {published_topic} to event bus WAL with status: {result_status}",
+                        flush=True,
+                    )
                 except Exception as p_err:
                     print(f"  [{issue_id}] ⚠️ agent.completed publish failed: {p_err}", flush=True)
 
                 # At task completion (after result processing):
                 try:
                     elapsed_sec = result.get("elapsed_sec", 0)
-                    if result.get("has_done"):
+                    if completion_eligible:
                         self.linear_client.update_issue(issue_id, state="Done")
                         self.linear_client.add_comment(issue_id,
                             "Completed: " + str(elapsed_sec) + "s | lane: " + lane + " | exit_code: "
@@ -2249,18 +3162,16 @@ class EventDrivenSupervisor:
                         # not a Fred/supervisor time limit.
                         self.linear_client.add_comment(issue_id, "AGY_BACKEND_TIMEOUT after " + str(elapsed_sec) + "s — AGY exited after upstream/backend stopped responding; supervisor did not kill the session")
                     elif result.get("has_partial_result"):
-                        # Jun 30 fix: partial_result = RESULT.md exists but no DONE log marker.
-                        # If RESULT.md has substantive content (>=1KB), consider the work
-                        # materially done — transition to Done. Otherwise leave In Progress
-                        # for peer review and post a comment explaining.
+                        # A partial packet is never equivalent to completed work. Size is not
+                        # semantic proof and must not transition Linear to Done.
                         partial_size = result_path.stat().st_size if result_path.exists() else 0
-                        if partial_size >= 1024:
-                            self.linear_client.update_issue(issue_id, state="Done")
-                            self.linear_client.add_comment(issue_id,
-                                f"✅ PARTIAL_DONE: RESULT.md exists ({partial_size}b) but AGY did not emit DONE log marker. "
-                                f"Marking Done since artifact is substantive. Sandbox: {sandbox}")
-                        else:
-                            self.linear_client.add_comment(issue_id, f"⚠️ PARTIAL_RESULT after " + str(elapsed_sec) + f"s — RESULT.md exists ({partial_size}b) but trivial — leaving In Progress for review. Sandbox: " + str(sandbox))
+                        self.linear_client.add_comment(
+                            issue_id,
+                            "⚠️ PARTIAL_RESULT after "
+                            + str(elapsed_sec)
+                            + f"s — RESULT.md exists ({partial_size}b) without a semantically valid completion; leaving In Progress for review. Sandbox: "
+                            + str(sandbox),
+                        )
                     elif result.get("has_missing_result"):
                         # Downgrade state back to Todo
                         self.linear_client.update_issue(issue_id, state="Todo")
@@ -2290,7 +3201,7 @@ class EventDrivenSupervisor:
                 try:
                     sandbox_dir = SANDBOX_ROOT / issue_id
                     result_md = sandbox_dir / "RESULT.md"
-                    if result_md.exists() and result.get("has_result"):
+                    if result_md.exists() and completion_eligible:
                         import subprocess
                         validator = (
                             os.environ.get("HERMES_PROFILE_ROOT", str(Path.home() / ".hermes" / "profiles" / "orchestrator")) + "/"
@@ -2313,11 +3224,16 @@ class EventDrivenSupervisor:
                 print(f"  [worker-{worker_id}] backoff: {backoff:.1f}s before next task",
                       flush=True)
                 if self.shutdown_event.wait(timeout=backoff):
-                    self.mark_completed(issue_id)
+                    if completion_eligible:
+                        self.mark_completed(issue_id)
                     break
             finally:
-                allow_requeue = bool('result' in locals() and isinstance(result, dict) and result.get("has_missing_result"))
-                if not allow_requeue:
+                completion_eligible = bool(
+                    isinstance(result, dict)
+                    and result.get("completion_eligible") is True
+                )
+                allow_requeue = not completion_eligible
+                if completion_eligible:
                     self.mark_completed(issue_id)
                 self.scheduler.finish(task, allow_requeue=allow_requeue)
                 with self.active_lock:
@@ -2606,6 +3522,9 @@ def linear_watchdog_loop(supervisor: EventDrivenSupervisor, stop_event: threadin
     while not stop_event.is_set():
         try:
             poll_count += 1
+            run_agy_raw_recovery_batch(
+                lease_owner=f"watchdog-{os.getpid()}", limit=10
+            )
             t_start = time.time()
             issues = supervisor.linear_client.fetch_issues(strict_opt_in=strict_opt_in)
             elapsed = time.time() - t_start
@@ -2627,23 +3546,31 @@ def linear_watchdog_loop(supervisor: EventDrivenSupervisor, stop_event: threadin
 
 
 # ── Main ─────────────────────────────────────────────────
-def main():
-    # Single-instance lock: prevent watchdog cascade. (Jul 1 2026)
-    # The event_driven_watchdog.sh respawns this script every 5 min if it
-    # dies, and previously 13 zombie supervisors piled up. The lock ensures
-    # only one supervisor runs at a time.
-    if not acquire_supervisor_lock():
-        print(f"  [lock] another supervisor holds {SUPERVISOR_LOCK_PATH} — exiting", flush=True)
-        sys.exit(0)
-    atexit.register(release_supervisor_lock)
-    # Note: --issue and --issues modes (one-shot dispatches) bypass the lock
-    # so multiple ad-hoc invocations can still run in parallel.
-
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the supervisor CLI parser without acquiring locks or touching runtime state."""
     parser = argparse.ArgumentParser(description="AGY Sandbox Event-Driven Supervisor")
     parser.add_argument("--issue", help="Single issue ID (e.g., GRO-1928)")
     parser.add_argument("--issues", help="Comma-separated issue IDs")
     parser.add_argument("--from-linear", action="store_true", help="Fetch from Linear at start")
     parser.add_argument("--workdir", help="Source workdir (shorthand or absolute)")
+    parser.add_argument(
+        "--task-file",
+        type=Path,
+        help="Explicit exact-task packet; exact mode never reads mutable cache",
+    )
+    parser.add_argument(
+        "--linear-issue-uuid",
+        help="Stable Linear issue UUID; response identifier must match --issue",
+    )
+    parser.add_argument(
+        "--repair-seed-manifest",
+        type=Path,
+        help="Hash-bound JSON manifest of files to copy after clean sandbox creation",
+    )
+    parser.add_argument(
+        "--repair-seed-sha256",
+        help="Required SHA-256 of --repair-seed-manifest",
+    )
     parser.add_argument("--max-concurrent", type=int, default=MAX_CONCURRENT_DEFAULT,
                         help=f"Max concurrent workers (default {MAX_CONCURRENT_DEFAULT})")
     parser.add_argument("--max-concurrent-research", type=int, default=None,
@@ -2679,7 +3606,37 @@ def main():
                         help="Run continuously: idle_timeout becomes infinite, "
                              "supervisor stays alive forever until SIGTERM. "
                              "Replaces the cron-cycle exit pattern (Jun 30 fix).")
+    return parser
+
+
+def main():
+    # Single-instance lock: prevent watchdog cascade. (Jul 1 2026)
+    # The event_driven_watchdog.sh respawns this script every 5 min if it
+    # dies, and previously 13 zombie supervisors piled up. The lock ensures
+    # only one supervisor runs at a time.
+    if not acquire_supervisor_lock():
+        print(f"  [lock] another supervisor holds {SUPERVISOR_LOCK_PATH} — exiting", flush=True)
+        sys.exit(0)
+    atexit.register(release_supervisor_lock)
+    # Note: --issue and --issues modes (one-shot dispatches) bypass the lock
+    # so multiple ad-hoc invocations can still run in parallel.
+
+    parser = build_argument_parser()
     args = parser.parse_args()
+    if args.task_file is not None and (
+        not args.issue or args.issues or args.from_linear
+    ):
+        parser.error("--task-file requires exclusive --issue mode")
+    if args.linear_issue_uuid is not None and (
+        not args.issue or args.issues or args.from_linear or args.task_file is not None
+    ):
+        parser.error("--linear-issue-uuid requires exclusive --issue mode without --task-file")
+    if (args.repair_seed_manifest is None) != (args.repair_seed_sha256 is None):
+        parser.error("--repair-seed-manifest and --repair-seed-sha256 are required together")
+    if args.repair_seed_manifest is not None and (
+        not args.issue or args.issues or args.from_linear
+    ):
+        parser.error("repair seed options require exclusive --issue mode")
 
     # Model selection: pool-aware router when in cron/long-run mode (Jun 30 2026).
     if args.model is None:
@@ -2691,6 +3648,7 @@ def main():
                     timeout=5
                 ).decode().strip()
                 if model and model in (
+                    "Gemini 3.5 Flash (Medium)", "Gemini 3.5 Flash (High)",
                     "gemini-3.5-flash-high", "gemini-3.5-flash",
                     "gemini-3.1-pro-high", "gemini-3.1-flash-lite",
                     # Anthropic strings (verified working in agent_dispatcher.py
@@ -2723,9 +3681,9 @@ def main():
             if args.max_concurrent != target:
                 args.max_concurrent = target
         else:
-            if args.max_concurrent != 2:
-                print(f"[auto-resume-gate] enforcing cron max-concurrent=2 (was {args.max_concurrent})", flush=True)
-                args.max_concurrent = 2
+            if args.max_concurrent != 3:
+                print(f"[auto-resume-gate] enforcing cron max-concurrent=3 (was {args.max_concurrent})", flush=True)
+                args.max_concurrent = 3
         args.jitter = "15-30"
         global AGY_INACTIVITY_KILL_SEC
         # Real Phase 2/4 build tasks need 10-15min of read-then-write time.
@@ -2767,61 +3725,47 @@ def main():
             if task:
                 initial_tasks.append(task)
     elif args.issue:
-        cached = Path(f"/tmp/issue-batches/{args.issue}.txt")
-        wd = "prismatic"
-        labels = set()
-        if cached.exists():
-            task_content = cached.read_text()
-            for line in task_content.split("\n")[:5]:
-                if line.startswith("WORKDIR:"):
-                    wd = line.split(":", 1)[1].strip()
-                    break
-        else:
-            # Fall back to fetching the Linear issue so AGY has the full
-            # description in the sandbox instead of a 16-byte placeholder.
-            issue = fetch_single_linear_issue(args.issue)
-            if issue:
-                task_content = build_task_content_from_issue(args.issue, issue)
-                labels = issue_labels(issue)
-                print(f"  [linear-fetch] {args.issue}: built AGY_TASK.md ({len(task_content)} bytes) from Linear", flush=True)
-            else:
-                task_content = f"Work on {args.issue}"
-                print(f"  [linear-fetch] {args.issue}: FAILED, falling back to 16-byte placeholder", flush=True)
-        if not labels:
-            for line in task_content.split("\n")[:15]:
-                if line.startswith("LABELS:"):
-                    labels = {p.strip() for p in line.split(":", 1)[1].split(",")}
-                    break
-        lane, _ = assign_lane(None, explicit=True, lane_mode=args.lane_mode, active_project=args.active_project, backlog_age_days=args.backlog_age_days)
-        initial_tasks.append({"issue_id": args.issue, "task_content": task_content, "workdir": wd, "lane": lane, "labels": labels})
+        task = resolve_exact_task(
+            args.issue,
+            task_file=args.task_file,
+            linear_issue_uuid=args.linear_issue_uuid,
+            workdir_override=args.workdir,
+        )
+        lane, _ = assign_lane(
+            None,
+            explicit=True,
+            lane_mode=args.lane_mode,
+            active_project=args.active_project,
+            backlog_age_days=args.backlog_age_days,
+        )
+        task["lane"] = lane
+        if args.repair_seed_manifest is not None:
+            task["repair_seed_manifest"] = str(args.repair_seed_manifest.resolve())
+            task["repair_seed_sha256"] = args.repair_seed_sha256.lower()
+        print(
+            f"  [task-source] {args.issue}: {task['task_source']} "
+            f"sha256={task['task_sha256']}",
+            flush=True,
+        )
+        initial_tasks.append(task)
     elif args.issues:
         for iid in args.issues.split(","):
             iid = iid.strip()
-            cached = Path(f"/tmp/issue-batches/{iid}.txt")
-            wd = "prismatic"
-            labels = set()
-            if cached.exists():
-                task_content = cached.read_text()
-                for line in task_content.split("\n")[:5]:
-                    if line.startswith("WORKDIR:"):
-                        wd = line.split(":", 1)[1].strip()
-                        break
-            else:
-                issue = fetch_single_linear_issue(iid)
-                if issue:
-                    task_content = build_task_content_from_issue(iid, issue)
-                    labels = issue_labels(issue)
-                    print(f"  [linear-fetch] {iid}: built AGY_TASK.md ({len(task_content)} bytes) from Linear", flush=True)
-                else:
-                    task_content = f"Work on {iid}"
-                    print(f"  [linear-fetch] {iid}: FAILED, falling back to 16-byte placeholder", flush=True)
-            if not labels:
-                for line in task_content.split("\n")[:15]:
-                    if line.startswith("LABELS:"):
-                        labels = {p.strip() for p in line.split(":", 1)[1].split(",")}
-                        break
-            lane, _ = assign_lane(None, explicit=True, lane_mode=args.lane_mode, active_project=args.active_project, backlog_age_days=args.backlog_age_days)
-            initial_tasks.append({"issue_id": iid, "task_content": task_content, "workdir": wd, "lane": lane, "labels": labels})
+            task = resolve_exact_task(iid, workdir_override=args.workdir)
+            lane, _ = assign_lane(
+                None,
+                explicit=True,
+                lane_mode=args.lane_mode,
+                active_project=args.active_project,
+                backlog_age_days=args.backlog_age_days,
+            )
+            task["lane"] = lane
+            print(
+                f"  [task-source] {iid}: {task['task_source']} "
+                f"sha256={task['task_sha256']}",
+                flush=True,
+            )
+            initial_tasks.append(task)
     else:
         # Default: process all issue-batches/*.txt
         issue_batches = Path("/tmp/issue-batches")
@@ -2916,6 +3860,9 @@ def main():
     # task can be grabbed before later project/priority tasks are queued.
     for task in initial_tasks:
         supervisor.add_task(task)
+
+    # Reconcile durable raw output before any worker can dispatch or publish.
+    run_agy_raw_recovery_batch(lease_owner=f"startup-{os.getpid()}", limit=10)
 
     # Start workers after initial queue load.
     supervisor.start_workers()

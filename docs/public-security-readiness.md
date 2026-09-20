@@ -9,7 +9,7 @@ This document is the public-repository security pass for external users. It reco
 | Secret scanning | ✅ local audit script | `scripts/public_security_readiness_audit.py` scans public text files for high-confidence raw secret values. |
 | Environment variable examples | ✅ safe local defaults | `.env.example` has local-only defaults and no credential values. |
 | Redaction tests | ✅ policy/artifact coverage | Policy and artifact paths redact token-like values and credential-keyed fields. |
-| API auth expectations | 🟡 documented local-first | Mutating plugin APIs are intended for local/trusted operator use unless deployed behind external auth. |
+| API auth expectations | 🟡 enforced control auth, documented | Control-plane mutations require bearer control credentials by default (fail-closed); read-only and defined integration surfaces are exempt. |
 | Dashboard exposure review | 🟡 documented local-first | Dashboard is for local/trusted operators; do not expose directly to the public internet. |
 | Local vs remote deployment assumptions | ✅ documented | Local quickstart is safe; remote deployments require TLS, auth, explicit CORS, and secret management. |
 | CORS review | ✅ hardened | Gateway defaults to local origins and rejects wildcard CORS with credentials. |
@@ -74,10 +74,10 @@ Redaction expectations:
 
 Current public posture is **local/trusted operator by default**:
 
-- observability endpoints use IP allowlist and optional bearer token
-- plugin job/artifact/policy APIs are intended for local/trusted operators unless a remote deployment adds auth at the edge or reverse proxy
+- observability endpoints (`/metrics`, `/events/*`, `/curator/*`) use an IP allowlist (`PRISMATIC_ALLOWED_IPS`, default `127.0.0.1,::1`) and an optional bearer token (`PRISMATIC_METRICS_TOKEN`)
+- control-plane mutations — including plugin job/artifact/policy endpoints under `/api/plugins/*` — are fail-closed: the Gateway control authorization middleware requires a bearer token from a credential file (`PRISMATIC_CONTROL_AUTH_FILE`) carrying the matching role (`operator`, `approver`, or `executor`) for non-read, non-exempt requests. GET/HEAD/OPTIONS requests, the `/webhooks/*` boundary, and a defined set of integration prefixes are exempt from control auth
 - OpenAPI schema generation is disabled for the Gateway
-- webhooks must use HMAC secrets when configured
+- webhook ingress is fail-closed: `/api/gateway/github` requires a valid `X-Hub-Signature-256` HMAC (`PRISMATIC_GITHUB_WEBHOOK_SECRET`, `+_SECONDARY` for rotation); `/api/gateway/linear` and its `/webhooks/linear` alias require a valid `linear-signature` HMAC (`PRISMATIC_LINEAR_WEBHOOK_SECRET`, `+_SECONDARY`); first-party `/api/pwp/webhooks/*` endpoints require the Prismatic generic scheme (`X-Prismatic-Signature: t=<ts>,v1=<hex>` over `"<ts>.<raw_body>"`, secret `PRISMATIC_WEBHOOK_SECRET`/`+_SECONDARY`, 5-minute freshness window via `PRISMATIC_WEBHOOK_MAX_AGE_SECONDS`). Unsigned, invalid-signature, or stale deliveries are rejected (401) and written to the audit ledger as `WEBHOOK_AUTH_FAILED`. Webhook routes stay exempt from control-auth Bearer <redacted> because HMAC is their authentication — but they are never unauthenticated
 
 Remote deployments must add:
 

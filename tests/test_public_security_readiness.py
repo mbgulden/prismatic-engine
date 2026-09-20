@@ -29,6 +29,23 @@ def test_public_security_audit_passes() -> None:
     assert result["failures"] == []
 
 
+def test_secret_scan_includes_private_key_pem_files(tmp_path: Path) -> None:
+    audit = _load_audit_module()
+    private_key = "-----BEGIN " + "PRIVATE KEY-----\nDUMMY\n-----END PRIVATE KEY-----\n"
+    key_path = tmp_path / "review-bot.private-key.pem"
+    key_path.write_text(private_key, encoding="utf-8")
+
+    findings = audit.scan_for_raw_secrets(tmp_path)
+
+    assert findings == [
+        {
+            "path": "review-bot.private-key.pem",
+            "line": 1,
+            "issue": "high-confidence secret-like value",
+        }
+    ]
+
+
 def test_cors_defaults_are_local_only_and_wildcard_is_rejected(monkeypatch) -> None:
     monkeypatch.delenv("PRISMATIC_CORS_ORIGINS", raising=False)
     defaults = server._configured_cors_origins()

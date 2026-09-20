@@ -1,0 +1,19 @@
+name: prismatic-agent-closeout-contract
+version: 0.2.0
+description: Mandatory dual-artifact (RESULT.md + result-packet.json) closeout contract with fail-closed SHA-verifying CLI validation for AGY execution tasks. Enforces producer/acceptance separation and 25-field standard schema (MARKER=AGY_TASK_RESULT_PACKET_OK).
+author: Prismatic Engine
+category: agent-governance
+labels: [agent:agy]
+config:
+  required_fields: 25
+  marker: AGY_TASK_RESULT_PACKET_OK
+  fail_closed_default: true
+  max_closeout_attempts: 1
+  bidirectional_consistency: strict
+  fixture_harness_required: true
+  schema_path: schemas/result-packet.schema.json
+  validator_path: scripts/validate_closeout_packet.py
+  appendix_path: templates/AGY_TASK_APPENDIX.md
+  sync_script_path: scripts/sync_skill_trees.py
+  pending_substitution_policy: hold_merging_only
+  required_from_issue_min: GRO-4500

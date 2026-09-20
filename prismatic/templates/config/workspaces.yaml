@@ -7,25 +7,18 @@
 # Uncomment and customize the example below:
 #
 # workspaces:
-#   - name: hermes-core
-#     path: $PRISMATIC_HOME/work/
-#     description: "Primary Hermes development workspace"
+#   - name: prismatic-core
+#     path: $PRISMATIC_HOME/work/prismatic-engine/
+#     description: "Primary Prismatic Engine development workspace"
 #     tags:
-#       - primary
-#       - hermes
+#       - core
+#       - hypervisor
 #
-#   - name: active-oahu-tours
-#     path: $PRISMATIC_HOME/work/active-oahu-tours/
-#     description: "Kai's Oahu tours automation workspace"
+#   - name: web-property-demo
+#     path: $PRISMATIC_HOME/work/web-property-demo/
+#     description: "Showcase web property workspace"
 #     tags:
-#       - kai
-#       - production
-#
-#   - name: antigravity
-#     path: $PRISMATIC_HOME/work/antigravity-cli/
-#     description: "AGY CLI development workspace"
-#     tags:
-#       - agy
-#       - cli
+#       - web
+#       - demo
 
 workspaces: []

@@ -1,5 +1,12 @@
 {
   "dependencies": {
     "playwright": "^1.60.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  },
+  "scripts": {
+    "build:dashboard-css": "tailwindcss -c tailwind.config.cjs -i prismatic/gateway/dashboard_src/styles/tailwind.css -o prismatic/gateway/static/dashboard.css --minify",
+    "build:dashboard": "npm run build:dashboard-css && python3 scripts/build_dashboard.py"
   }
 }

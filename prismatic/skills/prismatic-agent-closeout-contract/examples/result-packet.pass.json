@@ -1,0 +1,49 @@
+{
+  "agent": "agy",
+  "STATUS": "PASS",
+  "PRODUCER_STATUS": "PASS",
+  "ACCEPTANCE_DECISION": "PENDING",
+  "TASK_ID": "GRO-4457",
+  "ATTEMPT_ID": "attempt-20260804-01",
+  "BASE_HEAD": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+  "CANDIDATE_HEAD": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+  "CANDIDATE_TREE": "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e",
+  "CHANGED_PATHS": [
+    "prismatic/cli/main.py",
+    "tests/test_cli_closeout.py"
+  ],
+  "COMMAND": [
+    "pytest tests/test_cli_closeout.py -v",
+    "ruff check prismatic/cli/main.py"
+  ],
+  "RESULT": "PASS",
+  "LOG": "artifacts/logs/attempt-20260804-01.log",
+  "LOG_SHA256": "8bc8eda031628bee7845b175003e4274563eb2a3a8cf5e5dddfe9b298603983c",
+  "result_artifacts": [
+    "artifacts/logs/attempt-20260804-01.log"
+  ],
+  "SCOPE": "Verified CLI closeout contract validation and error handling logic",
+  "merge_lane": "backend-api",
+  "risk_level": "low",
+  "AD_HOC_OR_CANONICAL": "canonical suite",
+  "PROOF_CLASSES": [
+    "focused",
+    "lint",
+    "format",
+    "build"
+  ],
+  "SIDE_EFFECTS": {
+    "push": false,
+    "pr": false,
+    "merge": false,
+    "deploy": false,
+    "linear_updated": true
+  },
+  "BLOCKERS": [],
+  "NOT_CLAIMING": [
+    "Production cluster deployment verification",
+    "Live Playwright visual audit"
+  ],
+  "NEXT_ACTION": "merge-ready",
+  "MARKER": "AGY_TASK_RESULT_PACKET_OK"
+}

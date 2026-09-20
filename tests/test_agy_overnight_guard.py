@@ -58,23 +58,53 @@ def agy_packet(
     }
 
 
+VALID_SOURCE_SHA = "c" * 40
+VALID_BASE_SHA = "d" * 40
+
+
+def durable_agy_packet(tmp_path: Path, **kwargs) -> dict:
+    source = tmp_path / f"{kwargs.get('issue', 'agy')}-RESULT.md"
+    proof = tmp_path / f"{kwargs.get('issue', 'agy')}-proof.log"
+    source.write_text(
+        "RESULT=PASS\nMARKER=AGY_DURABLE_OVERNIGHT_OK\n", encoding="utf-8"
+    )
+    proof.write_text("targeted overnight guard proof passed\n", encoding="utf-8")
+    packet = agy_packet(**kwargs)
+    packet["source_path"] = str(source)
+    packet["source_branch"] = packet.get("branch")
+    packet["source_commit_sha"] = VALID_SOURCE_SHA
+    packet["base_commit_sha"] = VALID_BASE_SHA
+    packet["proof"] = {
+        "result": "PASS",
+        "marker": packet["marker"],
+        "log": str(proof),
+    }
+    packet["verification"]["log_path"] = str(proof)
+    return packet
+
+
 def seed_one_task_success(monkeypatch, tmp_path):
     completed_db = tmp_path / "completed_work.db"
     guard_db = tmp_path / "overnight_guard.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(completed_db))
     monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(guard_db))
-    row = ingest_completed_work(agy_packet(), db_path=completed_db)
+    row = ingest_completed_work(durable_agy_packet(tmp_path), db_path=completed_db)
     return row, guard_db
 
 
 def seed_limited_overnight_success(monkeypatch, tmp_path):
     completed_db = tmp_path / "completed_work.db"
     guard_db = tmp_path / "overnight_guard.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(completed_db))
     monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(guard_db))
     row = ingest_completed_work(
-        agy_packet(
-            "LOCAL-AGY-LIMITED-OVERNIGHT-GUARD-TEST",
+        durable_agy_packet(
+            tmp_path,
+            issue="LOCAL-AGY-LIMITED-OVERNIGHT-GUARD-TEST",
             marker="AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK",
         ),
         db_path=completed_db,
@@ -175,6 +205,82 @@ def test_blocks_when_required_lane_markers_missing(monkeypatch, tmp_path):
     assert result.allowed is False
     assert "latest one-task AGY proof missing" in result.blockers
     assert "completed-work ingestion unavailable or no healthy row" in result.blockers
+
+
+def test_blocks_partial_and_historical_unavailable_durable_evidence(
+    monkeypatch, tmp_path
+):
+    row, _ = seed_one_task_success(monkeypatch, tmp_path)
+    partial = row.__class__(
+        **{
+            **row.__dict__,
+            "evidence_retention": {
+                **row.evidence_retention,
+                "status": "partial",
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "prismatic.agy_overnight_guard._latest_completed_work_row",
+        lambda: partial,
+    )
+    partial_result = evaluate_overnight_readiness()
+    assert partial_result.allowed is False
+    assert "durable evidence retention status is partial" in partial_result.blockers
+
+    unavailable = row.__class__(**{**row.__dict__, "evidence_retention": {}})
+    monkeypatch.setattr(
+        "prismatic.agy_overnight_guard._latest_completed_work_row",
+        lambda: unavailable,
+    )
+    unavailable_result = evaluate_overnight_readiness()
+    assert unavailable_result.allowed is False
+    assert (
+        "durable evidence retention status is unavailable"
+        in unavailable_result.blockers
+    )
+
+
+def test_blocks_missing_source_commit_and_manifest_checksum_failure(
+    monkeypatch, tmp_path
+):
+    row, _ = seed_one_task_success(monkeypatch, tmp_path)
+    missing_source = row.__class__(
+        **{
+            **row.__dict__,
+            "evidence_retention": {
+                **row.evidence_retention,
+                "source_commit_sha": None,
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "prismatic.agy_overnight_guard._latest_completed_work_row",
+        lambda: missing_source,
+    )
+    missing_source_result = evaluate_overnight_readiness()
+    assert missing_source_result.allowed is False
+    assert "validated source commit identity missing" in missing_source_result.blockers
+
+    checksum_invalid = row.__class__(
+        **{
+            **row.__dict__,
+            "evidence_retention": {
+                **row.evidence_retention,
+                "manifest_sha256": "0" * 64,
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "prismatic.agy_overnight_guard._latest_completed_work_row",
+        lambda: checksum_invalid,
+    )
+    checksum_result = evaluate_overnight_readiness()
+    assert checksum_result.allowed is False
+    assert (
+        "durable evidence manifest checksum mismatches read model"
+        in checksum_result.blockers
+    )
 
 
 def test_persistence_records_decisions_and_run_attempts(monkeypatch, tmp_path):

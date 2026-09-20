@@ -137,15 +137,135 @@ def test_decide_dispatch_blocks_when_over_cap(fresh_tracker):
 
 # === build_supervisor_cmd tests ===
 
-def test_build_supervisor_cmd_includes_lane_and_model():
+def test_build_supervisor_cmd_is_exact_issue_and_preserves_model():
     cmd = build_supervisor_cmd("GRO-1234", lane="codex", model="sonnet")
     assert "python3" in cmd[0] or cmd[0] == "python3"
-    assert "--issue" in cmd
-    assert "GRO-1234" in cmd
-    assert "--model" in cmd
-    assert "sonnet" in cmd
-    assert "--lane" in cmd
-    assert "codex" in cmd
+    assert cmd.count("--issue") == 1
+    assert cmd[cmd.index("--issue") + 1] == "GRO-1234"
+    assert "--from-linear" not in cmd
+    assert "--lane" not in cmd
+    assert "codex" not in cmd
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
+
+
+def test_build_supervisor_cmd_uses_explicit_runtime_paths(tmp_path):
+    release = tmp_path / "release"
+    supervisor = release / "scripts" / "agy_sandbox_event_supervisor.py"
+    supervisor.parent.mkdir(parents=True)
+    supervisor.write_text("# fixture\n")
+    cmd = build_supervisor_cmd(
+        "GRO-1234",
+        lane="codex",
+        model="sonnet",
+        supervisor_path=str(supervisor),
+        python_executable="/opt/prismatic/bin/python",
+        expected_release_root=str(release),
+    )
+    assert cmd[:2] == ["/opt/prismatic/bin/python", str(supervisor)]
+
+
+def test_build_supervisor_cmd_rejects_path_outside_release(tmp_path):
+    with pytest.raises(RuntimeError, match="outside expected release root"):
+        build_supervisor_cmd(
+            "GRO-1234",
+            lane="codex",
+            model="sonnet",
+            supervisor_path=str(tmp_path / "outside.py"),
+            python_executable="/opt/prismatic/bin/python",
+            expected_release_root=str(tmp_path / "release"),
+        )
+
+
+def test_build_supervisor_cmd_strict_mode_requires_pins(monkeypatch):
+    monkeypatch.setenv("PRISMATIC_REQUIRE_PINNED_SUPERVISOR", "1")
+    monkeypatch.delenv("PRISMATIC_SUPERVISOR_PATH", raising=False)
+    monkeypatch.delenv("PRISMATIC_SUPERVISOR_PYTHON", raising=False)
+    monkeypatch.delenv("PRISMATIC_RELEASE_ROOT", raising=False)
+    with pytest.raises(RuntimeError, match="requires path, interpreter, and release root"):
+        build_supervisor_cmd("GRO-1234", lane="codex", model="sonnet")
+
+
+def test_build_supervisor_cmd_strict_mode_validates_runtime_objects(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PRISMATIC_REQUIRE_PINNED_SUPERVISOR", "1")
+    release = tmp_path / "release"
+    release.mkdir()
+    supervisor = release / "scripts" / "supervisor.py"
+    supervisor.parent.mkdir()
+    supervisor.write_text("# fixture\n")
+    interpreter = tmp_path / "venv" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text("#!/bin/sh\nexit 0\n")
+    interpreter.chmod(0o755)
+
+    command = build_supervisor_cmd(
+        "GRO-1234",
+        lane="codex",
+        model="sonnet",
+        supervisor_path=str(supervisor),
+        python_executable=str(interpreter),
+        expected_release_root=str(release),
+    )
+    assert command[:2] == [str(interpreter.resolve()), str(supervisor.resolve())]
+
+    release_file = tmp_path / "release-file"
+    release_file.write_text("not a directory\n")
+    invalid_cases = [
+        ({"supervisor_path": str(release / "missing.py")}, "not an existing regular file"),
+        ({"supervisor_path": str(supervisor.parent)}, "not an existing regular file"),
+        ({"python_executable": str(tmp_path / "missing-python")}, "does not exist"),
+        ({"python_executable": "python3"}, "must be an absolute path"),
+        ({"expected_release_root": str(tmp_path / "missing-root")}, "does not exist"),
+        ({"expected_release_root": str(release_file)}, "not a directory"),
+    ]
+    non_executable = tmp_path / "venv" / "bin" / "non-executable-python"
+    non_executable.write_text("#!/bin/sh\nexit 0\n")
+    invalid_cases.append(
+        ({"python_executable": str(non_executable)}, "not an executable regular file")
+    )
+
+    defaults = {
+        "supervisor_path": str(supervisor),
+        "python_executable": str(interpreter),
+        "expected_release_root": str(release),
+    }
+    for override, message in invalid_cases:
+        arguments = defaults | override
+        with pytest.raises(RuntimeError, match=message):
+            build_supervisor_cmd(
+                "GRO-1234", lane="codex", model="sonnet", **arguments
+            )
+
+    with pytest.raises(RuntimeError, match="release root must be an absolute path"):
+        build_supervisor_cmd(
+            "GRO-1234",
+            lane="codex",
+            model="sonnet",
+            supervisor_path=str(supervisor),
+            python_executable=str(interpreter),
+            expected_release_root="relative-release",
+        )
+    with pytest.raises(RuntimeError, match="supervisor path must be an absolute path"):
+        build_supervisor_cmd(
+            "GRO-1234",
+            lane="codex",
+            model="sonnet",
+            supervisor_path="scripts/supervisor.py",
+            python_executable=str(interpreter),
+            expected_release_root=str(release),
+        )
+
+
+@pytest.mark.parametrize(
+    "value", [None, "", "--from-linear", "--issue=EVIL", "bad\x00value"]
+)
+@pytest.mark.parametrize("field", ["issue_id", "model"])
+def test_build_supervisor_cmd_rejects_invalid_option_values(field, value):
+    arguments = {"issue_id": "GRO-1234", "lane": "codex", "model": "sonnet"}
+    arguments[field] = value
+    with pytest.raises(ValueError, match="nonempty non-option string"):
+        build_supervisor_cmd(**arguments)
 
 
 def test_build_supervisor_cmd_opus():

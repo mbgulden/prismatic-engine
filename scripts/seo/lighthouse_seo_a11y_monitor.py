@@ -10,10 +10,7 @@ from pathlib import Path
 from seo_cron_common import AOT_ORIGIN, parse_html_file, resolve_site_dir, route_for_file, stamp, state_dir, write_json, write_text
 
 URLS = [
-    "https://activeoahutours.com/",
-    "https://activeoahutours.com/kailua-kayak-rentals/",
-    "https://activeoahutours.com/oahu-kayak-tours/",
-    "https://activeoahutours.com/oahu-equipment-rentals/",
+    f"{AOT_ORIGIN}/",
 ]
 THRESHOLDS = {"accessibility": 0.85, "seo": 0.90, "best-practices": 0.80}
 
@@ -49,10 +46,9 @@ def run_lighthouse(url: str, out_path: Path) -> dict:
 def static_fallback() -> dict:
     site_dir = resolve_site_dir()
     pages = []
-    for route in ["/", "/kailua-kayak-rentals/", "/oahu-kayak-tours/", "/oahu-equipment-rentals/"]:
-        path = site_dir / route.strip("/") / "index.html" if route != "/" else site_dir / "index.html"
-        if not path.exists():
-            continue
+    html_files = sorted([p for p in site_dir.glob("**/*.html") if p.is_file()])
+    for path in html_files:
+        route = route_for_file(path, site_dir)
         parsed = parse_html_file(path)
         pages.append({
             "route": route,
@@ -92,7 +88,7 @@ def main() -> int:
                     result["failures"].append({"url": item["url"], "category": key, "score": score, "threshold": threshold})
     write_json(outdir / "latest_lighthouse_monitor.json", result)
     write_json(outdir / f"{ts}_lighthouse_monitor.json", result)
-    md = ["# AOT Lighthouse SEO/A11y Monitor", "", f"- Mode: {result.get('mode')}"]
+    md = ["# Lighthouse SEO/A11y Monitor", "", f"- Mode: {result.get('mode')}"]
     if result.get("mode") == "lighthouse":
         md.append(f"- Failures: {len(result['failures'])}")
         for item in result["results"]:

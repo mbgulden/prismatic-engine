@@ -1,0 +1,173 @@
+        <div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-2xl border border-amber-500/40 bg-amber-950/20 space-y-4 shadow-xl">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">Legacy Quarantine</span>
+                            <h2 class="text-sm font-bold text-amber-200 uppercase tracking-wider">Legacy Merge Pipeline — Displaced by Review Factory</h2>
+                        </div>
+                        <p class="text-xs text-slate-300">All merge authority, cryptographic receipts, and proof witnesses are strictly executed inside the canonical Review Factory.</p>
+                    </div>
+                    <button type="button" onclick="switchTab('review-factory')" class="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold uppercase tracking-wider shadow-lg shadow-indigo-950/40 flex items-center justify-center gap-2 transition flex-shrink-0">
+                        <span>Open Review Factory</span>
+                        <span>→</span>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between border-t border-amber-500/20 pt-2 text-[11px] font-mono text-slate-400">
+                    <span id="merge-snapshot-meta">Historical snapshot only · Cannot authorize merges</span>
+                    <span id="merge-snapshot-status" class="text-amber-400">Quarantined by Policy</span>
+                </div>
+            </section>
+            <!-- Stats Cards Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <!-- Pending Merges -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Pending</span>
+                    <span id="stat-merge-pending" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <!-- Merged Count -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Merged</span>
+                    <span id="stat-merge-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+                <!-- Last Scan -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Snapshot Scan</span>
+                    <span id="stat-merge-scan" class="text-sm font-semibold text-indigo-400 mt-2">Never</span>
+                </div>
+                <!-- Last Apply -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Apply</span>
+                    <span id="stat-merge-apply" class="text-sm font-semibold text-violet-400 mt-2">Never</span>
+                </div>
+            </section>
+
+            <!-- Two Columns Layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Legacy provenance -->
+                <div class="space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Legacy Authority Boundary
+                        </h2>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Production disposition</span>
+                            <span class="text-xs font-bold text-amber-300">Quarantined by policy</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Merge authority</span>
+                            <span class="text-xs font-bold text-rose-300">None</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Canonical workflow</span>
+                            <span class="text-xs font-bold text-cyan-300">Review Factory</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Legacy rows</span>
+                            <span class="text-xs text-slate-300">Historical only</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Runtime health</span>
+                            <span class="text-xs text-slate-400">Not reported here</span>
+                        </div>
+                        <div class="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed mt-2">
+                            Legacy confidence scores, sandbox rows, and historical merge records cannot satisfy Review Factory review, receipt, authorization, or merge-execution gates.
+                        </div>
+                    </div>
+
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-2">
+                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Historical Merge Map</h2>
+                            <a class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#workspaces">Open Workspaces</a>
+                        </div>
+                        <div class="space-y-2 text-xs text-slate-300">
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-1567</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">prismatic/gateway/server.py</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-1614</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">prismatic/core/hardware_profile.py</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2091</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">okf/index.md</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2193 / 2305</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">plugins/.../src/index.js</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2353 / 2355</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">plugins/pwp/plugin-manifest.yaml</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2471</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">.gitignore</span></span>
+                            </div>
+                        </div>
+                        <div class="bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed">
+                            Archived handoff context. These static mappings are not current candidate selection or merge authority.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Pending and History feeds -->
+                <div class="lg:col-span-2 space-y-6">
+                    <!-- Pending Sandboxes Table -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                            Historical Pending Sandboxes — Not RF Jobs
+                        </h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                        <th class="py-2.5 px-3">Ticket</th>
+                                        <th class="py-2.5 px-3">Tier</th>
+                                        <th class="py-2.5 px-3">Legacy Score</th>
+                                        <th class="py-2.5 px-3">Modified</th>
+                                        <th class="py-2.5 px-3">Contention Files</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="merge-pending-tbody" class="divide-y divide-slate-800/30">
+                                    <tr>
+                                        <td colspan="5" class="py-6 text-center text-slate-500 italic">
+                                            No historical pending sandboxes.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Merge History Table -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                            Historical Merge Records — Automation Unverified
+                        </h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                        <th class="py-2.5 px-3">Ticket</th>
+                                        <th class="py-2.5 px-3">Tier</th>
+                                        <th class="py-2.5 px-3">Commit</th>
+                                        <th class="py-2.5 px-3">Applied</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="merge-history-tbody" class="divide-y divide-slate-800/30">
+                                    <tr>
+                                        <td colspan="4" class="py-6 text-center text-slate-500 italic">
+                                            No merge history.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION: FOUNDATION -->

@@ -44,7 +44,7 @@ DEFAULT_SOCKET_PATH: str = os.path.join(
 
 REQUIRED_FIELDS = {"type", "source"}
 VALID_TYPES = {
-    "lock", "unlock", "heartbeat", "telemetry",
+    "lock", "unlock", "heartbeat", "expire", "telemetry",
     "agent_launched", "agent_completed", "agent_failed",
     "agent_heartbeat",
     "governor_allocate", "governor_release",
@@ -139,20 +139,29 @@ class UnixSocketListener:
 
     async def start(self) -> None:
         """Start the Unix socket server."""
-        # Clean up stale socket file
         sock_path = Path(self._socket_path)
         if sock_path.exists():
-            sock_path.unlink()
+            try:
+                sock_path.unlink()
+            except OSError:
+                pass
 
-        sock_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._server = await asyncio.start_unix_server(
-            self._handle_connection,
-            path=self._socket_path,
-        )
-        logger.info(
-            "IPC bridge Unix socket listening on %s", self._socket_path
-        )
+        try:
+            sock_path.parent.mkdir(parents=True, exist_ok=True)
+            if hasattr(asyncio, "start_unix_server"):
+                self._server = await asyncio.start_unix_server(
+                    self._handle_connection,
+                    path=self._socket_path,
+                )
+                logger.info(
+                    "IPC bridge Unix socket listening on %s", self._socket_path
+                )
+            else:
+                logger.info("Unix domain sockets not supported on this OS (e.g. Windows). IPC bridge HTTP endpoint active.")
+                self._server = None
+        except Exception as exc:
+            logger.warning("IPC bridge Unix socket listener disabled: %s", exc)
+            self._server = None
 
     async def stop(self) -> None:
         """Stop the Unix socket server and clean up."""
@@ -239,7 +248,7 @@ def create_event_ingest_route():
         from prismatic.gateway.ipc_bridge import create_event_ingest_route
         app.include_router(create_event_ingest_route())
     """
-    from fastapi import APIRouter, Request, Response, Body
+    from fastapi import APIRouter, Body, Response
 
     router = APIRouter()
 
@@ -342,6 +351,6 @@ def send_event_via_socket(
         # Socket not available — fail silently, it's best-effort
         logger.debug("IPC bridge socket not available at %s", sock_path)
         return False
-    except (socket.timeout, OSError, json.JSONDecodeError) as exc:
+    except (TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.debug("IPC bridge send failed: %s", exc)
         return False

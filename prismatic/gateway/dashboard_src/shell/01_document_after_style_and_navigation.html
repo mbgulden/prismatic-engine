@@ -1,0 +1,149 @@
+    </style>
+</head>
+<body class="text-slate-200 min-h-screen flex flex-col max-w-full overflow-x-hidden">
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-40 min-w-0 max-w-full overflow-hidden" data-proof-marker="dashboard-header-mobile-wrap">
+        <div class="flex items-center space-x-3 min-w-0">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+                ⧉
+            </div>
+            <div>
+                <h1 class="text-lg font-bold bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent leading-none">PRISMATIC HUB</h1>
+                <span class="text-xs text-slate-500 font-medium">Observe · Orchestrate · Produce</span>
+            </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-4 min-w-0">
+            <!-- Mode Switcher -->
+            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex items-center space-x-1" data-proof-marker="dashboard-ui-mode-switcher">
+                <button type="button" id="mode-btn-creator" onclick="setUIMode('creator')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-md shadow-sm transition flex items-center gap-1.5" title="Calm Creator Studio mode: Prompt, Deliverables, Status">
+                    <span>✨</span>
+                    <span>Studio</span>
+                </button>
+                <button type="button" id="mode-btn-engineering" onclick="setUIMode('engineering')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 rounded-md transition flex items-center gap-1.5" title="Advanced System Telemetry (14 diagnostic tabs) · Press Ctrl+Shift+D">
+                    <span>⚙️</span>
+                    <span>Telemetry</span>
+                    <span class="hidden lg:inline-block text-[9px] font-mono text-slate-500 bg-slate-900 px-1 rounded">^⇧D</span>
+                </button>
+            </div>
+            <!-- Theme Toggle -->
+            <button onclick="toggleTheme()" class="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/50 p-2 rounded-full transition flex items-center justify-center min-w-[36px] min-h-[36px]" aria-label="Toggle Theme">
+                <svg id="theme-icon" class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>
+                </svg>
+            </button>
+            <!-- WS Status -->
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-full border border-slate-700/50 max-w-full">
+                <span id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 status-pulse"></span>
+                <span id="status-text" class="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Connecting</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Creator Navigation Bar (Default) -->
+    <nav id="nav-creator-tabs" class="border-b border-slate-800/80 bg-slate-950/40 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="creator-tabs-bar" aria-label="Creator Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center gap-2 min-w-0 list-none m-0 p-0">
+            <li>
+                <a id="tab-btn-studio" href="/studio" onclick="switchTab('studio', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                    ✨ Studio (The Prompt)
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-assets" href="/assets" onclick="switchTab('assets', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    🌍 Deployed Assets (Reality)
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-pulse" href="/pulse" onclick="switchTab('pulse', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    💓 Fleet Pulse (Status)
+                </a>
+            </li>
+            <li class="sm:ml-auto">
+                <button type="button" onclick="setUIMode('engineering')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-cyan-300 bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition">
+                    <span>⚡ Engineering Telemetry (14 tabs)</span>
+                    <span class="text-[10px] text-slate-500">→</span>
+                </button>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Engineering Navigation Bar (Diagnostics Deck) -->
+    <nav id="nav-engineering-tabs" class="hidden border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap" aria-label="Main Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center gap-2 min-w-0 list-none m-0 p-0">
+            <li>
+                <a id="tab-btn-dashboard" href="/" onclick="switchTab('dashboard', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                    Dashboard
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-telemetry" href="/telemetry" data-proof-marker="ingestion" onclick="switchTab('telemetry', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Ingestion Queue
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-merge" href="/merge" onclick="switchTab('merge', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Merge Pipeline
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-review-factory" href="/review-factory" onclick="switchTab('review-factory', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Review Factory
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-foundation" href="/foundation" onclick="switchTab('foundation', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Foundation
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-workspaces" href="/workspaces" onclick="switchTab('workspaces', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Workspaces
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-skills" href="/skills" onclick="switchTab('skills', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Skills
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-signals" href="/signals" onclick="switchTab('signals', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Signals
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-swarmproof" href="/swarmproof" onclick="switchTab('swarmproof', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    SwarmProof
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-crons" href="/crons" onclick="switchTab('crons', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Native Crons
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-pwp" href="/pwp" onclick="switchTab('pwp', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    PWP Plugin
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-plugins" href="/plugins" onclick="switchTab('plugins', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Plugins
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-quota" href="/quota" onclick="switchTab('quota', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Resources
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-settings" href="/settings" onclick="switchTab('settings', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Settings
+                </a>
+            </li>
+            <li class="sm:ml-auto">
+                <button type="button" onclick="setUIMode('creator')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono text-cyan-300 hover:text-white bg-cyan-950/60 border border-cyan-800/60 hover:bg-cyan-900/60 transition">
+                    <span>← Studio Mode</span>
+                </button>
+            </li>
+        </ul>
+    </nav>
