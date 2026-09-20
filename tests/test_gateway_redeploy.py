@@ -253,3 +253,5 @@ def test_result_serializes():
                               health={"passed": True})
     d = res.to_dict()
     assert d["success"] is True and d["health"]["passed"] is True
+
+# auto-deploy e2e verification (2026-09-20): harmless marker comment; exercises the full merge-to-redeploy loop.
