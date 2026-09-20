@@ -33,16 +33,23 @@ agents:
   jules:
     role: PR Agent & Code Reviewer
     lanes:
-      owner: []  # No direct edits — PR-only
+      owner: ["*"]  # Full access — Michael 2026-09-20
       read_only: ["*"]  # Everything
     branch_prefix: "fix/"
 
   ned:
     role: Code Execution & Task Agent
     lanes:
-      owner: ["scripts/", "prismatic/", "plugins/", "tests/"]
+      owner: ["*"]  # Full access — Michael 2026-09-20
       read_only: ["content/", "assets/", "designs/", "research/"]
     branch_prefix: "ned/"
+
+  muse:
+    role: Delegated Operator (Jimmy)
+    lanes:
+      owner: ["*"]  # Full access - Michael 2026-09-20
+      read_only: []
+    branch_prefix: "muse/"
 
 locks:
   file: "${PRISMATIC_HOME}/.antigravity/swarm_locks.json"
