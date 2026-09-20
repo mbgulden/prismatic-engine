@@ -501,7 +501,7 @@ class VerificationWorker:
         rel = Path(test_path)
         mut_stem = rel.stem
         if mut_stem.startswith("test_"):
-            mut_stem = mut_stem[len("test_"):]
+            mut_stem = mut_stem[len("test_") :]
         # <pkg>/tests/test_<name>.py -> <pkg>/<name>; otherwise sibling.
         if rel.parent.name in ("tests", "test"):
             mut_pkg = rel.parent.parent.as_posix().replace("/", ".")
