@@ -13,13 +13,27 @@ from pathlib import Path
 import pytest
 
 from prismatic.hypervisor import PrismaticHypervisor
-from swarmcron.reaper import ZombieLeaseReaper
-from swarmcurator.coherence import CacheCoherenceManager
+
+# swarmcron / swarmcurator / swarmrouter are optional extras (Phase 0 removed
+# them from base dependencies). Skip this stress test when they are absent;
+# CI installs the `primitives` extra so it still runs there.
+_swarmcron_reaper = pytest.importorskip(
+    "swarmcron.reaper", reason="swarmcron is an optional extra")
+_swarmcurator_coherence = pytest.importorskip(
+    "swarmcurator.coherence", reason="swarmcurator is an optional extra")
+_swarmrouter_analyzer = pytest.importorskip(
+    "swarmrouter.analyzer", reason="swarmrouter is an optional extra")
+_swarmrouter_dispatcher = pytest.importorskip(
+    "swarmrouter.dispatcher", reason="swarmrouter is an optional extra")
+ZombieLeaseReaper = _swarmcron_reaper.ZombieLeaseReaper
+CacheCoherenceManager = _swarmcurator_coherence.CacheCoherenceManager
+LockScopeAnalyzer = _swarmrouter_analyzer.LockScopeAnalyzer
+RoutedTask = _swarmrouter_analyzer.RoutedTask
+TopologicalDispatcher = _swarmrouter_dispatcher.TopologicalDispatcher
+
 from swarmledger.storage.auditor import CryptographicAuditor
 from swarmledger.storage.engine import StorageEngine
 from swarmlock.hierarchy import HierarchyLockEngine, LockMode, ResourceKey
-from swarmrouter.analyzer import LockScopeAnalyzer, RoutedTask
-from swarmrouter.dispatcher import TopologicalDispatcher
 
 
 def test_chaos_swarm_100_agents_stress_and_fault_tolerance():
