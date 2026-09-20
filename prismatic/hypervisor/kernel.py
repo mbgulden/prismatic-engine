@@ -15,7 +15,9 @@ addresses, credentials, or OS-specific locations:
   falls back to ``~``). Mirroring is best-effort observability and never gates
   correctness, so a stranger's install works with zero setup.
 - Agent signals go to ``$PRISMATIC_STATE_DIR`` or ``./prismatic_state``.
-- Tier-3 barrier decisions queue in ``~/.swarmgate/pending_decisions.json``.
+- Tier-3 barrier decisions queue in ``~/.swarmgate/pending_decisions.json``
+  (overridable via the ``swarmgate_pending_file`` constructor argument or the
+  ``SWARMGATE_PENDING_FILE`` env var).
 """
 
 from __future__ import annotations
@@ -47,6 +49,29 @@ from swarmsaga.core.unwinder import TopologicalUnwinder
 from swarmsaga.journal.engine import JournalEngine
 
 logger = logging.getLogger("prismatic.hypervisor")
+
+_warned_default_lock_engine = False
+
+
+def _warn_default_lock_engine_once() -> None:
+    """Log the single-node lock boundary loudly, once per process.
+
+    The default HierarchyLockEngine is per-instance in-memory: two engine
+    instances or processes do not share lock state. Saying so once at
+    construction time keeps the constraint visible without spamming logs.
+    See docs/single-node-boundaries.md.
+    """
+    global _warned_default_lock_engine
+    if _warned_default_lock_engine:
+        return
+    _warned_default_lock_engine = True
+    logger.warning(
+        "PrismaticHypervisor is using the default in-memory HierarchyLockEngine: "
+        "locks are NOT shared across processes or instances. Run a single "
+        "instance per journal/ledger path set; the gateway lease mirror is "
+        "best-effort observability, not a correctness gate. "
+        "See docs/single-node-boundaries.md"
+    )
 
 
 async def _lease_heartbeat(
@@ -151,13 +176,31 @@ class PrismaticHypervisor:
         ledger_db_path: Optional[str | Path] = None,
         lock_engine: Optional[HierarchyLockEngine] = None,
         mirror_to_gateway: bool = True,
+        swarmgate_pending_file: Optional[str | Path] = None,
     ):
         self.journal = JournalEngine(db_path=journal_db_path)
         self.ledger = StorageEngine(db_path=ledger_db_path)
+        if lock_engine is None:
+            # Loud single-node boundary: the default lock engine is
+            # per-instance in-memory. See docs/single-node-boundaries.md.
+            _warn_default_lock_engine_once()
         self.lock_engine = lock_engine or HierarchyLockEngine()
         self.gate_evaluator = EscalationEvaluator()
         self.auditor = CryptographicAuditor(self.ledger)
         self.mirror_to_gateway = mirror_to_gateway
+        if swarmgate_pending_file is not None:
+            # Point Tier-3 pending decisions at an explicit file instead of
+            # ~/.swarmgate/pending_decisions.json. Guarded for version skew:
+            # older swarmgate installs predate PendingDecisionStore.configure.
+            configure = getattr(PendingDecisionStore, "configure", None)
+            if callable(configure):
+                configure(pending_file=swarmgate_pending_file)
+            else:
+                logger.warning(
+                    "swarmgate_pending_file was given but the installed "
+                    "swarmgate has no PendingDecisionStore.configure(); "
+                    "ignoring the override"
+                )
 
     def _mirror_lease_acquire(
         self,
@@ -270,6 +313,12 @@ class PrismaticHypervisor:
             ) from None
         # Monotonic (not wall-clock): fence tokens must never go backwards,
         # even across NTP adjustments. time.time_ns() does not guarantee that.
+        #
+        # Single-node boundary: these tokens are process-local —
+        # time.monotonic_ns() resets on restart, and there is no shared
+        # allocator or sink-side stale-token rejection across processes.
+        # Cross-process fencing is roadmap, not v1.
+        # See docs/single-node-boundaries.md.
         fence_token = time.monotonic_ns()
 
         # Step 1: Concurrency Acquisition (SwarmLock)
