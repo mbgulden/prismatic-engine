@@ -45,6 +45,7 @@ class ReviewJobState(enum.Enum):
     REVIEWING = "reviewing"
     REPAIR_REQUIRED = "repair_required"
     REJECTED = "rejected"
+    QUARANTINED = "quarantined"
     MERGE_READY = "merge_ready"
     MERGE_AUTHORIZED = "merge_authorized"
     MERGING = "merging"
@@ -59,25 +60,32 @@ class ReviewJobState(enum.Enum):
         """
         S = ReviewJobState
         return {
-            S.QUEUED.value: [S.VERIFYING.value],
+            S.QUEUED.value: [
+                S.VERIFYING.value,
+                S.QUARANTINED.value,  # poison: too many consecutive failures
+            ],
             S.VERIFYING.value: [
                 S.REVIEW_READY.value,
                 S.QUEUED.value,
                 S.REPAIR_REQUIRED.value,  # verification checks failed -> producer rework
+                S.QUARANTINED.value,  # poison: too many consecutive failures
             ],
             S.REVIEW_READY.value: [
                 S.REVIEWING.value,
                 S.REPAIR_REQUIRED.value,
                 S.QUEUED.value,  # requeue for re-verification (e.g. manifest not persisted)
+                S.QUARANTINED.value,  # poison: too many consecutive failures
             ],
             S.REVIEWING.value: [
                 S.MERGE_READY.value,
                 S.REPAIR_REQUIRED.value,
                 S.REJECTED.value,
                 S.REVIEW_READY.value,
+                S.QUARANTINED.value,  # poison: too many consecutive failures
             ],
             S.REPAIR_REQUIRED.value: [S.QUEUED.value],
             S.REJECTED.value: [],  # terminal
+            S.QUARANTINED.value: [],  # terminal (poison jobs; manual recovery)
             S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value, S.REPAIR_REQUIRED.value],
             S.MERGE_AUTHORIZED.value: [S.MERGING.value],
             S.MERGING.value: [S.MERGED.value, S.MERGE_VERIFICATION_FAILED.value],
@@ -194,6 +202,11 @@ class ReviewJob:
     # Witness tracking
     required_witnesses: int = 0
     completed_witnesses: int = 0
+
+    # Consecutive infrastructure-stage failures (daemon poison-job guard).
+    # Persisted on the row so a daemon restart cannot wipe poison memory;
+    # reset to zero on any successful stage completion.
+    consecutive_failures: int = 0
 
     # Timestamps
     created_at: str = field(default_factory=_utcnow_iso)

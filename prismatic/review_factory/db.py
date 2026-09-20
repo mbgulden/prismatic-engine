@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
     state TEXT NOT NULL DEFAULT 'queued',
     required_witnesses INTEGER NOT NULL DEFAULT 0,
     completed_witnesses INTEGER NOT NULL DEFAULT 0,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     lease_owner TEXT NOT NULL DEFAULT '',
     lease_expires_at TEXT NOT NULL DEFAULT '',
@@ -295,6 +296,12 @@ class ReviewFactoryDB:
             self.conn.execute(
                 "ALTER TABLE review_jobs ADD COLUMN manifest_json TEXT NOT NULL DEFAULT ''"
             )
+        # Migration: review_jobs.consecutive_failures persists the daemon's
+        # poison-job counter on the job row (survives daemon restarts).
+        if "consecutive_failures" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
         )
@@ -435,6 +442,32 @@ class ReviewFactoryDB:
             cur.execute(
                 "UPDATE review_jobs SET manifest_json = ? WHERE review_job_id = ?",
                 (manifest_json, review_job_id),
+            )
+            return cur.rowcount > 0
+
+    def increment_job_failures(self, review_job_id: str) -> int:
+        """Atomically increment a job's consecutive-failure counter.
+
+        Returns the new count. Backs the daemon's poison-job guard.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET consecutive_failures = consecutive_failures + 1 "
+                "WHERE review_job_id = ?",
+                (review_job_id,),
+            )
+            row = cur.execute(
+                "SELECT consecutive_failures FROM review_jobs WHERE review_job_id = ?",
+                (review_job_id,),
+            ).fetchone()
+            return int(row[0]) if row is not None else 0
+
+    def reset_job_failures(self, review_job_id: str) -> bool:
+        """Reset a job's consecutive-failure counter to zero."""
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET consecutive_failures = 0 WHERE review_job_id = ?",
+                (review_job_id,),
             )
             return cur.rowcount > 0
 
@@ -962,6 +995,7 @@ class ReviewFactoryDB:
             state=row["state"],
             required_witnesses=row["required_witnesses"],
             completed_witnesses=row["completed_witnesses"],
+            consecutive_failures=row["consecutive_failures"],
             created_at=row["created_at"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],

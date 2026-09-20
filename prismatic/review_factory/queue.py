@@ -679,30 +679,42 @@ class ReviewQueue:
     def dispatch_repair_task(
         self, review_job_id: str, failure_reason: str = ""
     ) -> Optional[str]:
-        """Submit a high-priority self-healing repair task to task_admission outbox."""
+        """Attempt to dispatch a repair task for a job that needs rework.
+
+        No automated repair dispatcher is currently wired:
+        ``prismatic.task_admission`` exposes no repair-submission entry point
+        (``TaskAdmissionStore.admit`` is the authenticated external
+        task-admission API -- it requires a full admission payload with task
+        files, worktree and policy -- not a repair callback). Until a real
+        repair consumer exists, this records an explicit, operator-visible
+        ``repair_dispatch_unavailable`` audit entry on the job so a
+        ``repair_required`` job never sits silently, and returns None.
+        """
         job = self.db.get_review_job(review_job_id)
         if not job:
             return None
-        try:
-            from prismatic.task_admission import submit_task
-
-            repair_title = f"REPAIR: Auto-remediate defect for {job.task_id}"
-            repair_desc = f"Review Factory detected defect in candidate {job.candidate_commit[:8]}:\n{failure_reason}"
-            task_id = submit_task(
-                title=repair_title,
-                description=repair_desc,
-                repository=job.repository,
-                priority="HIGH",
-            )
-            logger.info(
-                "Auto-repair task submitted for job %s: %s", review_job_id, task_id
-            )
-            return task_id
-        except Exception as exc:
-            logger.warning(
-                "Auto-repair task dispatch warning for %s: %s", review_job_id, exc
-            )
-            return None
+        self.db.insert_audit_entry(
+            actor="review-factory:repair-dispatch",
+            action="repair_dispatch_unavailable",
+            review_job_id=review_job_id,
+            details={
+                "failure_reason": failure_reason,
+                "task_id": job.task_id,
+                "candidate_commit": (job.candidate_commit or "")[:8],
+                "note": (
+                    "no automated repair dispatcher is wired; "
+                    "operator action required"
+                ),
+            },
+        )
+        logger.warning(
+            "repair dispatch unavailable for job %s (task %s): %s -- "
+            "operator action required",
+            review_job_id,
+            job.task_id,
+            failure_reason,
+        )
+        return None
 
     # ── Janitor ──────────────────────────────────────────────────────
 

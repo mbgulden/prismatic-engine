@@ -706,8 +706,19 @@ class VerificationWorker:
                 passed=False,
             )
 
-        args = [sys.executable, "-m", "py_compile", "prismatic/__init__.py"]
-        return self._execute_subproc("package", "package", args)
+        # The materialized archive is read-only (0o444/0o555); py_compile
+        # writes __pycache__ next to the source and would always fail there
+        # with EACCES -- which made every tier-1+ verification fail this
+        # check. Run the identical check against a writable copy of the
+        # entrypoint instead of the archive itself.
+        with tempfile.TemporaryDirectory(prefix="rf-package-check-") as tmp:
+            pkg_dir = Path(tmp) / "prismatic"
+            pkg_dir.mkdir(parents=True)
+            shutil.copy2(init_file, pkg_dir / "__init__.py")
+            args = [sys.executable, "-m", "py_compile", "prismatic/__init__.py"]
+            return self._execute_subproc(
+                "package", "package", args, cwd=Path(tmp)
+            )
 
     def _execute_subproc(
         self,
@@ -715,6 +726,7 @@ class VerificationWorker:
         proof_class: str,
         cmd_args: list[str],
         timeout: int = 300,
+        cwd: Optional[Path] = None,
     ) -> CheckResult:
         command_str = " ".join(cmd_args)
         log_path = str(self.log_dir / f"{name}.log")
@@ -728,7 +740,7 @@ class VerificationWorker:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=str(self.repo_path),
+                cwd=str(cwd if cwd is not None else self.repo_path),
                 # The materialized archive is read-only; never try to write
                 # __pycache__ into it (py_compile etc. would fail with EACCES).
                 env={**_os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
