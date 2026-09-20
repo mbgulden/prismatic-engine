@@ -44,6 +44,13 @@ agents:
       read_only: ["content/", "assets/", "designs/", "research/"]
     branch_prefix: "ned/"
 
+  muse:
+    role: Delegated Operator (Jimmy)
+    lanes:
+      owner: ["*"]  # Full access - Michael 2026-09-20
+      read_only: []
+    branch_prefix: "muse/"
+
 locks:
   file: "${PRISMATIC_HOME}/.antigravity/swarm_locks.json"
   heartbeat_interval_s: 60
