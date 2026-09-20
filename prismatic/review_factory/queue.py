@@ -716,9 +716,9 @@ class ReviewQueue:
 
         new_state = job.state
         if job.state == ReviewJobState.VERIFYING.value:
-            new_state = ReviewJobState.QUEUED.value
+            new_state = ReviewJobState.QUEUED
         elif job.state == ReviewJobState.REVIEWING.value:
-            new_state = ReviewJobState.REVIEW_READY.value
+            new_state = ReviewJobState.REVIEW_READY
         else:
             return False
 
@@ -736,7 +736,7 @@ class ReviewQueue:
                 client_ip=client_ip,
                 details={
                     "previous_state": job.state,
-                    "new_state": new_state,
+                    "new_state": new_state.value,
                     "previous_owner": job.lease_owner,
                 },
             )

@@ -60,8 +60,16 @@ class ReviewJobState(enum.Enum):
         S = ReviewJobState
         return {
             S.QUEUED.value: [S.VERIFYING.value],
-            S.VERIFYING.value: [S.REVIEW_READY.value, S.QUEUED.value],
-            S.REVIEW_READY.value: [S.REVIEWING.value, S.REPAIR_REQUIRED.value],
+            S.VERIFYING.value: [
+                S.REVIEW_READY.value,
+                S.QUEUED.value,
+                S.REPAIR_REQUIRED.value,  # verification checks failed -> producer rework
+            ],
+            S.REVIEW_READY.value: [
+                S.REVIEWING.value,
+                S.REPAIR_REQUIRED.value,
+                S.QUEUED.value,  # requeue for re-verification (e.g. manifest not persisted)
+            ],
             S.REVIEWING.value: [
                 S.MERGE_READY.value,
                 S.REPAIR_REQUIRED.value,
@@ -193,6 +201,12 @@ class ReviewJob:
     # Lease
     lease_owner: str = ""
     lease_expires_at: str = ""
+
+    # Persisted pipeline manifest (canonical JSON of MergeCandidateManifest).
+    # Written by the verification stage once it reaches REVIEW_REQUIRED and
+    # consumed by the review stage; Phase 4's merge executor binds the CLEAN
+    # manifest from here as well.
+    manifest_json: str = ""
 
     @property
     def changed_paths(self) -> list[str]:

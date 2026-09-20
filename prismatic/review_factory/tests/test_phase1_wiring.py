@@ -96,3 +96,102 @@ def _row(**over):
 def test_ingest_completed_work_row_skips_ineligible():
     importer = BacklogImporter.__new__(BacklogImporter)  # no DB needed for skip path
     assert importer.ingest_completed_work_row(_row()) is False
+
+
+def test_graph_review_ready_requeue():
+    # Daemon self-healing: a REVIEW_READY job with no persisted manifest
+    # goes back for re-verification.
+    assert ReviewJobState.REVIEW_READY.can_transition_to(ReviewJobState.QUEUED)
+
+
+def test_graph_verify_failure_to_repair():
+    # Work that fails verification checks goes to the repair flow,
+    # not back to the queue and not on to review.
+    assert ReviewJobState.VERIFYING.can_transition_to(ReviewJobState.REPAIR_REQUIRED)
+
+
+def test_manifest_persist_roundtrip(tmp_path):
+    from prismatic.review_factory.db import ReviewFactoryDB
+    from prismatic.review_factory.queue import ReviewQueue
+
+    queue = ReviewQueue(db=ReviewFactoryDB(db_path=tmp_path / "t.db"))
+    job_id = queue.enqueue_completed_work(
+        completed_work_id="cw-manifest-1",
+        task_id="T-1",
+        repository="proof/repo",
+        base_commit="a" * 40,
+        candidate_commit="c" * 40,
+    )
+    assert queue.db.get_review_job(job_id).manifest_json == ""
+    assert queue.db.update_job_manifest(job_id, '{"state": "REVIEW_REQUIRED"}')
+    assert (
+        queue.db.get_review_job(job_id).manifest_json == '{"state": "REVIEW_REQUIRED"}'
+    )
+
+
+def test_force_release_lease_roundtrip(tmp_path):
+    # Regression: force_release_lease passed .value strings to a db method
+    # expecting enums and raised AttributeError on every real release.
+    from prismatic.review_factory.db import ReviewFactoryDB
+    from prismatic.review_factory.queue import ReviewQueue
+
+    queue = ReviewQueue(db=ReviewFactoryDB(db_path=tmp_path / "t.db"))
+    job_id = queue.enqueue_completed_work(
+        completed_work_id="cw-lease-1",
+        task_id="T-2",
+        repository="proof/repo",
+        base_commit="a" * 40,
+        candidate_commit="c" * 40,
+    )
+    leased = queue.lease_for_verification("worker-1")
+    assert leased is not None
+    assert leased.state == ReviewJobState.VERIFYING.value
+    assert queue.force_release_lease(job_id, actor="worker-1") is True
+    assert queue.db.get_review_job(job_id).state == ReviewJobState.QUEUED.value
+
+
+def _daemon_for_queue(tmp_path, queue):
+    from prismatic.gateway.verification_daemon import VerificationWorkerDaemon
+
+    daemon = VerificationWorkerDaemon(
+        repo_path=tmp_path, poll_interval_seconds=60.0, janitor_interval_seconds=3600.0
+    )
+    daemon.queue = queue
+    return daemon
+
+
+def test_daemon_requeues_when_manifest_missing(tmp_path):
+    # A REVIEW_READY job with no persisted manifest is sent back for
+    # re-verification instead of being reviewed blind.
+    from prismatic.review_factory.db import ReviewFactoryDB
+    from prismatic.review_factory.queue import ReviewQueue
+
+    queue = ReviewQueue(db=ReviewFactoryDB(db_path=tmp_path / "t.db"))
+    job_id = queue.enqueue_completed_work(
+        completed_work_id="cw-requeue-1",
+        task_id="T-3",
+        repository="proof/repo",
+        base_commit="a" * 40,
+        candidate_commit="c" * 40,
+    )
+    daemon = _daemon_for_queue(tmp_path, queue)
+    # Simulate a job verified before manifest persistence existed:
+    # REVIEW_READY, leased for review, no receipt needed to reach the
+    # manifest check? No - receipts are checked first. Insert a stub receipt.
+    from prismatic.review_factory.models import VerificationReceipt
+
+    queue.db.update_review_job_state(
+        job_id, ReviewJobState.REVIEW_READY, lease_owner="", lease_expires_at=""
+    )
+    queue.db.insert_receipt(
+        VerificationReceipt(
+            receipt_id="r1",
+            review_job_id=job_id,
+            candidate_commit="c" * 40,
+            candidate_tree="c" * 40,
+        )
+    )
+    job = queue.db.get_review_job(job_id)
+    assert job.manifest_json == ""
+    daemon._run_review_stage(job)
+    assert queue.db.get_review_job(job_id).state == ReviewJobState.QUEUED.value
