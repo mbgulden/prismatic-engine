@@ -14,12 +14,15 @@ Endpoints:
     GET  /healthz          — Liveness probe
     GET  /readyz           — Readiness probe (DB & State Dir integrity)
     GET  /audit-log        — Append-only audit log entries (Admin)
+    GET  /llm/status       — LLM deep-review stage status (not configured|active|skipped)
+    POST /llm/toggle       — Enable/disable the LLM deep-review stage (Admin, Rate limited)
 """
 
 from __future__ import annotations
 
 import time
 import json
+import os
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -500,6 +503,89 @@ def _attach_routes(router: Any) -> None:
         return {
             "count": len(entries),
             "entries": entries,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @router.get("/llm/status")
+    async def get_llm_stage_status() -> Dict[str, Any]:
+        """LLM deep-review stage status: not configured | active | skipped.
+
+        Informative, never a nag: a fresh install with no models reports
+        "not configured" and the deterministic pipeline runs normally.
+        """
+        from prismatic.review_factory.llm_deep_review import (
+            LLMDeepReviewAdapter,
+            LLMReviewConfig,
+        )
+
+        config = LLMReviewConfig.from_env()
+        env_enabled = os.environ.get("PRISMATIC_REVIEW_LLM", "").strip() == "1"
+        payload: Dict[str, Any] = {
+            "enabled": config.enabled,
+            "env_enabled": env_enabled,
+            "endpoint": config.endpoint,
+            "model_full_configured": bool(config.model_full),
+            "model_bounded_configured": bool(config.model_bounded),
+            "timeout_seconds": config.timeout_seconds,
+            "max_rereviews": config.max_rereviews,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if not config.enabled:
+            payload.update(
+                state="not configured",
+                detail=(
+                    "PRISMATIC_REVIEW_LLM not set and dashboard toggle off; "
+                    "deterministic review runs normally"
+                ),
+            )
+            return payload
+        if not config.model_full and not config.model_bounded:
+            payload.update(
+                state="not configured",
+                detail="enabled but no model configured",
+            )
+            return payload
+        ok, reason = LLMDeepReviewAdapter(config).gates_pass()
+        if ok:
+            payload.update(
+                state="active",
+                detail="Ollama reachable; a configured model is available",
+            )
+        else:
+            payload.update(state="skipped", detail=reason)
+        return payload
+
+    @router.post(
+        "/llm/toggle",
+        dependencies=[Depends(require_admin_principal), Depends(enforce_rate_limit)],
+    )
+    async def toggle_llm_stage(
+        body: Dict[str, Any],
+        principal: Principal = Depends(require_admin_principal),
+    ) -> Dict[str, Any]:
+        """Enable/disable the optional LLM deep-review stage (Admin).
+
+        Persists the dashboard toggle to ~/.prismatic/review-factory-llm.json.
+        Note: PRISMATIC_REVIEW_LLM=1 in the environment keeps the stage
+        enabled regardless of this toggle.
+        """
+        from prismatic.review_factory.llm_deep_review import set_toggle_enabled
+
+        enabled = bool(body.get("enabled", False))
+        env_enabled = os.environ.get("PRISMATIC_REVIEW_LLM", "").strip() == "1"
+        actor = getattr(principal, "identity", "") or "dashboard"
+        toggle_path = set_toggle_enabled(enabled, actor=actor)
+        return {
+            "enabled": enabled or env_enabled,
+            "toggle_enabled": enabled,
+            "env_override": env_enabled,
+            "toggle_file": str(toggle_path),
+            "note": (
+                "PRISMATIC_REVIEW_LLM=1 in the environment keeps the stage "
+                "enabled regardless of the toggle."
+                if env_enabled
+                else "Toggle persisted; the daemon picks it up on its next review cycle."
+            ),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

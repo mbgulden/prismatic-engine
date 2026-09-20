@@ -1259,3 +1259,17 @@ class ReviewFactoryDB:
             )
             row = cur.fetchone()
             return dict(row) if row else None
+
+    def count_audit_entries(self, review_job_id: str, action: str) -> int:
+        """Count audit entries for a job+action.
+
+        Used for bounded loops such as the Phase 3 LLM re-review budget.
+        """
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "SELECT COUNT(*) AS n FROM review_factory_audit_log "
+                "WHERE review_job_id = ? AND action = ?",
+                (review_job_id, action),
+            )
+            row = cur.fetchone()
+            return int(row["n"]) if row else 0

@@ -19,17 +19,14 @@ actor; tier 2/3 NEVER auto-merge (fail closed). Stalled repairs are
 re-dispatched with bounded retries and exponential backoff; exhausted jobs
 fail loudly via audit + Linear and stay visible.
 
-No LLMs, no network model calls: this loop is entirely deterministic. The
-optional LLM deep-review stage (Phase 3) slots in as an advisory, default-off
-step between the heuristic review and submit_verdict; per standing policy it
-can never downgrade a deterministic result.
-
-The daemon also runs the stale-lease janitor on a schedule.
-
-No LLMs, no network model calls: this loop is entirely deterministic. The
-optional LLM deep-review stage (Phase 3) slots in as an advisory, default-off
-step between the heuristic review and submit_verdict; per standing policy it
-can never downgrade a deterministic result.
+The deterministic loop below makes no LLM or network model calls. The optional
+LLM deep-review stage (Phase 3) is an ACTIVE, default-off enrichment step that
+runs after the deterministic verdict: structured findings become concrete
+repair work orders dispatched through the normal repair flow, and
+high-severity findings on a deterministic-CLEAN job escalate to a human
+(never auto-merge). Per standing policy the LLM can never downgrade a
+deterministic result, and every failure mode falls back to the deterministic
+verdict unchanged.
 
 The daemon also runs the stale-lease janitor on a schedule.
 
@@ -41,8 +38,10 @@ ingestion).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -52,6 +51,18 @@ from typing import Optional
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
     PromotionState,
+)
+from prismatic.review_factory.llm_deep_review import (
+    LLMDeepReviewAdapter,
+    LLMFinding,
+    LLMReviewConfig,
+    LLMStageOutcome,
+    compile_repair_packet,
+    escalate_to_human,
+    render_work_order_text,
+    rereview_budget_remaining,
+    resolve_llm_outcome,
+    summarize_for_human,
 )
 from prismatic.review_factory.models import (
     ReviewJob,
@@ -184,6 +195,8 @@ class VerificationWorkerDaemon:
         # state machine has no forced transition out of MERGE_READY, so
         # they can sit there indefinitely without hot-looping.)
         self._merge_authorize_refused: set[str] = set()
+        self._llm_status_cache: dict = {}
+        self._llm_status_cache_at: Optional[datetime] = None
 
     def start(self) -> None:
         """Start the background thread (idempotent)."""
@@ -226,6 +239,7 @@ class VerificationWorkerDaemon:
                 if self._last_redispatch
                 else None
             ),
+            "llm_review": self._llm_stage_status(),
         }
 
     # ── Main loop ────────────────────────────────────────────────────
@@ -458,6 +472,24 @@ class VerificationWorkerDaemon:
                     job_id, updated_manifest.canonical_json()
                 ):
                     logger.error("clean manifest persist failed for job %s", job_id)
+            # RF-3 (optional): ACTIVE LLM deep-review stage. Fail-closed: the
+            # deterministic verdict above always stands; the LLM only enriches
+            # (repair work orders, human escalation). Never raises.
+            llm_extra_context = None
+            llm_force_dispatch = False
+            try:
+                llm_outcome, new_state = self._run_llm_stage(job, decision, new_state)
+                if llm_outcome is not None and llm_outcome.action in (
+                    "packet",
+                    "rereview_repair",
+                ):
+                    llm_extra_context = {
+                        "llm_work_order_text": llm_outcome.work_order_text,
+                        "llm_work_order": llm_outcome.packet,
+                    }
+                    llm_force_dispatch = llm_outcome.force_dispatch
+            except Exception as exc:  # the LLM stage must never break review
+                logger.warning("llm stage error for job %s: %s", job_id, exc)
             self._clear_failures(job_id)
             logger.info(
                 "reviewed job %s -> %s (verdict %s)",
@@ -469,6 +501,8 @@ class VerificationWorkerDaemon:
                 self.queue.dispatch_repair_task(
                     job_id,
                     failure_reason=f"heuristic review verdict={decision.verdict}",
+                    extra_context=llm_extra_context,
+                    force=llm_force_dispatch,
                 )
         except Exception as exc:
             logger.error("review failed for job %s: %s", job_id, exc)
@@ -538,6 +572,480 @@ class VerificationWorkerDaemon:
         except Exception as exc:
             logger.debug("pr_url lookup failed for job %s: %s", job.review_job_id, exc)
         return None
+
+    # ── Optional LLM deep-review stage (RF-3) ────────────────────────
+    # ACTIVE enrichment, never advisory-only. Fail-closed: every skip, error,
+    # timeout, or schema-invalid output leaves the deterministic verdict
+    # untouched, and the LLM can never downgrade REPAIR_REQUIRED/REJECTED.
+
+    _LLM_STATUS_TTL_SECONDS = 120.0
+    _LLM_DIFF_MAX_CHARS = 500_000
+
+    def _llm_stage_status(self) -> dict:
+        """Informative, never-nagging LLM stage state for the dashboard.
+
+        One of: not configured | active | skipped. The health check is cached
+        briefly so readiness probes never block on the network.
+        """
+        now = datetime.now(timezone.utc)
+        if (
+            self._llm_status_cache
+            and self._llm_status_cache_at is not None
+            and (now - self._llm_status_cache_at).total_seconds()
+            < self._LLM_STATUS_TTL_SECONDS
+        ):
+            return dict(self._llm_status_cache)
+        try:
+            config = LLMReviewConfig.from_env()
+            if not config.enabled:
+                status = {
+                    "state": "not configured",
+                    "detail": (
+                        "PRISMATIC_REVIEW_LLM not set and dashboard toggle off; "
+                        "deterministic review runs normally"
+                    ),
+                }
+            elif not config.model_full and not config.model_bounded:
+                status = {
+                    "state": "not configured",
+                    "detail": "enabled but no model configured",
+                }
+            else:
+                ok, reason = LLMDeepReviewAdapter(config).gates_pass()
+                if ok:
+                    status = {
+                        "state": "active",
+                        "detail": (
+                            "Ollama reachable; a configured model is available"
+                        ),
+                        "endpoint": config.endpoint,
+                        "model_full": config.model_full or None,
+                        "model_bounded": config.model_bounded or None,
+                    }
+                else:
+                    status = {"state": "skipped", "detail": reason}
+        except Exception as exc:
+            status = {"state": "skipped", "detail": f"status check failed: {exc}"}
+        self._llm_status_cache = status
+        self._llm_status_cache_at = now
+        return dict(status)
+
+    def _run_llm_stage(
+        self, job: ReviewJob, decision, new_state: str
+    ) -> tuple[LLMStageOutcome | None, str]:
+        """Run the optional LLM deep-review stage.
+
+        Returns (outcome_or_None, effective_state). The effective state may
+        differ from ``new_state`` when the LLM escalates a deterministic-CLEAN
+        job (held for human review) or when a re-review finds still-broken
+        findings on a deterministic-CLEAN candidate. Never raises.
+        """
+        job_id = job.review_job_id
+        config = LLMReviewConfig.from_env()
+        if not config.enabled:
+            return None, new_state
+        db = self.queue.db
+        tree = (job.candidate_tree or "").strip()
+
+        adapter = LLMDeepReviewAdapter(config)
+        ok, reason = adapter.gates_pass()
+        if not ok:
+            self._audit_llm_once(
+                db, job_id, tree, "llm_review_skipped", {"reason": reason}
+            )
+            logger.info("llm stage skipped for job %s: %s", job_id, reason)
+            return None, new_state
+
+        first = db.find_audit_entry(job_id, "llm_review_completed")
+        first_tree = self._audit_tree(first)
+        if first is not None and first_tree == tree:
+            return None, new_state  # this candidate already deep-reviewed
+        if first is not None and first_tree and first_tree != tree:
+            return self._run_llm_rereview(
+                job, decision, new_state, adapter, config, first
+            )
+        return self._run_llm_first_review(job, decision, new_state, adapter)
+
+    def _run_llm_first_review(
+        self, job: ReviewJob, decision, new_state: str, adapter: LLMDeepReviewAdapter
+    ) -> tuple[LLMStageOutcome | None, str]:
+        job_id = job.review_job_id
+        db = self.queue.db
+        tree = (job.candidate_tree or "").strip()
+        det_verdict = str(getattr(decision, "verdict", "") or "")
+        diff_text = self._llm_candidate_diff(job)
+        if not diff_text:
+            self._audit_llm_once(
+                db,
+                job_id,
+                tree,
+                "llm_review_skipped",
+                {"reason": "candidate diff unavailable"},
+            )
+            return None, new_state
+        try:
+            det_findings = json.loads(getattr(decision, "findings", "") or "[]")
+        except Exception:
+            det_findings = []
+        llm = adapter.review(
+            job,
+            diff_text=diff_text,
+            deterministic_verdict=det_verdict,
+            deterministic_findings=det_findings if isinstance(det_findings, list) else [],
+        )
+        if llm is None:
+            self._audit_llm_once(
+                db,
+                job_id,
+                tree,
+                "llm_review_skipped",
+                {
+                    "reason": (
+                        "model call failed, timed out, or output failed "
+                        "schema validation; deterministic verdict stands"
+                    )
+                },
+            )
+            return None, new_state
+        self._audit_llm_once(
+            db,
+            job_id,
+            tree,
+            "llm_review_completed",
+            {
+                "model": llm.model,
+                "verdict": llm.verdict,
+                "confidence": llm.confidence,
+                "rationale": llm.rationale,
+                "diff_chars": len(diff_text),
+                "findings": [f.to_dict() for f in llm.findings],
+            },
+        )
+        action = resolve_llm_outcome(det_verdict, llm)
+        if action == "packet":
+            # Deterministic REPAIR_REQUIRED/REJECTED stands (never downgraded,
+            # even if the LLM said "clean"): compile findings into a concrete
+            # repair work order. The caller dispatches it for REPAIR_REQUIRED;
+            # for terminal REJECTED the packet is audited for the operator.
+            packet = compile_repair_packet(
+                job_id=job_id,
+                candidate_tree=tree,
+                candidate_commit=job.candidate_commit or "",
+                model=llm.model,
+                deterministic_verdict=det_verdict,
+                findings=llm.findings,
+            )
+            self._audit_llm_once(
+                db,
+                job_id,
+                tree,
+                "llm_packet_ready",
+                {
+                    "model": llm.model,
+                    "work_items": len(packet["work_items"]),
+                    "dispatched": new_state == ReviewJobState.REPAIR_REQUIRED.value,
+                },
+            )
+            outcome = LLMStageOutcome(
+                action="packet",
+                summary=str(packet.get("summary") or ""),
+                packet=packet,
+                work_order_text=render_work_order_text(packet),
+            )
+            return outcome, new_state
+        if action == "escalate":
+            summary = summarize_for_human(
+                job_id=job_id,
+                task_id=job.task_id or "",
+                candidate_commit=job.candidate_commit or "",
+                model=llm.model,
+                deterministic_verdict=det_verdict,
+                findings=llm.findings,
+                reason=(
+                    "The deterministic CLEAN verdict stands (never downgraded); "
+                    "the job is held for human review instead of proceeding."
+                ),
+            )
+            evidence = {
+                "candidate_tree": tree,
+                "candidate_commit": (job.candidate_commit or "")[:12],
+                "deterministic_verdict": det_verdict,
+                "model": llm.model,
+                "findings": [f.to_dict() for f in llm.findings][:10],
+            }
+            escalate_to_human(db, job, summary=summary, evidence=evidence)
+            db.update_review_job_state(
+                job_id, ReviewJobState.REPAIR_REQUIRED, lease_owner="", lease_expires_at=""
+            )
+            logger.warning(
+                "llm escalation held job %s for human review (never auto-merge)",
+                job_id,
+            )
+            outcome = LLMStageOutcome(
+                action="escalate",
+                summary=summary,
+                detail="held for human review",
+                evidence=evidence,
+            )
+            return outcome, ReviewJobState.REPAIR_REQUIRED.value
+        # advisory: deterministic CLEAN, no high-severity findings — recorded
+        # in the audit trail only.
+        return (
+            LLMStageOutcome(
+                action="advisory",
+                summary=f"LLM advisory findings recorded ({len(llm.findings)}).",
+            ),
+            new_state,
+        )
+
+    def _run_llm_rereview(
+        self,
+        job: ReviewJob,
+        decision,
+        new_state: str,
+        adapter: LLMDeepReviewAdapter,
+        config: LLMReviewConfig,
+        first_entry: dict,
+    ) -> tuple[LLMStageOutcome | None, str]:
+        """Re-review a repaired candidate against the original LLM findings.
+
+        Bounded: at most ``config.max_rereviews`` LLM re-reviews per job, then
+        the job goes to a human.
+        """
+        job_id = job.review_job_id
+        db = self.queue.db
+        tree = (job.candidate_tree or "").strip()
+        det_verdict = str(getattr(decision, "verdict", "") or "")
+        try:
+            orig_details = json.loads(first_entry.get("details_json") or "{}")
+        except Exception:
+            orig_details = {}
+        original_findings = orig_details.get("findings") or []
+        orig_tree = self._audit_tree(first_entry)
+
+        remaining = rereview_budget_remaining(db, job_id, config.max_rereviews)
+        if remaining <= 0:
+            summary = summarize_for_human(
+                job_id=job_id,
+                task_id=job.task_id or "",
+                candidate_commit=job.candidate_commit or "",
+                model=str(orig_details.get("model") or ""),
+                deterministic_verdict=det_verdict,
+                findings=[],
+                reason=(
+                    f"LLM re-review budget exhausted ({config.max_rereviews} "
+                    "re-reviews already done for this job). Routing to a human "
+                    "instead of looping forever."
+                ),
+            )
+            escalate_to_human(
+                db,
+                job,
+                summary=summary,
+                evidence={
+                    "reason": "rereview_budget_exhausted",
+                    "original_findings": original_findings[:10],
+                },
+            )
+            db.update_review_job_state(
+                job_id, ReviewJobState.REPAIR_REQUIRED, lease_owner="", lease_expires_at=""
+            )
+            self._audit_llm_once(
+                db,
+                job_id,
+                tree,
+                "llm_rereview_exhausted",
+                {"max_rereviews": config.max_rereviews},
+            )
+            logger.warning(
+                "llm re-review budget exhausted for job %s; routed to human", job_id
+            )
+            return (
+                LLMStageOutcome(
+                    action="rereview_escalate",
+                    summary=summary,
+                    detail="re-review budget exhausted; routed to human",
+                ),
+                ReviewJobState.REPAIR_REQUIRED.value,
+            )
+
+        new_diff = self._llm_candidate_diff(job)
+        if not new_diff:
+            self._audit_llm_once(
+                db,
+                job_id,
+                tree,
+                "llm_review_skipped",
+                {"reason": "re-review diff unavailable"},
+            )
+            return None, new_state
+        llm2 = adapter.rereview(
+            job,
+            new_diff_text=new_diff,
+            original_findings=original_findings
+            if isinstance(original_findings, list)
+            else [],
+            original_tree=orig_tree,
+        )
+        if llm2 is None:
+            self._audit_llm_once(
+                db,
+                job_id,
+                tree,
+                "llm_review_skipped",
+                {"reason": "re-review model call failed or output invalid"},
+            )
+            return None, new_state
+        self._audit_llm_once(
+            db,
+            job_id,
+            tree,
+            "llm_rereview_completed",
+            {
+                "model": llm2.model,
+                "verdict": llm2.verdict,
+                "confidence": llm2.confidence,
+                "rationale": llm2.rationale,
+                "original_tree": orig_tree,
+                "reassessments": [
+                    {
+                        "finding_index": r.finding_index,
+                        "status": r.status,
+                        "why": r.why,
+                    }
+                    for r in llm2.reassessments
+                ],
+            },
+        )
+        still_broken = [r for r in llm2.reassessments if r.status == "still_broken"]
+        if not still_broken:
+            # Every original finding is fixed — the fresh deterministic
+            # verdict on the new candidate stands.
+            return (
+                LLMStageOutcome(
+                    action="rereview_fixed",
+                    summary=(
+                        f"LLM re-review: all {len(llm2.reassessments)} original "
+                        f"finding(s) fixed ({llm2.model})."
+                    ),
+                ),
+                new_state,
+            )
+        # Still broken: compile a fresh work order against the new candidate
+        # and dispatch a new repair task for it.
+        idx_to_finding = {
+            i: f for i, f in enumerate(original_findings) if isinstance(f, dict)
+        }
+        findings_for_packet: list[LLMFinding] = []
+        for r in still_broken:
+            raw = idx_to_finding.get(r.finding_index, {})
+            findings_for_packet.append(
+                LLMFinding(
+                    severity=str(raw.get("severity") or "warning"),
+                    file=str(raw.get("file") or ""),
+                    lines=str(raw.get("lines") or "0"),
+                    category=str(raw.get("category") or "correctness"),
+                    explanation=str(raw.get("explanation") or r.why),
+                )
+            )
+        packet = compile_repair_packet(
+            job_id=job_id,
+            candidate_tree=tree,
+            candidate_commit=job.candidate_commit or "",
+            model=llm2.model,
+            deterministic_verdict=det_verdict,
+            findings=findings_for_packet,
+            reassessments=llm2.reassessments,
+        )
+        self._audit_llm_once(
+            db,
+            job_id,
+            tree,
+            "llm_packet_ready",
+            {
+                "model": llm2.model,
+                "work_items": len(packet["work_items"]),
+                "rereview": True,
+            },
+        )
+        outcome = LLMStageOutcome(
+            action="rereview_repair",
+            summary=str(packet.get("summary") or ""),
+            packet=packet,
+            work_order_text=render_work_order_text(packet),
+            force_dispatch=True,
+        )
+        effective = new_state
+        if det_verdict.strip().lower() == "clean":
+            # Deterministic CLEAN, but the LLM says original findings are
+            # still broken — hold for repair, never auto-merge.
+            db.update_review_job_state(
+                job_id, ReviewJobState.REPAIR_REQUIRED, lease_owner="", lease_expires_at=""
+            )
+            effective = ReviewJobState.REPAIR_REQUIRED.value
+            logger.warning(
+                "llm re-review found still-broken findings on job %s; held for repair",
+                job_id,
+            )
+        return outcome, effective
+
+    def _llm_candidate_diff(self, job: ReviewJob) -> str:
+        """Best-effort ``git diff base candidate`` for the LLM prompt.
+
+        Returns "" when the diff cannot be produced; the stage is skipped.
+        """
+        base = (job.base_commit or "").strip()
+        cand = (job.candidate_commit or job.candidate_tree or "").strip()
+        if not base or not cand or not self.repo_path:
+            return ""
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(self.repo_path), "diff", "--no-color", base, cand, "--"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except Exception as exc:
+            logger.warning("llm diff failed for job %s: %s", job.review_job_id, exc)
+            return ""
+        if proc.returncode != 0:
+            logger.warning(
+                "llm git diff rc=%s for job %s", proc.returncode, job.review_job_id
+            )
+            return ""
+        diff = proc.stdout or ""
+        if len(diff) > self._LLM_DIFF_MAX_CHARS:
+            diff = (
+                diff[: self._LLM_DIFF_MAX_CHARS]
+                + f"\n[... diff capped at {self._LLM_DIFF_MAX_CHARS} chars ...]"
+            )
+        return diff
+
+    @staticmethod
+    def _audit_tree(entry: dict | None) -> str:
+        if not entry:
+            return ""
+        try:
+            return str(
+                json.loads(entry.get("details_json") or "{}").get("candidate_tree")
+                or ""
+            )
+        except Exception:
+            return ""
+
+    def _audit_llm_once(
+        self, db, job_id: str, tree: str, action: str, details: dict
+    ) -> None:
+        """Audit an LLM stage event once per (job, action, candidate tree)."""
+        existing = db.find_audit_entry(job_id, action)
+        if existing is not None and self._audit_tree(existing) == tree:
+            return
+        db.insert_audit_entry(
+            actor="review-factory:llm-review",
+            action=action,
+            review_job_id=job_id,
+            details={**details, "candidate_tree": tree},
+        )
 
     # ── Janitor ──────────────────────────────────────────────────────
 

@@ -740,6 +740,8 @@ class ReviewQueue:
         review_job_id: str,
         failure_reason: str = "",
         target_agent: str | None = None,
+        extra_context: Optional[dict] = None,
+
         force: bool = False,
     ) -> Optional[str]:
         """Dispatch a repair task into the engine's multi-channel task intake.
@@ -757,9 +759,16 @@ class ReviewQueue:
 
         Idempotent per job: when a ``repair_dispatched`` audit entry already
         exists for the job, the recorded intake event id is returned without
-        enqueueing a second task — unless ``force=True`` (bounded re-dispatch
-        via ``redispatch_stalled_repairs``), which always enqueues a fresh
-        task and increments the job's repair-attempt budget.
+        enqueueing a second task — unless ``force=True``, which always
+        enqueues a fresh task and increments the job's repair-attempt budget.
+        ``force`` is used by the bounded re-dispatch path
+        (``redispatch_stalled_repairs``) and by the Phase 3 LLM re-review
+        loop (a repaired candidate gets its own new work order).
+
+        ``extra_context`` may carry ``llm_work_order_text`` /
+        ``llm_work_order`` from the Phase 3 LLM stage; they are appended to the
+        repair task so the repair agent receives a concrete work order.
+
 
         Returns the intake event id, or None when the intake is genuinely
         unavailable — in which case a loud ``repair_dispatch_unavailable``
@@ -769,17 +778,19 @@ class ReviewQueue:
         if not job:
             return None
 
-        if not force:
-            existing = self.db.find_audit_entry(review_job_id, "repair_dispatched")
-            if existing:
-                try:
-                    prior = json.loads(existing.get("details_json") or "{}")
-                    if prior.get("intake_event_id"):
-                        return str(prior["intake_event_id"])
-                except Exception:
-                    pass
+        existing = self.db.find_audit_entry(review_job_id, "repair_dispatched")
+        if existing and not force:
+            try:
+                prior = json.loads(existing.get("details_json") or "{}")
+                if prior.get("intake_event_id"):
+                    return str(prior["intake_event_id"])
+            except Exception:
+                pass
 
-        context = self._repair_context(review_job_id, job, failure_reason)
+
+        context = self._repair_context(
+            review_job_id, job, failure_reason, extra_context
+        )
 
         try:
             from prismatic.ingestion_queue import enqueue_multi_channel_task
@@ -841,6 +852,10 @@ class ReviewQueue:
                 "repair_packet_id": context["payload"].get("repair_packet_id"),
                 "attempt": attempt,
                 "forced_redispatch": bool(force),
+                "llm_work_order": bool(
+                    extra_context and extra_context.get("llm_work_order")
+                ),
+
             },
         )
         logger.info(
@@ -865,7 +880,11 @@ class ReviewQueue:
         return event_id
 
     def _repair_context(
-        self, review_job_id: str, job: ReviewJob, failure_reason: str
+        self,
+        review_job_id: str,
+        job: ReviewJob,
+        failure_reason: str,
+        extra_context: Optional[dict] = None,
     ) -> dict:
         """Build the repair title + payload handed to the task intake."""
         decisions = self.db.get_decisions_for_job(review_job_id)
@@ -919,6 +938,17 @@ class ReviewQueue:
             "   ReviewQueue().requeue_repaired_candidate(",
             f"       {review_job_id!r}, new_candidate_commit, new_candidate_tree)",
         ]
+        llm_work_order_text = ""
+        llm_work_order = None
+        if extra_context:
+            llm_work_order_text = str(extra_context.get("llm_work_order_text") or "")
+            llm_work_order = extra_context.get("llm_work_order")
+        if llm_work_order_text:
+            lines += [
+                "",
+                "LLM deep-review work order (structured findings -> concrete fixes):",
+                llm_work_order_text,
+            ]
         label = job.task_id or job.repository or review_job_id[:8]
         title = f"REPAIR: fix rejected candidate for {label}"
         payload = {
@@ -935,6 +965,7 @@ class ReviewQueue:
             "failure_reason": failure_reason,
             "findings": findings,
             "repair_packet_id": packet_id,
+            "llm_work_order": llm_work_order,
             "title": title,
             "description": "\n".join(lines),
             "requeue": {

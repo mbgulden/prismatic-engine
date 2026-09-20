@@ -20,6 +20,15 @@
                 </div>
             </section>
 
+            <!-- LLM Deep Review status (optional stage, default off) -->
+            <div class="glass-panel p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                    <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">LLM Deep Review <span class="text-[10px] text-slate-500 normal-case tracking-normal">optional &middot; default off</span></h3>
+                    <p id="rf-llm-status" class="text-xs text-slate-400 mt-1" role="status" aria-live="polite">Checking status&hellip;</p>
+                </div>
+                <button id="rf-llm-toggle" type="button" onclick="toggleRF_LLM()" disabled title="Authenticate as operator to change" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-500 cursor-not-allowed">Enable LLM review</button>
+            </div>
+
             <!-- Review Factory Jobs Table -->
             <div class="glass-panel p-4 sm:p-5 rounded-xl space-y-4">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">

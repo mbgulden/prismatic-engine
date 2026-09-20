@@ -803,6 +803,7 @@
                 ]);
                 renderReviewFactoryQueue(queue);
                 renderReviewFactoryJobs(jobs.jobs || []);
+                loadRF_LLMStatus(headers);
                 const count = Number(jobs.count || 0);
                 const authSuffix = reviewFactoryToken ? " (Authenticated)" : "";
                 setReviewFactoryStatus(`Live · ${count} jobs${authSuffix}`, "emerald");
@@ -822,6 +823,73 @@
             if (supplied) reviewFactoryToken = supplied;
             if (input) input.value = "";
             await loadReviewFactory();
+        }
+
+        async function loadRF_LLMStatus(headers) {
+            const statusEl = document.getElementById("rf-llm-status");
+            const toggleBtn = document.getElementById("rf-llm-toggle");
+            const setToggle = (enabled, canMutate) => {
+                if (!toggleBtn) return;
+                toggleBtn.dataset.enabled = enabled ? "true" : "false";
+                toggleBtn.textContent = enabled ? "Disable LLM review" : "Enable LLM review";
+                const locked = !canMutate;
+                toggleBtn.disabled = locked;
+                toggleBtn.title = locked
+                    ? "Authenticate as operator to change"
+                    : (enabled ? "Turn the optional LLM deep-review stage off" : "Turn the optional LLM deep-review stage on");
+                toggleBtn.className = locked
+                    ? "rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-500 cursor-not-allowed"
+                    : "rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-300 hover:bg-indigo-500/20";
+            };
+            if (!statusEl) return;
+            try {
+                const response = await fetch("/api/review-factory/llm/status", { headers });
+                if (!response.ok) throw new Error(`http_${response.status}`);
+                const data = await response.json();
+                const state = data.state || "unknown";
+                const canMutate = Boolean(reviewFactoryToken);
+                if (state === "not configured") {
+                    statusEl.textContent = "Not configured \u2014 deterministic review runs normally. (Optional; enable only if you have a review model.)";
+                    statusEl.className = "text-xs text-slate-400 mt-1";
+                } else if (state === "active") {
+                    statusEl.textContent = "Active \u2014 deep reviews run on Ollama; findings become repair work orders.";
+                    statusEl.className = "text-xs text-emerald-300 mt-1";
+                } else if (state === "skipped") {
+                    statusEl.textContent = `Skipped \u2014 ${data.detail || "stage unavailable"}. Deterministic review runs normally.`;
+                    statusEl.className = "text-xs text-amber-300 mt-1";
+                } else {
+                    statusEl.textContent = "Status unavailable.";
+                    statusEl.className = "text-xs text-slate-400 mt-1";
+                }
+                setToggle(Boolean(data.enabled), canMutate);
+            } catch (error) {
+                statusEl.textContent = "Status unavailable.";
+                statusEl.className = "text-xs text-slate-400 mt-1";
+                setToggle(false, false);
+            }
+        }
+
+        async function toggleRF_LLM() {
+            const toggleBtn = document.getElementById("rf-llm-toggle");
+            if (!toggleBtn || toggleBtn.disabled) return;
+            const target = toggleBtn.dataset.enabled !== "true";
+            toggleBtn.disabled = true;
+            try {
+                const response = await fetch("/api/review-factory/llm/toggle", {
+                    method: "POST",
+                    headers: { ...reviewFactoryHeaders(), "Content-Type": "application/json" },
+                    body: JSON.stringify({ enabled: target }),
+                });
+                if (!response.ok) throw new Error(`http_${response.status}`);
+                await loadReviewFactory();
+            } catch (error) {
+                const statusEl = document.getElementById("rf-llm-status");
+                if (statusEl) {
+                    statusEl.textContent = `Toggle failed: ${String(error?.message || error)}`;
+                    statusEl.className = "text-xs text-rose-300 mt-1";
+                }
+                toggleBtn.disabled = false;
+            }
         }
 
         async function showRFJob(jobId) {
