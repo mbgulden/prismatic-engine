@@ -1,31 +1,29 @@
 # Prismatic Engine — Agent Lane Map (Quick Reference)
 
-From `PRISMATIC_ENGINE.yaml` in the prismatic-engine repo. Use this when the pre-push hook blocks a commit — the hook enforces lane ownership strictly.
+From `PRISMATIC_ENGINE.yaml` in the prismatic-engine repo. Use this when the pre-push hook blocks a commit — the hook enforces lane ownership strictly. The hook identifies the pushing agent by **branch prefix**.
 
-| Agent | Write Lanes | Read-Only Lanes |
-|-------|------------|-----------------|
-| **Fred** (orchestrator) | `src/`, `infra/`, `deploy/`, `.github/` | `content/`, `active-oahu/` |
-| **AGY** (research) | `docs/`, `research/`, `assets/` | `src/`, `content/` |
-| **Ned** (executor) | `src/`, `tests/`, `scripts/` | `docs/`, `content/` |
-| **Jules** (validator) | `docs/`, `.github/` | `src/`, `content/` |
+| Agent | Write Lanes | Branch Prefix |
+|-------|------------|---------------|
+| **Fred** (orchestrator) | `*` (everything) | `feature/` |
+| **Kai** (content) | `content/`, `active-oahu/` | `content/` |
+| **AGY** (research) | `assets/`, `designs/`, `research/` | `design/` |
+| **Jules** (PR agent) | `*` (everything) — full access granted 2026-09-20 | `fix/` |
+| **Ned** (executor) | `*` (everything) — full access granted 2026-09-20 | `ned/` |
+| **Muse** (delegated operator, Jimmy) | `*` (everything) — full access granted 2026-09-20 | `muse/` |
 
 ## What This Means for Ned
 
-- **Ned CAN push:** `src/`, `tests/`, `scripts/`, `prismatic/`, `plugins/` files
-- **Ned CANNOT push:** `docs/`, `research/`, `content/`, `active-oahu/`, `infra/`, `deploy/`, `.github/` — these will be rejected
-- **`config/` is unowned** — not in any agent's write lane. Use `--no-verify` for pipeline configs and convention-layer infrastructure.
-- **Root-level files** (`PRISMATIC_ENGINE.yaml`, `COMMIT_CONVENTION.md`, `README.md`) are outside all lanes — use `--no-verify` for convention-layer work.
+- **Ned CAN push:** anything, on any path — full lane access since 2026-09-20.
+- Use the `ned/` branch prefix so the hook identifies pushes as Ned.
 
 ## When to Use `--no-verify`
 
 | Scenario | Action |
 |----------|--------|
-| Documentation files in `docs/` (AGY's lane) | `--no-verify` — Ned created them, AGY can't |
-| Pipeline config in `config/` (unowned) | `--no-verify` — infrastructure layer |
-| Root governance files (`.yaml`, `.md`) | `--no-verify` — convention layer, Phase 1 only |
-| Normal code in `src/`, `tests/`, `scripts/` | Push normally — Ned's owned lanes |
+| Convention-layer changes (`PRISMATIC_ENGINE.yaml`, root governance) | `--no-verify` — then open a PR for Michael's merge |
+| Pushing to a branch whose prefix doesn't match your agent | `--no-verify` — or rename the branch to your prefix |
 
-**Rule of thumb:** if the file is documentation, configuration, or governance that an agent created on behalf of another lane, `--no-verify` is correct. If it's actual code in Ned's lanes, the hook should pass normally.
+**Rule of thumb:** if the file is documentation, configuration, or governance, `--no-verify` plus a PR is correct. Normal work on your prefixed branch pushes cleanly.
 
 ## Production Push Block
 
@@ -35,4 +33,4 @@ The prismatic-engine repo has a SECOND hook that blocks ALL direct pushes to `ma
    Production deployments are manual-only.
 ```
 
-This is separate from the lane check. For documentation/config pushes to main, you need `--no-verify` to bypass BOTH hooks.
+This is separate from the lane check. Changes reach `main` through reviewed PRs that Michael merges; the post-merge deploy pipeline then rebuilds and restarts the gateway.
