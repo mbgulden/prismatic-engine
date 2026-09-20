@@ -257,7 +257,11 @@ class MergeExecutor:
                 final_manifest_state=manifest.state.value,
             )
         finally:
-            acq_token = lock_info.get("acquisition_token", "") if isinstance(lock_info, dict) else ""
+            acq_token = (
+                lock_info.get("acquisition_token", "")
+                if isinstance(lock_info, dict)
+                else ""
+            )
             self.mf_store.release_lock(
                 repository=job.repository,
                 target="main",
