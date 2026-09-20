@@ -744,12 +744,10 @@ async def get_agents() -> dict[str, Any]:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     """Watchdog health check — returns uptime and system status."""
-    uptime = time.time() - _started_at
-    return {
-        "status": "ok",
-        "uptime_seconds": round(uptime, 1),
-        "started_at": _started_at,
-    }
+    # ROLLBACK DRILL (drill/rollback-test-2026-09-20): deliberately fail the
+    # live post-merge deploy health gate so auto-rollback can be proven.
+    # CI does not cover this route. Revert this commit to restore /health.
+    raise RuntimeError("rollback-drill: deliberate /health failure")
 
 
 @app.get("/api/harnesses")
