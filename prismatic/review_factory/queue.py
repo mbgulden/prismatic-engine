@@ -239,12 +239,17 @@ class ReviewQueue:
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
 
-        if getattr(receipt, "review_job_id", "") and receipt.review_job_id != review_job_id:
+        if (
+            getattr(receipt, "review_job_id", "")
+            and receipt.review_job_id != review_job_id
+        ):
             raise ValueError(
                 f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) does not match target job ({review_job_id})"
             )
 
-        cand = getattr(receipt, "candidate_commit", "") or getattr(receipt, "candidate_sha", "")
+        cand = getattr(receipt, "candidate_commit", "") or getattr(
+            receipt, "candidate_sha", ""
+        )
         if cand and job.candidate_commit and cand != job.candidate_commit:
             raise ValueError(
                 f"Cross-job candidate commit mismatch: receipt candidate ({cand}) != job candidate ({job.candidate_commit})"
@@ -253,10 +258,14 @@ class ReviewQueue:
         if job.lease_expires_at:
             exp = _parse_iso(job.lease_expires_at)
             if exp and exp < _utcnow():
-                raise ValueError(f"Lease for job {review_job_id} expired at {job.lease_expires_at}")
+                raise ValueError(
+                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
+                )
 
         if worker_id and job.lease_owner and worker_id != job.lease_owner:
-            raise ValueError(f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}")
+            raise ValueError(
+                f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}"
+            )
 
         self.db.insert_receipt(receipt)
         updated = self.db.update_review_job_state(
@@ -305,7 +314,9 @@ class ReviewQueue:
         job = jobs[0]
 
         # Enforce reviewer independence: producer cannot review their own job
-        if job.completed_work_id and job.completed_work_id.startswith(f"{reviewer_id}-"):
+        if job.completed_work_id and job.completed_work_id.startswith(
+            f"{reviewer_id}-"
+        ):
             return None
 
         # Tier 3 is human-only — don't auto-lease
@@ -346,12 +357,17 @@ class ReviewQueue:
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
 
-        if getattr(decision, "review_job_id", "") and decision.review_job_id != review_job_id:
+        if (
+            getattr(decision, "review_job_id", "")
+            and decision.review_job_id != review_job_id
+        ):
             raise ValueError(
                 f"Cross-job decision mismatch: decision review_job_id ({decision.review_job_id}) does not match target job ({review_job_id})"
             )
 
-        cand = getattr(decision, "candidate_commit", "") or getattr(decision, "candidate_sha", "")
+        cand = getattr(decision, "candidate_commit", "") or getattr(
+            decision, "candidate_sha", ""
+        )
         if cand and job.candidate_commit and cand != job.candidate_commit:
             raise ValueError(
                 f"Cross-job candidate commit mismatch: decision candidate ({cand}) != job candidate ({job.candidate_commit})"
@@ -360,10 +376,14 @@ class ReviewQueue:
         if job.lease_expires_at:
             exp = _parse_iso(job.lease_expires_at)
             if exp and exp < _utcnow():
-                raise ValueError(f"Lease for job {review_job_id} expired at {job.lease_expires_at}")
+                raise ValueError(
+                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
+                )
 
         if reviewer_id and job.lease_owner and reviewer_id != job.lease_owner:
-            raise ValueError(f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer_id}")
+            raise ValueError(
+                f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer_id}"
+            )
 
         # Store the decision (idempotent via idempotency_key)
         self.db.insert_decision(decision)
@@ -545,13 +565,16 @@ class ReviewQueue:
             lease_expires_at="",
         )
 
-    def dispatch_repair_task(self, review_job_id: str, failure_reason: str = "") -> Optional[str]:
+    def dispatch_repair_task(
+        self, review_job_id: str, failure_reason: str = ""
+    ) -> Optional[str]:
         """Submit a high-priority self-healing repair task to task_admission outbox."""
         job = self.db.get_review_job(review_job_id)
         if not job:
             return None
         try:
             from prismatic.task_admission import submit_task
+
             repair_title = f"REPAIR: Auto-remediate defect for {job.task_id}"
             repair_desc = f"Review Factory detected defect in candidate {job.candidate_commit[:8]}:\n{failure_reason}"
             task_id = submit_task(
@@ -560,10 +583,14 @@ class ReviewQueue:
                 repository=job.repository,
                 priority="HIGH",
             )
-            logger.info("Auto-repair task submitted for job %s: %s", review_job_id, task_id)
+            logger.info(
+                "Auto-repair task submitted for job %s: %s", review_job_id, task_id
+            )
             return task_id
         except Exception as exc:
-            logger.warning("Auto-repair task dispatch warning for %s: %s", review_job_id, exc)
+            logger.warning(
+                "Auto-repair task dispatch warning for %s: %s", review_job_id, exc
+            )
             return None
 
     # ── Janitor ──────────────────────────────────────────────────────
