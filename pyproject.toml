@@ -33,10 +33,7 @@ dependencies = [
     "packaging>=23.0",
     "pytest>=8.0",
     "pyyaml>=6.0",
-    "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@main",
-    "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@main",
     "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@main",
-    "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@main",
     "tomli>=2.0; python_version < '3.11'",
 ]
 
