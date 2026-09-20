@@ -7,10 +7,10 @@ Discovers, normalizes, and caches agent nodes dynamically across:
 2. Dynamic agent registry (~/.antigravity/agents/dynamic_registry.json)
 3. Active SwarmLock leases (real-time concurrency telemetry)
 4. Tailscale mesh peers (multi-machine compute nodes)
-5. Generic sovereign archetype fallbacks (when zero host profiles exist)
+5. Canonical fleet seed (the six product agents, enriched by the sources above)
 
 Enforces:
-- Zero compile-time coupling to hardcoded personal agent identities.
+- Environment sources enrich the canonical fleet rather than replacing it.
 - Thread-safe TTL in-memory caching with explicit invalidation.
 - Automatic extraction of agent name, role, model, and capabilities from profile metadata.
 """
@@ -166,6 +166,10 @@ class AgentDiscoveryService:
         """Aggregate agent metadata across all available environment sources."""
         fleet: dict[str, AgentProfile] = {}
 
+        # 0. Seed the canonical product fleet so it is always represented;
+        #    environment sources below enrich (never replace) these entries.
+        cls._seed_canonical_fleet(fleet)
+
         # 1. Discover local Hermes/Prismatic profiles
         cls._discover_filesystem_profiles(fleet)
 
@@ -177,10 +181,6 @@ class AgentDiscoveryService:
 
         # 4. Discover Tailscale mesh peers
         cls._discover_mesh_peers(fleet)
-
-        # 5. Provide fallback generic roles if no profiles were found
-        if not fleet:
-            cls._populate_fallback_fleet(fleet)
 
         return fleet
 
@@ -391,72 +391,90 @@ class AgentDiscoveryService:
             pass
 
     @classmethod
-    def _populate_fallback_fleet(cls, fleet: dict[str, AgentProfile]) -> None:
-        """Provide generic, sovereign fallback agents when no local profiles exist."""
-        fallbacks = [
+    def _seed_canonical_fleet(cls, fleet: dict[str, AgentProfile]) -> None:
+        """Seed the six canonical product agents so discovery always represents them.
+
+        Filesystem profiles, the dynamic registry, SwarmLock leases, and mesh
+        peers merge into these entries (see the per-source merge logic above);
+        the seed guarantees the fleet is never empty or missing its core agents
+        in environments without local profiles.
+        """
+        canonical = [
             AgentProfile(
-                agent_id="orchestrator",
-                name="Fleet Orchestrator",
-                role="Topological Dispatch & Lane Governance",
+                agent_id="agy",
+                name="AGY",
+                role="Vision & Research CLI Specialist",
+                host="local",
+                active_model="gemini-2.5-pro",
+                model_provider="Google DeepMind",
+                capabilities=["research", "code_execution", "tool_calling"],
+                status="idle",
+                icon="⚡",
+                source="Canonical Fleet Seed",
+            ),
+            AgentProfile(
+                agent_id="hermes",
+                name="Hermes",
+                role="Hermes Agent Runtime & Orchestration",
+                host="local",
+                active_model="gemini-3.5-flash-high",
+                model_provider="local",
+                capabilities=["one-shot", "tools", "multi-turn", "mcp", "memory"],
+                status="idle",
+                icon="🤖",
+                source="Canonical Fleet Seed",
+            ),
+            AgentProfile(
+                agent_id="kai",
+                name="Kai",
+                role="Tourism Orchestrator & Config Coordinator",
                 host="local",
                 active_model="auto",
-                model_provider="Local Kernel",
-                capabilities=["topological_dispatch", "lane_governance", "multi_agent_coordination"],
-                status="online",
+                model_provider="local",
+                capabilities=["frontend", "css", "ui", "tailwind"],
+                status="idle",
+                icon="🎨",
+                source="Canonical Fleet Seed",
+            ),
+            AgentProfile(
+                agent_id="fred",
+                name="Fred",
+                role="Staging Governor & Compliance Watcher",
+                host="local",
+                active_model="auto",
+                model_provider="local",
+                capabilities=["coordinator", "dispatch", "swarm"],
+                status="idle",
                 icon="👑",
-                source="Sovereign Kernel Fallback",
+                source="Canonical Fleet Seed",
             ),
             AgentProfile(
-                agent_id="architect",
-                name="Systems Architect",
-                role="Domain Architecture & API Design",
+                agent_id="george",
+                name="George",
+                role="Review & Architecture Auditor",
                 host="local",
                 active_model="auto",
-                model_provider="Local Kernel",
-                capabilities=["api_design", "database_migrations", "code_authoring"],
-                status="idle",
-                icon="⚙️",
-                source="Sovereign Kernel Fallback",
-            ),
-            AgentProfile(
-                agent_id="builder",
-                name="Implementation Specialist",
-                role="Code Generation & Component Assembly",
-                host="local",
-                active_model="auto",
-                model_provider="Local Kernel",
-                capabilities=["code_authoring", "ast_refactor", "component_compilation"],
-                status="idle",
-                icon="🛠️",
-                source="Sovereign Kernel Fallback",
-            ),
-            AgentProfile(
-                agent_id="reviewer",
-                name="Quality & Security Sentinel",
-                role="AST Anti-Weakening & Peer Review",
-                host="local",
-                active_model="auto",
-                model_provider="Local Kernel",
-                capabilities=["invariant_audit", "pr_handoff", "exact_head_verification"],
+                model_provider="local",
+                capabilities=["review", "architecture", "audit"],
                 status="idle",
                 icon="🛡️",
-                source="Sovereign Kernel Fallback",
+                source="Canonical Fleet Seed",
             ),
             AgentProfile(
-                agent_id="deployer",
-                name="Release & Edge Engineer",
-                role="Packaging & Cloudflare Deployment",
+                agent_id="autobot",
+                name="Autobot",
+                role="Ingestion & Automation Worker",
                 host="local",
                 active_model="auto",
-                model_provider="Local Kernel",
-                capabilities=["wheel_packaging", "edge_deployment", "clean_room_testing"],
+                model_provider="local",
+                capabilities=["ingestion", "automation", "fast"],
                 status="idle",
-                icon="🚀",
-                source="Sovereign Kernel Fallback",
+                icon="🤖",
+                source="Canonical Fleet Seed",
             ),
         ]
-        for fb in fallbacks:
-            fleet[fb.agent_id] = fb
+        for agent in canonical:
+            fleet.setdefault(agent.agent_id, agent)
 
     @staticmethod
     def _icon_for_agent(agent_id: str) -> str:

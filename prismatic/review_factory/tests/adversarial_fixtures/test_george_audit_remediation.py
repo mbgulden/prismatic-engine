@@ -23,6 +23,7 @@ def test_cross_job_receipt_mismatch_rejected(tmp_path):
         base_commit="base1",
         candidate_commit="cand1",
     )
+    queue.lease_for_verification(worker_id="verifier-1")
 
     # Receipt for job-2 attempt on job-1
     wrong_receipt = VerificationReceipt(

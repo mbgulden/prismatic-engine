@@ -33,7 +33,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator, Optional
 
@@ -189,6 +189,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_consumed ON merge_authorizations(consumed_at
 -- §5.5: repair_packets
 CREATE TABLE IF NOT EXISTS repair_packets (
     packet_id TEXT PRIMARY KEY,
+    review_job_id TEXT NOT NULL DEFAULT '',
     candidate_tree TEXT NOT NULL DEFAULT '',
     findings_json TEXT NOT NULL DEFAULT '[]',
     producer_id TEXT NOT NULL DEFAULT '',
@@ -247,10 +248,17 @@ class ReviewFactoryDB:
         return self._conn
 
     @contextmanager
-    def transaction(self) -> Generator[sqlite3.Cursor, None, None]:
-        """Context manager for an atomic transaction."""
+    def transaction(
+        self, *, immediate: bool = False
+    ) -> Generator[sqlite3.Cursor, None, None]:
+        """Context manager for an atomic transaction.
+
+        ``immediate=True`` acquires SQLite's write reservation before any read;
+        use it for read-check-write authority decisions that must serialize
+        across independent connections.
+        """
         cur = self.conn.cursor()
-        cur.execute("BEGIN")
+        cur.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         try:
             yield cur
             cur.execute("COMMIT")
@@ -268,6 +276,18 @@ class ReviewFactoryDB:
     def ensure_tables(self) -> None:
         """Create all tables if they don't exist.  Idempotent."""
         self.conn.executescript(_CREATE_TABLES)
+        # Migration: repair_packets.review_job_id was dropped by an
+        # intermediate schema; restore it on databases created without it.
+        cols = [
+            r["name"] for r in self.conn.execute("PRAGMA table_info(repair_packets)")
+        ]
+        if "review_job_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE repair_packets ADD COLUMN review_job_id TEXT NOT NULL DEFAULT ''"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
+        )
         # Record schema version if not already present
         cur = self.conn.execute(
             "SELECT version FROM rf_schema_version ORDER BY version DESC LIMIT 1"
@@ -567,6 +587,178 @@ class ReviewFactoryDB:
             )
             return cur.rowcount > 0
 
+    def claim_authorization_for_merge(
+        self,
+        authorization_id: str,
+        *,
+        review_job_id: str,
+        repository: str,
+        pr_head_commit: str,
+        pr_base_commit: str,
+        candidate_tree: str,
+        expected_merge_tree: str,
+        policy_version: str,
+        now: datetime | None = None,
+    ) -> MergeAuthorization | None:
+        """Atomically consume exact authority and transition the job to merging."""
+        claim_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        claim_time_iso = claim_time.isoformat()
+
+        with self.transaction(immediate=True) as cur:
+            cur.execute(
+                """SELECT * FROM merge_authorizations
+                       WHERE authorization_id = ? AND review_job_id = ?
+                         AND repository = ? AND pr_head_commit = ?
+                         AND pr_base_commit = ? AND candidate_tree = ?
+                         AND expected_merge_tree = ? AND policy_version = ?
+                         AND consumed_at = ''""",
+                (
+                    authorization_id,
+                    review_job_id,
+                    repository,
+                    pr_head_commit,
+                    pr_base_commit,
+                    candidate_tree,
+                    expected_merge_tree,
+                    policy_version,
+                ),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            expiry = self._parse_authorization_expiry(row["expires_at"])
+            if expiry is None or expiry <= claim_time:
+                return None
+
+            cur.execute(
+                """SELECT * FROM review_jobs
+                       WHERE review_job_id = ? AND state = ?
+                         AND repository = ? AND candidate_commit = ?
+                         AND base_commit = ? AND candidate_tree = ?
+                         AND policy_version = ?""",
+                (
+                    review_job_id,
+                    ReviewJobState.MERGE_AUTHORIZED.value,
+                    repository,
+                    pr_head_commit,
+                    pr_base_commit,
+                    candidate_tree,
+                    policy_version,
+                ),
+            )
+            if cur.fetchone() is None:
+                return None
+
+            cur.execute(
+                """UPDATE merge_authorizations SET consumed_at = ?
+                       WHERE authorization_id = ? AND consumed_at = ''""",
+                (claim_time_iso, authorization_id),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError("Atomic merge authorization claim lost")
+            cur.execute(
+                """UPDATE review_jobs
+                       SET state = ?, lease_owner = '', lease_expires_at = ''
+                       WHERE review_job_id = ? AND state = ?""",
+                (
+                    ReviewJobState.MERGING.value,
+                    review_job_id,
+                    ReviewJobState.MERGE_AUTHORIZED.value,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError("Atomic merge state transition lost")
+
+            claimed = self._row_to_authorization(row)
+            claimed.consumed_at = claim_time_iso
+            return claimed
+
+    def create_authorization_and_transition(
+        self,
+        auth: MergeAuthorization,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """Atomically create one authorization and enter ``merge_authorized``.
+
+        The job state and immutable candidate bindings are checked under a
+        ``BEGIN IMMEDIATE`` write reservation.  A contention loser changes
+        neither table.
+        """
+        claim_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        expiry = self._parse_authorization_expiry(auth.expires_at)
+        if expiry is None or expiry <= claim_time or auth.consumed_at:
+            return False
+
+        with self.transaction(immediate=True) as cur:
+            cur.execute(
+                "SELECT * FROM review_jobs WHERE review_job_id = ?",
+                (auth.review_job_id,),
+            )
+            job = cur.fetchone()
+            if job is None or job["state"] != ReviewJobState.MERGE_READY.value:
+                return False
+
+            exact_bindings = {
+                "repository": auth.repository,
+                "candidate_commit": auth.pr_head_commit,
+                "base_commit": auth.pr_base_commit,
+                "candidate_tree": auth.candidate_tree,
+                "policy_version": auth.policy_version,
+            }
+            if any(job[field] != value for field, value in exact_bindings.items()):
+                return False
+            if not auth.expected_merge_tree:
+                return False
+
+            cur.execute(
+                """SELECT 1 FROM merge_authorizations
+                       WHERE review_job_id = ? AND consumed_at = '' LIMIT 1""",
+                (auth.review_job_id,),
+            )
+            if cur.fetchone() is not None:
+                return False
+
+            cur.execute(
+                """INSERT INTO merge_authorizations (
+                        authorization_id, review_job_id,
+                        repository, pr_number,
+                        pr_head_commit, pr_base_commit,
+                        candidate_tree, expected_merge_tree,
+                        policy_version, actor, scope,
+                        expires_at, consumed_at, idempotency_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    auth.authorization_id,
+                    auth.review_job_id,
+                    auth.repository,
+                    auth.pr_number,
+                    auth.pr_head_commit,
+                    auth.pr_base_commit,
+                    auth.candidate_tree,
+                    auth.expected_merge_tree,
+                    auth.policy_version,
+                    auth.actor,
+                    auth.scope,
+                    auth.expires_at,
+                    auth.consumed_at,
+                    auth.idempotency_key,
+                ),
+            )
+            cur.execute(
+                """UPDATE review_jobs
+                       SET state = ?, lease_owner = '', lease_expires_at = ''
+                       WHERE review_job_id = ? AND state = ?""",
+                (
+                    ReviewJobState.MERGE_AUTHORIZED.value,
+                    auth.review_job_id,
+                    ReviewJobState.MERGE_READY.value,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError("Atomic authorization state transition lost")
+        return True
+
     # ── repair_packets CRUD ──────────────────────────────────────────
 
     def insert_repair_packet(self, packet: RepairPacket) -> str:
@@ -574,12 +766,13 @@ class ReviewFactoryDB:
         with self.transaction() as cur:
             cur.execute(
                 """INSERT INTO repair_packets (
-                    packet_id, candidate_tree, findings_json,
+                    packet_id, review_job_id, candidate_tree, findings_json,
                     producer_id, consumed_at, resolution_attempt_n,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     packet.packet_id,
+                    packet.review_job_id,
                     packet.candidate_tree,
                     packet.findings_json,
                     packet.producer_id,
@@ -599,6 +792,80 @@ class ReviewFactoryDB:
             (candidate_tree,),
         )
         return [self._row_to_repair_packet(r) for r in cur.fetchall()]
+
+    def consume_repair_and_requeue_job(
+        self,
+        review_job_id: str,
+        new_candidate_commit: str,
+        new_candidate_tree: str = "",
+        new_changed_paths: Optional[list[str]] = None,
+    ) -> bool:
+        """Atomically consume repair packets, invalidate stale evidence, and re-queue job.
+
+        In a single SQL transaction:
+        1. Verifies job is in REPAIR_REQUIRED state.
+        2. Marks repair_packets for the job/candidate as consumed.
+        3. Deletes/invalidates stale verification_receipts, review_decisions, and unconsumed merge_authorizations for the old candidate.
+        4. Updates review_jobs: candidate_commit, candidate_tree, changed_paths_json,
+           resets state to QUEUED, clears lease fields, resets completed_witnesses to 0.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as cur:
+            cur.execute(
+                "SELECT * FROM review_jobs WHERE review_job_id = ? AND state = ?",
+                (review_job_id, ReviewJobState.REPAIR_REQUIRED.value),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+
+            old_cand_tree = row["candidate_tree"]
+            old_cand_commit = row["candidate_commit"]
+
+            # Consume repair packets bound to review_job_id exactly
+            cur.execute(
+                """UPDATE repair_packets
+                   SET consumed_at = ?, resolution_attempt_n = resolution_attempt_n + 1
+                   WHERE (review_job_id = ? OR (review_job_id = '' AND (candidate_tree = ? OR candidate_tree = ?)))
+                     AND consumed_at = ''""",
+                (now, review_job_id, old_cand_tree, old_cand_commit),
+            )
+
+            # Invalidate stale evidence for old candidate
+            cur.execute(
+                "DELETE FROM review_decisions WHERE review_job_id = ?", (review_job_id,)
+            )
+            cur.execute(
+                "DELETE FROM verification_receipts WHERE review_job_id = ?",
+                (review_job_id,),
+            )
+            cur.execute(
+                "DELETE FROM merge_authorizations WHERE review_job_id = ?",
+                (review_job_id,),
+            )
+
+            cand_tree = new_candidate_tree or new_candidate_commit
+            changed_json = (
+                json.dumps(new_changed_paths)
+                if new_changed_paths is not None
+                else row["changed_paths_json"]
+            )
+
+            cur.execute(
+                """UPDATE review_jobs
+                   SET candidate_commit = ?, candidate_tree = ?, changed_paths_json = ?,
+                       state = ?, lease_owner = '', lease_expires_at = '', completed_witnesses = 0
+                   WHERE review_job_id = ? AND state = ?""",
+                (
+                    new_candidate_commit,
+                    cand_tree,
+                    changed_json,
+                    ReviewJobState.QUEUED.value,
+                    review_job_id,
+                    ReviewJobState.REPAIR_REQUIRED.value,
+                ),
+            )
+            return cur.rowcount > 0
 
     # ── Janitor / recovery ───────────────────────────────────────────
 
@@ -712,6 +979,20 @@ class ReviewFactoryDB:
         )
 
     @staticmethod
+    @staticmethod
+    def _parse_authorization_expiry(value: str) -> Optional[datetime]:
+        """Return canonical aware UTC expiry, or ``None`` for invalid input."""
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
     def _row_to_authorization(row: sqlite3.Row) -> MergeAuthorization:
         return MergeAuthorization(
             authorization_id=row["authorization_id"],
@@ -734,6 +1015,7 @@ class ReviewFactoryDB:
     def _row_to_repair_packet(row: sqlite3.Row) -> RepairPacket:
         return RepairPacket(
             packet_id=row["packet_id"],
+            review_job_id=row["review_job_id"] if "review_job_id" in row.keys() else "",
             candidate_tree=row["candidate_tree"],
             findings_json=row["findings_json"],
             producer_id=row["producer_id"],
