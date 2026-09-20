@@ -42,7 +42,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: python -m pip install ruff
+        # Pinned: the repo is clean under 0.15.20; unpinned installs drift
+        # (0.16.x flags 114 pre-existing findings) and break the gate.
+        run: python -m pip install "ruff==0.15.20"
 
       - name: Run lint
         run: |
