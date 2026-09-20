@@ -12,9 +12,12 @@ never brings down the dispatcher daemon.
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import os
 import sys
+from dataclasses import replace as _dataclass_replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -34,6 +37,45 @@ from prismatic.core.hardware_profiles import (
 )
 
 logger = logging.getLogger("prismatic.loader")
+
+
+# ── generic plugin lifecycle manager (suspend / resume / state) ─────────
+#
+# Suspend/resume state lives under ``$PRISMATIC_HOME/plugin-state/<name>/``,
+# following the repo's PRISMATIC_HOME convention
+# (``Path(os.environ.get("PRISMATIC_HOME") or Path.home())``).
+
+
+def prismatic_home() -> Path:
+    """Return the operator home directory used for plugin runtime state."""
+    return Path(os.environ.get("PRISMATIC_HOME") or Path.home())
+
+
+def plugin_state_file(plugin_name: str, home: Path | None = None) -> Path:
+    """Return the path of the suspend/resume state file for *plugin_name*.
+
+    Layout: ``$PRISMATIC_HOME/plugin-state/<plugin_name>/state.json``.
+    """
+    return (home or prismatic_home()) / "plugin-state" / plugin_name / "state.json"
+
+
+_default_loader: "PluginLoader | None" = None
+
+
+def get_default_plugin_loader() -> "PluginLoader | None":
+    """Return the most recently constructed PluginLoader, if any.
+
+    The gateway dashboard uses this to merge live loader lifecycle
+    status into its plugin endpoints without requiring the loader to
+    be passed through every call layer.
+    """
+    return _default_loader
+
+
+def set_default_plugin_loader(loader: "PluginLoader | None") -> None:
+    """Register *loader* as the process-default PluginLoader."""
+    global _default_loader
+    _default_loader = loader
 
 
 # Known system-level capabilities the PluginLoader recognises. Plugins
@@ -93,6 +135,28 @@ class PluginLoader:
         self.registered_artifact_types: List[Dict[str, Any]] = []
         self.registered_capability_contracts: Dict[str, Dict[str, Any]] = {}
         self.hardware_registry = hardware_registry
+        # ── generic lifecycle manager state ──────────────────────────
+        # enabled_plugins: plugin name -> operator enabled flag. A plugin
+        # that is loaded but disabled still occupies loaded_plugins, but
+        # execute_hook() skips it until enable() is called.
+        self.enabled_plugins: Dict[str, bool] = {}
+        # Validated per-plugin operator config (from attach(config=...) or
+        # context config["plugin_configs"][name]).
+        self.plugin_configs: Dict[str, Any] = {}
+        # Per-plugin load records so enable() can re-load after unload().
+        self._plugin_records: Dict[str, Dict[str, Any]] = {}
+        # Identity-indexed registry entries contributed per plugin, used
+        # to remove them cleanly on unload() / re-attach without
+        # duplicating tools across re-loads.
+        self._plugin_registered_tools: Dict[str, List[Dict[str, Any]]] = {}
+        self._plugin_registered_mcp: Dict[str, List[Dict[str, Any]]] = {}
+        self._plugin_registered_routes: Dict[str, List[Dict[str, Any]]] = {}
+        self._plugin_registered_artifacts: Dict[str, List[Dict[str, Any]]] = {}
+        self._plugin_registered_personas: Dict[str, List[str]] = {}
+        # Last context handed to scan_and_load_plugins — used as the
+        # fallback context for attach() when no explicit context is given.
+        self._last_context: Optional[PluginContext] = None
+        set_default_plugin_loader(self)
 
     # ── public API ─────────────────────────────────────────────────────
 
@@ -101,6 +165,7 @@ class PluginLoader:
         Scan ``$PRISMATIC_HOME/plugins/`` for ``plugin-manifest.yaml``
         files, validate requirements, and dynamically register plugins.
         """
+        self._last_context = context
         if not os.path.exists(self.plugins_dir):
             logger.warning(
                 "Plugin directory does not exist: %s", self.plugins_dir
@@ -139,6 +204,11 @@ class PluginLoader:
         start = _time.monotonic()
         fired_count = 0
         for name, plugin in self.loaded_plugins.items():
+            # Generic lifecycle manager: disabled plugins keep their
+            # instance loaded but are skipped by the hook bus until
+            # enable() is called.
+            if not self.enabled_plugins.get(name, True):
+                continue
             if not hasattr(plugin, hook_name):
                 continue
             try:
@@ -172,6 +242,203 @@ class PluginLoader:
             )
         except Exception:
             pass  # best-effort
+
+    # ── generic plugin lifecycle manager (public API) ──────────────────
+
+    def attach(
+        self,
+        manifest_path: str | Path,
+        config: Dict[str, Any] | None = None,
+        context: PluginContext | None = None,
+    ) -> str:
+        """Load ONE plugin immediately, outside the directory scan.
+
+        Args:
+            manifest_path: Path to the plugin's ``plugin-manifest.yaml``.
+            config: Optional operator config for the plugin. When the
+                manifest declares ``config_schema`` (JSON Schema) the
+                config is validated with ``jsonschema`` and a
+                :class:`PluginValidationError` is raised on failure.
+            context: PluginContext for ``on_init``. Defaults to the
+                context most recently passed to
+                :meth:`scan_and_load_plugins`.
+
+        Returns:
+            The loaded plugin's name.
+
+        Raises:
+            PluginValidationError: On manifest/import/config failure, or
+                when no context is available.
+        """
+        manifest_path = Path(manifest_path)
+        ctx = context or self._last_context
+        if ctx is None:
+            raise PluginValidationError(
+                "attach() requires a PluginContext: pass context= or call "
+                "scan_and_load_plugins() first."
+            )
+        manifest = self._read_manifest(manifest_path)
+        self._validate_manifest(manifest, ctx, manifest_path)
+        return self._instantiate_and_register(manifest, manifest_path, ctx, config=config)
+
+    def enable(self, name: str) -> None:
+        """Enable *name* and resume it with its preserved state.
+
+        If the instance was dropped by :meth:`unload`, it is re-loaded
+        (imported, instantiated, ``on_init`` fired) first. The plugin's
+        ``on_resume(state)`` hook is then called in try/except isolation
+        with the state previously persisted by :meth:`disable`
+        (``{}`` when no state file exists), and the plugin is marked
+        enabled so :meth:`execute_hook` dispatches to it again.
+
+        Raises:
+            PluginValidationError: If *name* is not a known plugin.
+        """
+        record = self._plugin_records.get(name)
+        if record is None:
+            raise PluginValidationError(
+                f"Cannot enable unknown plugin '{name}'."
+            )
+        if name not in self.loaded_plugins:
+            manifest = record["manifest"]
+            self._instantiate_and_register(
+                manifest,
+                record["manifest_path"],
+                record["context"],
+                config=record.get("config"),
+            )
+        plugin = self.loaded_plugins[name]
+
+        state: Dict[str, Any] = {}
+        state_path = plugin_state_file(name)
+        if state_path.exists():
+            try:
+                saved = json.loads(state_path.read_text(encoding="utf-8"))
+                if isinstance(saved, dict) and isinstance(saved.get("state"), dict):
+                    state = saved["state"]
+            except Exception:
+                logger.warning(
+                    "Could not read preserved state for plugin '%s'; "
+                    "resuming with empty state.",
+                    name,
+                    exc_info=True,
+                )
+
+        # Contract order: resume hook first, then mark enabled.
+        try:
+            plugin.on_resume(state)
+        except Exception:
+            logger.error(
+                "Plugin '%s' failed during on_resume", name, exc_info=True
+            )
+        self.enabled_plugins[name] = True
+        logger.info("Enabled plugin '%s'", name)
+
+    def disable(self, name: str) -> Dict[str, Any]:
+        """Disable *name*, preserving its suspend state to disk.
+
+        Calls the plugin's ``on_suspend()`` hook in try/except isolation
+        and persists the returned dict as JSON to
+        ``$PRISMATIC_HOME/plugin-state/<name>/state.json`` in the form
+        ``{"version": 1, "saved_at": <utc iso>, "state": <dict>}``.
+        The plugin stays loaded but :meth:`execute_hook` skips it until
+        :meth:`enable` is called.
+
+        Returns:
+            The persisted payload dict.
+
+        Raises:
+            PluginValidationError: If *name* is not a known plugin.
+        """
+        if name not in self._plugin_records:
+            raise PluginValidationError(
+                f"Cannot disable unknown plugin '{name}'."
+            )
+        plugin = self.loaded_plugins.get(name)
+        state: Dict[str, Any] = {}
+        if plugin is not None:
+            try:
+                result = plugin.on_suspend()
+                if isinstance(result, dict):
+                    state = result
+                else:
+                    logger.warning(
+                        "Plugin '%s' on_suspend() returned non-dict %r; "
+                        "preserving empty state.",
+                        name,
+                        type(result),
+                    )
+            except Exception:
+                logger.error(
+                    "Plugin '%s' failed during on_suspend", name, exc_info=True
+                )
+
+        payload: Dict[str, Any] = {
+            "version": 1,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "state": state,
+        }
+        state_path = plugin_state_file(name)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            serialized = json.dumps(payload, indent=2, sort_keys=True)
+        except (TypeError, ValueError):
+            logger.error(
+                "Plugin '%s' on_suspend() state is not JSON-serializable; "
+                "preserving empty state.",
+                name,
+                exc_info=True,
+            )
+            payload["state"] = {}
+            serialized = json.dumps(payload, indent=2, sort_keys=True)
+        state_path.write_text(serialized, encoding="utf-8")
+
+        self.enabled_plugins[name] = False
+        logger.info("Disabled plugin '%s' (state preserved)", name)
+        return payload
+
+    def unload(self, name: str) -> None:
+        """Unload *name*: disable it (persisting suspend state), then drop
+        the instance from ``loaded_plugins``.
+
+        The state file is left in place so a later :meth:`attach` /
+        :meth:`enable` can resume with the preserved state. The plugin's
+        registered tools, MCP servers, API routes, artifact types, and
+        personas are removed from the loader registries.
+
+        Raises:
+            PluginValidationError: If *name* is not a known plugin.
+        """
+        if name not in self._plugin_records:
+            raise PluginValidationError(
+                f"Cannot unload unknown plugin '{name}'."
+            )
+        self.disable(name)
+        self.loaded_plugins.pop(name, None)
+        self._remove_plugin_registrations(name)
+        logger.info("Unloaded plugin '%s'", name)
+
+    def plugin_status(self, name: str) -> Dict[str, Any]:
+        """Return lifecycle status for *name*.
+
+        ``{"enabled": bool, "loaded": bool, "state_preserved": bool,
+        "version": str}``. Unknown names return a zero-value status
+        (``state_preserved`` still reflects whether a state file exists
+        on disk).
+        """
+        record = self._plugin_records.get(name)
+        return {
+            "enabled": bool(self.enabled_plugins.get(name, False))
+            if record is not None
+            else False,
+            "loaded": name in self.loaded_plugins,
+            "state_preserved": plugin_state_file(name).exists(),
+            "version": str(record.get("version", "")) if record else "",
+        }
+
+    def all_plugin_status(self) -> Dict[str, Dict[str, Any]]:
+        """Return :meth:`plugin_status` for every registered plugin."""
+        return {name: self.plugin_status(name) for name in self._plugin_records}
 
     # ── internal ───────────────────────────────────────────────────────
 
@@ -217,8 +484,23 @@ class PluginLoader:
     def _load_plugin(
         self, manifest_path: Path, context: PluginContext
     ) -> None:
+        manifest_path = Path(manifest_path)
+        manifest = self._read_manifest(manifest_path)
+        self._validate_manifest(manifest, context, manifest_path)
+        config = self._context_plugin_config(context, manifest.get("name"))
+        self._instantiate_and_register(
+            manifest, manifest_path, context, config=config
+        )
+
+    def _read_manifest(self, manifest_path: Path) -> Dict[str, Any]:
+        """Parse a manifest file and check its required fields."""
         with open(manifest_path, "r") as fh:
             manifest = yaml.safe_load(fh)
+
+        if not isinstance(manifest, dict):
+            raise PluginValidationError(
+                f"Manifest is not a mapping: {manifest_path}"
+            )
 
         name = manifest.get("name")
         version = manifest.get("version")
@@ -229,6 +511,18 @@ class PluginLoader:
             raise PluginValidationError(
                 f"Missing required fields in manifest: {manifest_path}"
             )
+        return manifest
+
+    def _validate_manifest(
+        self,
+        manifest: Dict[str, Any],
+        context: PluginContext,
+        manifest_path: Path,
+    ) -> None:
+        """Run pre-import validation: core version, required capabilities,
+        provider constraints, and hardware profiles."""
+        name = manifest.get("name")
+        core_constraint = manifest.get("core_version_constraint")
 
         # 1. Core version validation
         specifier = SpecifierSet(core_constraint)
@@ -330,6 +624,77 @@ class PluginLoader:
                         requested,
                     )
 
+    def _context_plugin_config(
+        self, context: PluginContext, name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return operator config for *name* from the dispatcher config.
+
+        Reads ``context.config["plugin_configs"][name]`` when present;
+        used by the scan path so manifests with ``config_schema`` can be
+        validated without an explicit ``attach(config=...)`` call.
+        """
+        cfg = getattr(context, "config", None) or {}
+        plugin_configs = cfg.get("plugin_configs")
+        if isinstance(plugin_configs, dict):
+            value = plugin_configs.get(name)
+            return value if isinstance(value, dict) else None
+        return None
+
+    def _instantiate_and_register(
+        self,
+        manifest: Dict[str, Any],
+        manifest_path: Path,
+        context: PluginContext,
+        config: Dict[str, Any] | None = None,
+    ) -> str:
+        """Validate operator config, import, instantiate, and register.
+
+        Shared by :meth:`_load_plugin` (scan path), :meth:`attach`, and
+        :meth:`enable` re-loads. Returns the plugin name. Loading a name
+        that was already registered first removes its prior registry
+        entries so tools/personas are never duplicated across re-loads.
+        """
+        name = manifest.get("name")
+        version = manifest.get("version")
+        entry_point = manifest.get("entry_point")
+
+        # 0. Operator config validation (config_schema is optional).
+        schema = manifest.get("config_schema")
+        if schema is not None:
+            if not isinstance(schema, dict):
+                raise PluginValidationError(
+                    f"Plugin '{name}' declares a non-object config_schema."
+                )
+            if config is None:
+                if schema.get("required"):
+                    raise PluginValidationError(
+                        f"Plugin '{name}' requires operator config "
+                        f"(config_schema requires: {schema['required']}) "
+                        f"but none was provided."
+                    )
+            else:
+                try:
+                    import jsonschema
+
+                    jsonschema.validate(instance=config, schema=schema)
+                except ImportError as exc:
+                    raise PluginValidationError(
+                        f"Plugin '{name}' declares config_schema but the "
+                        f"'jsonschema' package is unavailable: {exc}"
+                    ) from exc
+                except Exception as exc:
+                    raise PluginValidationError(
+                        f"Plugin '{name}' config failed config_schema "
+                        f"validation: {exc}"
+                    ) from exc
+
+        if config is not None:
+            self.plugin_configs[name] = config
+
+        # Clean slate for this plugin's registry entries (idempotent
+        # re-attach / enable-after-unload).
+        self._remove_plugin_registrations(name)
+
         # 2. Dynamic import
         module_path, class_name = entry_point.split(":")
         # The plugin module lives at ``<plugin_dir>/<basename>.py`` where
@@ -369,35 +734,60 @@ class PluginLoader:
                 f"Class '{class_name}' must inherit from PrismaticPlugin."
             )
 
-        # 3. Instantiate + fire on_init in isolation
+        # 3. Instantiate + fire on_init in isolation. Operator config is
+        # made visible to the plugin under context config["plugin_configs"].
         plugin_instance = plugin_class()
+        init_context = context
+        if config is not None:
+            merged = dict(context.config or {})
+            existing = merged.get("plugin_configs")
+            plugin_configs = dict(existing) if isinstance(existing, dict) else {}
+            plugin_configs[name] = config
+            merged["plugin_configs"] = plugin_configs
+            init_context = _dataclass_replace(context, config=merged)
         try:
-            plugin_instance.on_init(context)
+            plugin_instance.on_init(init_context)
         except Exception as exc:
             raise PluginValidationError(
                 f"Exception raised during on_init execution: {exc}"
             ) from exc
 
         self.loaded_plugins[name] = plugin_instance
+        self._plugin_records[name] = {
+            "manifest_path": Path(manifest_path),
+            "context": context,
+            "config": config,
+            "manifest": manifest,
+            "version": str(version),
+        }
+        # Manifest opt-in: explicitly false => registered but DISABLED
+        # (hooks skipped until enable()). Default true preserves the
+        # historical scan behaviour.
+        self.enabled_plugins[name] = bool(manifest.get("auto_enable", True))
 
-        # 4. Register personas
+        # 4. Register personas (tracked per plugin for clean unload).
+        persona_ids: List[str] = []
         for persona in manifest.get("personas", []):
             persona_id = persona.get("id")
+            persona_ids.append(persona_id)
             self.registered_personas[persona_id] = persona
             logger.info(
                 "Registered persona '%s' from plugin '%s'",
                 persona_id,
                 name,
             )
+        self._plugin_registered_personas[name] = persona_ids
 
-        # 5. Register tools
+        # 5. Register tools (tracked by identity for clean unload).
+        tools: List[Dict[str, Any]] = []
         try:
-            tools = plugin_instance.register_tools()
+            tools = plugin_instance.register_tools() or []
             self.registered_tools.extend(tools)
         except Exception:
             logger.error(
                 "Plugin '%s' failed to register tools", name, exc_info=True
             )
+        self._plugin_registered_tools[name] = list(tools)
 
         # 6. Register optional discovery/integration surfaces. These are
         # best-effort so old plugins remain compatible and experimental
@@ -408,26 +798,65 @@ class PluginLoader:
                 self.registered_capability_contracts[name] = contract
         except Exception:
             logger.error("Plugin '%s' failed to expose capability contract", name, exc_info=True)
+        mcp_entries: List[Dict[str, Any]] = []
         try:
             for server in plugin_instance.register_mcp_servers():
                 if isinstance(server, dict):
-                    self.registered_mcp_servers.append({"plugin": name, **server})
+                    entry = {"plugin": name, **server}
+                    self.registered_mcp_servers.append(entry)
+                    mcp_entries.append(entry)
         except Exception:
             logger.error("Plugin '%s' failed to register MCP servers", name, exc_info=True)
+        self._plugin_registered_mcp[name] = mcp_entries
+        route_entries: List[Dict[str, Any]] = []
         try:
             for route in plugin_instance.register_api_routes():
                 if isinstance(route, dict):
-                    self.registered_api_routes.append({"plugin": name, **route})
+                    entry = {"plugin": name, **route}
+                    self.registered_api_routes.append(entry)
+                    route_entries.append(entry)
         except Exception:
             logger.error("Plugin '%s' failed to register API routes", name, exc_info=True)
+        self._plugin_registered_routes[name] = route_entries
+        artifact_entries: List[Dict[str, Any]] = []
         try:
             for artifact in plugin_instance.register_artifact_types():
                 if isinstance(artifact, dict):
-                    self.registered_artifact_types.append({"plugin": name, **artifact})
+                    entry = {"plugin": name, **artifact}
+                    self.registered_artifact_types.append(entry)
+                    artifact_entries.append(entry)
         except Exception:
             logger.error("Plugin '%s' failed to register artifact types", name, exc_info=True)
+        self._plugin_registered_artifacts[name] = artifact_entries
 
         logger.info("Successfully loaded plugin '%s' (v%s)", name, version)
+        return name
+
+    def _remove_plugin_registrations(self, name: str) -> None:
+        """Remove registry entries previously contributed by *name*."""
+        for tool in self._plugin_registered_tools.pop(name, []):
+            try:
+                self.registered_tools.remove(tool)
+            except ValueError:
+                pass
+        for entry in self._plugin_registered_mcp.pop(name, []):
+            try:
+                self.registered_mcp_servers.remove(entry)
+            except ValueError:
+                pass
+        for entry in self._plugin_registered_routes.pop(name, []):
+            try:
+                self.registered_api_routes.remove(entry)
+            except ValueError:
+                pass
+        for entry in self._plugin_registered_artifacts.pop(name, []):
+            try:
+                self.registered_artifact_types.remove(entry)
+            except ValueError:
+                pass
+        for persona_id in self._plugin_registered_personas.pop(name, []):
+            self.registered_personas.pop(persona_id, None)
+        self.registered_capability_contracts.pop(name, None)
 
 
 # ── GRO-2228: PWP pipeline hook orchestrator ───────────────────────────────

@@ -246,3 +246,28 @@ class PrismaticPlugin(ABC):
         Default no-op.  See :data:`prismatic.interface.hooks.HOOK_ON_DEPLOY`.
         """
         return
+
+    # ── suspend / resume lifecycle hooks (optional) ─────────────────────
+
+    def on_suspend(self) -> Dict[str, Any]:
+        """
+        Called by :meth:`prismatic.core.registry.PluginLoader.disable`
+        (and ``unload``) before the plugin is detached.
+
+        Return any JSON-serializable state the plugin wants preserved
+        across disable/enable cycles (cursors, counters, caches that can
+        be rebuilt).  The loader persists the returned dict to
+        ``$PRISMATIC_HOME/plugin-state/<name>/state.json``.  Default
+        no-op returns an empty dict.
+        """
+        return {}
+
+    def on_resume(self, state: Dict[str, Any]) -> None:
+        """
+        Called by :meth:`prismatic.core.registry.PluginLoader.enable`
+        after the plugin instance is (re-)loaded.
+
+        *state* is the dict previously returned by :meth:`on_suspend`
+        (``{}`` when no state was preserved).  Default no-op.
+        """
+        return

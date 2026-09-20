@@ -211,6 +211,10 @@ from prismatic.linear_rate_limit import (
 )
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
+from prismatic.core.registry import (
+    get_default_plugin_loader,
+    plugin_state_file as _plugin_state_file,
+)
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 from prismatic.plugin_health import get_plugin_health
 from prismatic.plugin_jobs import store_from_env as plugin_job_store
@@ -834,9 +838,69 @@ async def plugins_governance() -> dict[str, Any]:
                 "endpoints": item.get("endpoints", []),
                 "mcp_servers": item.get("mcp_servers", []),
                 "governance": item["governance"],
+                # Generic lifecycle manager (additive): operator-visible
+                # enable/disable state and suspend-state presence.
+                "enabled": _lifecycle_status_for(item["name"])["enabled"],
+                "state_preserved": _lifecycle_status_for(item["name"])[
+                    "state_preserved"
+                ],
             }
             for item in catalog["plugins"]
         ],
+    }
+
+
+def _lifecycle_status_for(plugin_name: str) -> dict[str, Any]:
+    """Return loader lifecycle status for *plugin_name*.
+
+    Uses the process-default PluginLoader when one has run in this
+    process; otherwise falls back to a disk-based view (state file
+    presence under ``$PRISMATIC_HOME/plugin-state/``) so the dashboard
+    still shows suspend-state left by other processes.
+    """
+    loader = get_default_plugin_loader()
+    if loader is not None:
+        try:
+            return loader.plugin_status(plugin_name)
+        except Exception:
+            pass
+    return {
+        "enabled": False,
+        "loaded": False,
+        "state_preserved": _plugin_state_file(plugin_name).exists(),
+        "version": "",
+    }
+
+
+@app.get("/api/plugins/lifecycle")
+async def plugins_lifecycle() -> dict[str, Any]:
+    """Return per-plugin lifecycle status merged with the plugin catalog.
+
+    Additive operator surface for the generic plugin lifecycle
+    manager: each item carries ``enabled``, ``loaded``,
+    ``state_preserved`` (suspend state file on disk), and ``version``
+    alongside the catalog's manifest metadata.
+    """
+    catalog = plugin_catalog()
+    plugins = []
+    for item in catalog["plugins"]:
+        status = _lifecycle_status_for(item["name"])
+        plugins.append(
+            {
+                "name": item["name"],
+                "version": status["version"] or item.get("version", ""),
+                "status": item["status"],
+                "plugin_type": item["plugin_type"],
+                "enabled": status["enabled"],
+                "loaded": status["loaded"],
+                "state_preserved": status["state_preserved"],
+                "lifecycle": status,
+            }
+        )
+    return {
+        "schema_version": catalog["schema_version"],
+        "count": len(plugins),
+        "plugins": plugins,
     }
 
 
