@@ -115,7 +115,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
     completed_witnesses INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     lease_owner TEXT NOT NULL DEFAULT '',
-    lease_expires_at TEXT NOT NULL DEFAULT ''
+    lease_expires_at TEXT NOT NULL DEFAULT '',
+    manifest_json TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_state ON review_jobs(state);
@@ -285,6 +286,15 @@ class ReviewFactoryDB:
             self.conn.execute(
                 "ALTER TABLE repair_packets ADD COLUMN review_job_id TEXT NOT NULL DEFAULT ''"
             )
+        # Migration: review_jobs.manifest_json persists the pipeline manifest
+        # (REVIEW_REQUIRED after verification) for the review stage.
+        job_cols = [
+            r["name"] for r in self.conn.execute("PRAGMA table_info(review_jobs)")
+        ]
+        if "manifest_json" not in job_cols:
+            self.conn.execute(
+                "ALTER TABLE review_jobs ADD COLUMN manifest_json TEXT NOT NULL DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
         )
@@ -411,6 +421,20 @@ class ReviewFactoryDB:
                     review_job_id,
                     current.value,
                 ),
+            )
+            return cur.rowcount > 0
+
+    def update_job_manifest(self, review_job_id: str, manifest_json: str) -> bool:
+        """Persist the pipeline manifest JSON for a review job.
+
+        Written by the verification stage (REVIEW_REQUIRED manifest) and read
+        by the review stage; Phase 4's merge executor binds the CLEAN manifest
+        from here as well.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "UPDATE review_jobs SET manifest_json = ? WHERE review_job_id = ?",
+                (manifest_json, review_job_id),
             )
             return cur.rowcount > 0
 
@@ -941,6 +965,7 @@ class ReviewFactoryDB:
             created_at=row["created_at"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
+            manifest_json=row["manifest_json"],
         )
 
     @staticmethod

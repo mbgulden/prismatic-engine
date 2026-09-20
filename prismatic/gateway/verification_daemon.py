@@ -32,8 +32,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from prismatic.merge_candidate_manifest import MergeCandidateManifest
-from prismatic.review_factory.models import ReviewJob, ReviewJobState
+from prismatic.merge_candidate_manifest import (
+    MergeCandidateManifest,
+    PromotionState,
+)
+from prismatic.review_factory.models import (
+    ReviewJob,
+    ReviewJobState,
+    VerificationReceipt,
+)
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.reviewer import ReviewerCapability
 from prismatic.review_factory.verifier import VerificationWorker
@@ -218,8 +225,23 @@ class VerificationWorkerDaemon:
             self._record_failure(job, stage="manifest")
             return
         try:
-            receipt, _manifest = self.worker.verify(job, manifest)
+            receipt, updated_manifest = self.worker.verify(job, manifest)
+            if updated_manifest.state is not PromotionState.REVIEW_REQUIRED:
+                # Verification checks failed: the work needs rework, not a
+                # review. The receipt records the failure; route to repair.
+                self._route_verification_failure(job, receipt)
+                return
             self.queue.complete_verification(job_id, receipt, self.worker_id)
+            # Persist the REVIEW_REQUIRED manifest for the review stage (and
+            # Phase 4's merge executor). If this write fails, the review
+            # stage's requeue fallback self-heals by re-verifying.
+            if not self.queue.db.update_job_manifest(
+                job_id, updated_manifest.canonical_json()
+            ):
+                logger.error(
+                    "manifest persist failed for job %s; will requeue at review",
+                    job_id,
+                )
             self._clear_failures(job_id)
             logger.info(
                 "verified job %s -> review_ready (receipt %s)",
@@ -232,6 +254,39 @@ class VerificationWorkerDaemon:
             # consecutive-failure guard bounds poison-job churn.
             logger.error("verification failed for job %s: %s", job_id, exc)
             self._record_failure(job, stage="verify")
+
+    def _route_verification_failure(
+        self, job: ReviewJob, receipt: VerificationReceipt
+    ) -> None:
+        """Send work that failed verification checks to the repair flow."""
+        job_id = job.review_job_id
+        self.queue.db.insert_receipt(receipt)
+        moved = self.queue.db.update_review_job_state(
+            job_id,
+            ReviewJobState.REPAIR_REQUIRED,
+            lease_owner="",
+            lease_expires_at="",
+        )
+        self.queue.db.insert_audit_entry(
+            actor=f"daemon:{self.worker_id}",
+            action="verification_failed",
+            review_job_id=job_id,
+            details={
+                "receipt_id": receipt.receipt_id,
+                "classification": receipt.classification,
+                "moved_to_repair": bool(moved),
+            },
+        )
+        if moved:
+            self.queue.dispatch_repair_task(
+                job_id,
+                failure_reason=(
+                    f"verification checks failed (receipt {receipt.receipt_id}, "
+                    f"classification {receipt.classification})"
+                ),
+            )
+        self._clear_failures(job_id)
+        logger.info("verification failed for job %s -> repair_required", job_id)
 
     # ── Review stage (RF-3) ──────────────────────────────────────────
 
@@ -247,7 +302,15 @@ class VerificationWorkerDaemon:
                 self._record_failure(job, stage="receipt")
                 return
             receipt = receipts[-1]
-            manifest = _manifest_for_job(job)
+            manifest = self._load_review_manifest(job)
+            if manifest is None:
+                # No usable persisted REVIEW_REQUIRED manifest (e.g. job
+                # verified before manifest persistence existed). Send it back
+                # for re-verification rather than reviewing blind.
+                self._requeue_for_reverification(
+                    job, "persisted REVIEW_REQUIRED manifest missing or invalid"
+                )
+                return
             pr_url = self._pr_url_for_job(job)
             decision, _updated_manifest, _repair = self.reviewer.review(
                 job, manifest, receipt, pr_url=pr_url
@@ -268,6 +331,58 @@ class VerificationWorkerDaemon:
         except Exception as exc:
             logger.error("review failed for job %s: %s", job_id, exc)
             self._record_failure(job, stage="review")
+
+    @staticmethod
+    def _load_review_manifest(job: ReviewJob) -> Optional[MergeCandidateManifest]:
+        """Load the persisted REVIEW_REQUIRED manifest for a job.
+
+        Returns None when the stored manifest is missing, unparseable, in
+        the wrong state, or bound to different SHAs than the job.
+        """
+        if not job.manifest_json:
+            return None
+        try:
+            manifest = MergeCandidateManifest.from_json(job.manifest_json)
+        except Exception as exc:
+            logger.warning(
+                "unparseable manifest for job %s: %s", job.review_job_id, exc
+            )
+            return None
+        if manifest.state is not PromotionState.REVIEW_REQUIRED:
+            logger.warning(
+                "manifest for job %s in state %s, expected REVIEW_REQUIRED",
+                job.review_job_id,
+                manifest.state,
+            )
+            return None
+        if (
+            manifest.candidate_sha != (job.candidate_commit or job.candidate_tree)
+            or manifest.base_sha != job.base_commit
+        ):
+            logger.warning(
+                "manifest SHAs do not match job %s", job.review_job_id
+            )
+            return None
+        return manifest
+
+    def _requeue_for_reverification(self, job: ReviewJob, reason: str) -> None:
+        """Send a REVIEW_READY job back to QUEUED for re-verification."""
+        job_id = job.review_job_id
+        self.queue.force_release_lease(job_id, actor=self.reviewer_id)
+        moved = self.queue.db.update_review_job_state(
+            job_id,
+            ReviewJobState.QUEUED,
+            lease_owner="",
+            lease_expires_at="",
+        )
+        self.queue.db.insert_audit_entry(
+            actor=f"daemon:{self.reviewer_id}",
+            action="requeue_for_reverification",
+            review_job_id=job_id,
+            details={"reason": reason, "moved": bool(moved)},
+        )
+        self._clear_failures(job_id)
+        logger.info("requeued job %s for re-verification: %s", job_id, reason)
 
     def _pr_url_for_job(self, job: ReviewJob) -> Optional[str]:
         """Best-effort lookup of the PR URL from the completed-work packet."""
