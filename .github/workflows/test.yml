@@ -21,7 +21,6 @@ on:
     branches:
       - main
       - deploy-fresh
-  workflow_dispatch: {}
 
 # A new push kills the stale run instead of billing both.
 concurrency:
@@ -73,7 +72,7 @@ jobs:
             prismatic/quality/test_smoke.py
 
   review-factory-gate:
-    name: review factory gate (tier A)
+    name: "review factory gate (tier A)"
     # Self-hosted webtop-hermes runner — minutes are free. If the runner is
     # ever offline this job waits; the smoke job above still reports.
     runs-on: [self-hosted, linux, x64]
@@ -95,7 +94,7 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[release]"
 
-      - name: Run review factory gate (tier A: focused verification)
+      - name: "review factory gate (tier A: focused verification)"
         run: python scripts/review_factory_gate.py --base origin/main --tier A
 
       - name: Upload verification logs

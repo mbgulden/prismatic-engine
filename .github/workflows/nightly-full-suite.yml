@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   full-suite:
-    name: review factory gate (tier B)
+    name: "review factory gate (tier B)"
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 120
     steps:
@@ -38,7 +38,7 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -e ".[release]"
 
-      - name: Run review factory gate (tier B: full suite)
+      - name: "review factory gate (tier B: full suite)"
         run: python scripts/review_factory_gate.py --base origin/main --tier B
 
       - name: Upload verification logs
