@@ -47,7 +47,7 @@ def test_double_verdict_idempotent(queue):
         candidate_commit="bbbb",
         candidate_tree="bbbb",
     )
-    queue.complete_verification(job_id, receipt)
+    queue.complete_verification(job_id, receipt, worker_id="v1")
 
     job = queue.lease_for_review("reviewer-1")
     decision = ReviewDecision(
@@ -60,12 +60,12 @@ def test_double_verdict_idempotent(queue):
     )
 
     # Submit once
-    state1 = queue.submit_verdict(job_id, decision)
+    state1 = queue.submit_verdict(job_id, decision, reviewer_id="reviewer-1")
     assert state1 == ReviewJobState.MERGE_READY.value
 
     # Submit again with SAME idempotency key — should be a no-op
-    existing_id = queue.db.insert_decision(decision)
-    assert existing_id == decision.decision_id
+    state2 = queue.submit_verdict(job_id, decision, reviewer_id="reviewer-1")
+    assert state2 == ReviewJobState.MERGE_READY.value
 
     # Job state should still be merge_ready
     job = queue.db.get_review_job(job_id)

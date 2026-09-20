@@ -1253,21 +1253,32 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     The connection stays open until the client disconnects.
     Events are broadcast to all connected clients.
     """
-    # Check WebSocket authentication if explicitly required and tokens are configured
-    ws_auth_env = os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "0")
-    if ws_auth_env in ("1", "true", "TRUE"):
+    # Check WebSocket authentication. Auth is required by default when
+    # PRISMATIC_WS_TOKENS is configured, unless explicitly disabled via
+    # PRISMATIC_WS_AUTH_REQUIRED=0/false.
+    ws_auth_env = os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "").strip().lower()
+    allowed_raw = os.environ.get("PRISMATIC_WS_TOKENS", "").strip()
+    auth_disabled = ws_auth_env in ("0", "false", "no")
+    auth_required = (ws_auth_env in ("1", "true", "yes")) or (
+        bool(allowed_raw) and not auth_disabled
+    )
+    if auth_required:
         auth_hdr = websocket.headers.get("Authorization", "").strip()
         token = ""
+        # Strict: only exact "Bearer <token>" header is accepted.
+        # Query params, Basic scheme, and malformed bearers are rejected.
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr[7:].strip()
-        elif "token" in websocket.query_params:
-            token = websocket.query_params["token"].strip()
+            if not token or any(c.isspace() for c in token):
+                token = ""
 
-        allowed_raw = os.environ.get("PRISMATIC_WS_TOKENS", "").strip()
         if allowed_raw:
             allowed = [t.strip() for t in allowed_raw.split(",") if t.strip()]
             import secrets
-            if not token or not any(secrets.compare_digest(token, t) for t in allowed):
+
+            if not token or not any(
+                secrets.compare_digest(token, t) for t in allowed
+            ):
                 await websocket.accept()
                 await websocket.close(code=1008, reason="Unauthorized")
                 return
@@ -3701,7 +3712,6 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
     the consumer should be draining. Reads from SQLite (durable) rather
     than in-memory ring buffer so the window is wider.
     """
-    import sqlite3
 
     db_path = os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite"
     if not os.path.isabs(db_path):
@@ -3800,15 +3810,40 @@ async def gateway_agents_status() -> dict[str, Any]:
 @app.get("/api/gateway/agents/governance-status")
 async def gateway_agents_governance_status() -> dict[str, Any]:
     """Return no-side-effect fleet governance status for the dashboard."""
-    from prismatic.agent_governance_status import build_agent_governance_status
-    from prismatic.agents.discovery import AgentDiscoveryService
+    from prismatic.agent_governance_status import (
+        DEFAULT_AGENTS,
+        _agent_key,
+        build_agent_governance_status,
+    )
 
     inputs = _dashboard_agent_inputs()
-    discovered_ids = tuple(a.agent_id for a in AgentDiscoveryService.get_agents()[:6])
+    registry = (
+        inputs["registry"] if isinstance(inputs.get("registry"), dict) else {}
+    )
+
+    # Build the agent list from dashboard evidence (governed defaults, then
+    # registry keys, then run-record agent names) instead of live discovery,
+    # so agents with real dashboard inputs are never dropped from the payload.
+    agent_ids: list[str] = []
+    seen: set[str] = set()
+
+    def _add_agent(raw: Any) -> None:
+        key = _agent_key(raw)
+        if key and key not in seen:
+            seen.add(key)
+            agent_ids.append(key)
+
+    for raw in DEFAULT_AGENTS:
+        _add_agent(raw)
+    for raw in registry.keys():
+        _add_agent(raw)
+    for record in inputs["run_records"]:
+        _add_agent(getattr(record, "agent_name", None))
+
     return build_agent_governance_status(
-        agents=discovered_ids or ("orchestrator", "architect"),
+        agents=tuple(agent_ids),
         run_records=inputs["run_records"],
-        registry=inputs["registry"],
+        registry=registry,
     )
 
 
@@ -5299,7 +5334,6 @@ async def get_latest_report() -> Any:
 @app.get("/events/bus-stats")
 async def events_bus_stats() -> dict[str, Any]:
     """SQLite bus durable stats: total events, processed, oldest, newest."""
-    import sqlite3
 
     db_path = os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite"
     if not os.path.isabs(db_path):
@@ -5340,7 +5374,6 @@ async def curator_health() -> dict[str, Any]:
 
     Used by the morning digest generator + ad-hoc health checks.
     """
-    import sqlite3
 
     curator_db = os.environ.get("PRISMATIC_CURATOR_DB")
     if not curator_db or not os.path.exists(curator_db):

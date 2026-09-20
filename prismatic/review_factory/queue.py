@@ -228,45 +228,60 @@ class ReviewQueue:
         self,
         review_job_id: str,
         receipt: VerificationReceipt,
-        worker_id: str = "",
+        worker_id: str,
     ) -> bool:
-        """Mark verification as complete and store the receipt.
-
-        Transitions the job to ``review_ready``.
-        Enforces cross-job isolation and lease fencing.
-        """
+        """Store a receipt only for the exact active verification lease."""
         job = self.db.get_review_job(review_job_id)
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
-
-        if (
-            getattr(receipt, "review_job_id", "")
-            and receipt.review_job_id != review_job_id
-        ):
+        if job.state != ReviewJobState.VERIFYING.value:
             raise ValueError(
-                f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) does not match target job ({review_job_id})"
+                f"Job {review_job_id} is not in verifying state: {job.state}"
             )
 
-        cand = getattr(receipt, "candidate_commit", "") or getattr(
-            receipt, "candidate_sha", ""
-        )
-        if cand and job.candidate_commit and cand != job.candidate_commit:
+        receipt_job_id = (getattr(receipt, "review_job_id", "") or "").strip()
+        if not receipt_job_id:
+            raise ValueError("Review job identity required in receipt")
+        if receipt_job_id != review_job_id:
             raise ValueError(
-                f"Cross-job candidate commit mismatch: receipt candidate ({cand}) != job candidate ({job.candidate_commit})"
+                f"Cross-job receipt mismatch: receipt review_job_id ({receipt_job_id}) does not match target job ({review_job_id})"
             )
 
-        if job.lease_expires_at:
-            exp = _parse_iso(job.lease_expires_at)
-            if exp and exp < _utcnow():
-                raise ValueError(
-                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
-                )
-
-        if worker_id and job.lease_owner and worker_id != job.lease_owner:
+        worker = (worker_id or "").strip()
+        if not worker:
+            raise ValueError("Worker identity required")
+        if not job.lease_owner or worker != job.lease_owner:
             raise ValueError(
-                f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}"
+                f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker}"
+            )
+        if not job.lease_expires_at:
+            raise ValueError(f"Job {review_job_id} has no verification lease expiry")
+        expiry = _parse_iso(job.lease_expires_at)
+        if expiry is None or expiry <= _utcnow():
+            raise ValueError(
+                f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
             )
 
+        candidate_commit = (
+            getattr(receipt, "candidate_commit", "")
+            or getattr(receipt, "candidate_sha", "")
+        ).strip()
+        if not candidate_commit:
+            raise ValueError("Candidate commit required in receipt")
+        if candidate_commit != job.candidate_commit:
+            raise ValueError(
+                f"Cross-job candidate commit mismatch: receipt candidate ({candidate_commit}) != job candidate ({job.candidate_commit})"
+            )
+
+        candidate_tree = (getattr(receipt, "candidate_tree", "") or "").strip()
+        if not candidate_tree:
+            raise ValueError("Candidate tree required in receipt")
+        if candidate_tree != job.candidate_tree:
+            raise ValueError(
+                f"Cross-job candidate tree mismatch: receipt tree ({candidate_tree}) != job tree ({job.candidate_tree})"
+            )
+
+        # All authoritative checks precede the first durable mutation.
         self.db.insert_receipt(receipt)
         updated = self.db.update_review_job_state(
             review_job_id,
@@ -342,59 +357,148 @@ class ReviewQueue:
         self,
         review_job_id: str,
         decision: ReviewDecision,
-        reviewer_id: str = "",
+        reviewer_id: str,
     ) -> str:
-        """Submit a review verdict and transition the job state.
-
-        - ``clean`` → check witnesses, then ``merge_ready``
-        - ``repair_required`` → ``repair_required`` + create repair packet
-        - ``rejected`` → ``rejected``
-
-        Returns the new state value.
-        Enforces cross-job isolation and lease fencing.
-        """
+        """Store a verdict only for the exact active review lease."""
         job = self.db.get_review_job(review_job_id)
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
 
-        if (
-            getattr(decision, "review_job_id", "")
-            and decision.review_job_id != review_job_id
-        ):
+        reviewer = (reviewer_id or "").strip()
+        decision_reviewer = (getattr(decision, "reviewer_id", "") or "").strip()
+        if not reviewer or not decision_reviewer:
+            raise ValueError("Reviewer identity required")
+        if reviewer != decision_reviewer:
             raise ValueError(
-                f"Cross-job decision mismatch: decision review_job_id ({decision.review_job_id}) does not match target job ({review_job_id})"
+                f"Reviewer identity mismatch: decision reviewer is {decision_reviewer}, got {reviewer}"
             )
 
-        cand = getattr(decision, "candidate_commit", "") or getattr(
-            decision, "candidate_sha", ""
+        # Check reviewer independence (distinct from producer)
+        producer = None
+        try:
+            from prismatic.agy_completed_work import AgyCompletedWorkStore
+
+            store = AgyCompletedWorkStore(db_path=self.db.db_path)
+            completed_work = store.get(job.completed_work_id)
+            producer = completed_work.agent
+        except Exception:
+            pass
+
+        if not producer:
+            cw_id = job.completed_work_id.lower().strip()
+            for prefix in ("agy", "ned", "jules"):
+                if cw_id.startswith(f"{prefix}-") or f"-{prefix}-" in cw_id:
+                    producer = prefix
+                    break
+
+        if producer and reviewer.lower().strip() == producer.lower().strip():
+            raise ValueError(
+                f"Reviewer identity reuse: reviewer '{reviewer}' is not independent of producer '{producer}'"
+            )
+
+        decision_job_id = (getattr(decision, "review_job_id", "") or "").strip()
+        if not decision_job_id:
+            raise ValueError("Review job identity required in decision")
+        if decision_job_id != review_job_id:
+            raise ValueError(
+                f"Cross-job decision mismatch: decision review_job_id ({decision_job_id}) does not match target job ({review_job_id})"
+            )
+
+        candidate_commit = (
+            getattr(decision, "candidate_commit", "")
+            or getattr(decision, "candidate_sha", "")
+        ).strip()
+        if not candidate_commit:
+            raise ValueError("Candidate commit required in decision")
+        if candidate_commit != job.candidate_commit:
+            raise ValueError(
+                f"Cross-job candidate commit mismatch: decision candidate ({candidate_commit}) != job candidate ({job.candidate_commit})"
+            )
+
+        candidate_tree = (getattr(decision, "candidate_tree", "") or "").strip()
+        if not candidate_tree:
+            raise ValueError("Candidate tree required in decision")
+        if candidate_tree != job.candidate_tree:
+            raise ValueError(
+                f"Cross-job candidate tree mismatch: decision tree ({candidate_tree}) != job tree ({job.candidate_tree})"
+            )
+
+        receipt_id = (getattr(decision, "receipt_id", "") or "").strip()
+        if not receipt_id:
+            raise ValueError("Receipt identity required in decision")
+        matching_receipt = next(
+            (
+                receipt
+                for receipt in self.db.get_receipts_for_job(review_job_id)
+                if receipt.receipt_id == receipt_id
+            ),
+            None,
         )
-        if cand and job.candidate_commit and cand != job.candidate_commit:
+        if matching_receipt is None:
             raise ValueError(
-                f"Cross-job candidate commit mismatch: decision candidate ({cand}) != job candidate ({job.candidate_commit})"
+                f"Receipt {receipt_id} is not bound to review job {review_job_id}"
+            )
+        if (
+            matching_receipt.candidate_commit != candidate_commit
+            or matching_receipt.candidate_tree != candidate_tree
+        ):
+            raise ValueError("Decision candidate does not match bound receipt")
+
+        # Exact/idempotent reviewer retries are no-ops even after the first
+        # accepted verdict cleared the lease. They must not add witnesses.
+        semantic = (
+            decision.review_job_id,
+            decision.reviewer_id,
+            decision.candidate_commit,
+            decision.candidate_tree,
+            decision.receipt_id,
+            decision.verdict,
+            decision.findings,
+        )
+        for existing in self.db.get_decisions_for_job(review_job_id):
+            existing_semantic = (
+                existing.review_job_id,
+                existing.reviewer_id,
+                existing.candidate_commit,
+                existing.candidate_tree,
+                existing.receipt_id,
+                existing.verdict,
+                existing.findings,
+            )
+            if existing.idempotency_key == decision.idempotency_key:
+                if existing_semantic != semantic:
+                    raise ValueError("Decision idempotency-key collision")
+                return job.state
+            if (
+                existing.reviewer_id == decision.reviewer_id
+                and existing.candidate_tree == decision.candidate_tree
+                and existing.verdict == decision.verdict
+            ):
+                return job.state
+
+        if job.state != ReviewJobState.REVIEWING.value:
+            raise ValueError(
+                f"Job {review_job_id} is not in reviewing state: {job.state}"
+            )
+        if not job.lease_owner or reviewer != job.lease_owner:
+            raise ValueError(
+                f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer}"
+            )
+        if not job.lease_expires_at:
+            raise ValueError(f"Job {review_job_id} has no review lease expiry")
+        expiry = _parse_iso(job.lease_expires_at)
+        if expiry is None or expiry <= _utcnow():
+            raise ValueError(
+                f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
             )
 
-        if job.lease_expires_at:
-            exp = _parse_iso(job.lease_expires_at)
-            if exp and exp < _utcnow():
-                raise ValueError(
-                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
-                )
-
-        if reviewer_id and job.lease_owner and reviewer_id != job.lease_owner:
-            raise ValueError(
-                f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer_id}"
-            )
-
-        # Store the decision (idempotent via idempotency_key)
+        # All authoritative checks precede the first durable mutation.
         self.db.insert_decision(decision)
-
         verdict = ReviewVerdict(decision.verdict)
 
         if verdict == ReviewVerdict.CLEAN:
-            # Check witness requirements
             new_witnesses = self.db.increment_witnesses(review_job_id)
             if new_witnesses >= job.required_witnesses:
-                # All witnesses complete → merge_ready
                 self.db.update_review_job_state(
                     review_job_id,
                     ReviewJobState.MERGE_READY,
@@ -402,25 +506,23 @@ class ReviewQueue:
                     lease_expires_at="",
                 )
                 return ReviewJobState.MERGE_READY.value
-            else:
-                # Need more witnesses → back to review_ready
-                self.db.update_review_job_state(
-                    review_job_id,
-                    ReviewJobState.REVIEW_READY,
-                    lease_owner="",
-                    lease_expires_at="",
-                )
-                return ReviewJobState.REVIEW_READY.value
+            self.db.update_review_job_state(
+                review_job_id,
+                ReviewJobState.REVIEW_READY,
+                lease_owner="",
+                lease_expires_at="",
+            )
+            return ReviewJobState.REVIEW_READY.value
 
-        elif verdict == ReviewVerdict.REPAIR_REQUIRED:
+        if verdict == ReviewVerdict.REPAIR_REQUIRED:
             self.db.update_review_job_state(
                 review_job_id,
                 ReviewJobState.REPAIR_REQUIRED,
                 lease_owner="",
                 lease_expires_at="",
             )
-            # Create a repair packet for the producer
             packet = RepairPacket(
+                review_job_id=review_job_id,
                 candidate_tree=job.candidate_tree,
                 findings_json=decision.findings,
                 producer_id=decision.reviewer_id,
@@ -428,7 +530,7 @@ class ReviewQueue:
             self.db.insert_repair_packet(packet)
             return ReviewJobState.REPAIR_REQUIRED.value
 
-        elif verdict == ReviewVerdict.REJECTED:
+        if verdict == ReviewVerdict.REJECTED:
             self.db.update_review_job_state(
                 review_job_id,
                 ReviewJobState.REJECTED,
@@ -437,8 +539,7 @@ class ReviewQueue:
             )
             return ReviewJobState.REJECTED.value
 
-        else:
-            raise ValueError(f"Unknown verdict: {verdict}")
+        raise ValueError(f"Unknown verdict: {verdict}")
 
     # ── Merge authorization (RF-4 uses this) ─────────────────────────
 
@@ -451,7 +552,7 @@ class ReviewQueue:
         expected_merge_tree: str = "",
         actor: str = "",
         expires_minutes: int = 60,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Create a merge authorization for a merge-ready job.
 
         For Tier 0/1: actor = "standing-policy: tier-N" (auto).
@@ -462,23 +563,51 @@ class ReviewQueue:
         job = self.db.get_review_job(review_job_id)
         if job is None or job.state != ReviewJobState.MERGE_READY.value:
             return None
-
-        tier = job.risk_tier
-        if not actor:
+        if (
+            isinstance(expires_minutes, bool)
+            or not isinstance(expires_minutes, int)
+            or not 1 <= expires_minutes <= 1440
+        ):
             logger.warning(
-                "authorize_merge rejected: explicit actor identity required (no invented standing policy)"
+                "authorize_merge rejected: expires_minutes must be an integer from 1 to 1440"
             )
             return None
 
+        tier = job.risk_tier
+        if not actor or not actor.strip():
+            logger.warning(
+                "authorize_merge rejected: explicit non-whitespace actor identity required"
+            )
+            return None
+        actor = actor.strip()
+
         if tier <= RiskTier.STANDARD:
+            expected_actor = f"standing-policy: tier-{tier}"
+            if actor != expected_actor:
+                logger.warning(
+                    "authorize_merge rejected: tier-%s requires actor %s",
+                    tier,
+                    expected_actor,
+                )
+                return None
             scope = MergeScope.TIER_0_AUTO if tier == 0 else MergeScope.TIER_1_AUTO
         else:
+            if (
+                not actor.startswith("human:")
+                or not actor.removeprefix("human:").strip()
+            ):
+                logger.warning(
+                    "authorize_merge rejected: tier-%s requires human:<identity>",
+                    tier,
+                )
+                return None
             scope = (
                 MergeScope.TIER_2_EXCEPTION
                 if tier == 2
                 else MergeScope.TIER_3_EXCEPTION
             )
 
+        now = _utcnow()
         auth = MergeAuthorization(
             review_job_id=review_job_id,
             repository=job.repository,
@@ -489,23 +618,18 @@ class ReviewQueue:
             expected_merge_tree=expected_merge_tree
             or job.candidate_tree
             or job.candidate_commit,
+            policy_version=job.policy_version,
             actor=actor,
             scope=scope.value,
-            expires_at=(_utcnow() + timedelta(minutes=expires_minutes)).isoformat(),
+            expires_at=(now + timedelta(minutes=expires_minutes)).isoformat(),
             idempotency_key=hashlib.sha256(
-                f"{review_job_id}-{job.candidate_tree}-{_utcnow_iso()}".encode()
+                f"{review_job_id}-{job.candidate_tree}-{now.isoformat()}".encode()
             ).hexdigest(),
         )
 
-        auth_id = self.db.insert_authorization(auth)
-
-        # Transition to merge_authorized
-        self.db.update_review_job_state(
-            review_job_id,
-            ReviewJobState.MERGE_AUTHORIZED,
-            lease_owner="",
-            lease_expires_at="",
-        )
+        if not self.db.create_authorization_and_transition(auth, now=now):
+            return None
+        auth_id = auth.authorization_id
         emit_rf_event(
             "review_factory.authorization_created",
             {
@@ -541,28 +665,15 @@ class ReviewQueue:
     ) -> bool:
         """Re-enqueue a repaired candidate after a repair cycle.
 
-        Consumes outstanding repair packets and transitions the job
-        back to ``queued`` for re-verification.
+        Atomically consumes outstanding repair packets, updates candidate
+        commit/tree/paths, invalidates stale evidence, and transitions the
+        job back to ``queued`` for re-verification in a single SQL transaction.
         """
-        job = self.db.get_review_job(review_job_id)
-        if job is None or job.state != ReviewJobState.REPAIR_REQUIRED.value:
-            return False
-
-        # Consume repair packets
-        packets = self.db.get_unconsumed_repairs(job.candidate_tree)
-        for packet in packets:
-            packet.consume()
-            packet.increment_attempt()
-            # Update in DB (we'd need an update method — for now, mark consumed)
-
-        # Update the job with new candidate info
-        # Note: we need to update candidate fields + re-classify
-        # For now, transition back to queued
-        return self.db.update_review_job_state(
-            review_job_id,
-            ReviewJobState.QUEUED,
-            lease_owner="",
-            lease_expires_at="",
+        return self.db.consume_repair_and_requeue_job(
+            review_job_id=review_job_id,
+            new_candidate_commit=new_candidate_commit,
+            new_candidate_tree=new_candidate_tree,
+            new_changed_paths=new_changed_paths,
         )
 
     def dispatch_repair_task(

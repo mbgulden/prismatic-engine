@@ -31,9 +31,12 @@ def queue(tmp_path):
 
 
 def _enqueue(queue: ReviewQueue, suffix: str) -> str:
-    return enqueue_with_defaults(queue, 
-        completed_work_id=f"cw-{suffix}",
-        task_id=f"TASK-{suffix}",
+    # Sanitize the label: the manifest rejects outer whitespace, but the
+    # suffix here is only a test label, not the worker identity under test.
+    label = (suffix or "").strip() or "empty"
+    return enqueue_with_defaults(queue,
+        completed_work_id=f"cw-{label}",
+        task_id=f"TASK-{label}",
         repository="org/repo",
         base_commit="c" * 40,
         base_tree="d" * 40,

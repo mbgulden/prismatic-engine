@@ -18,14 +18,19 @@ Three integrity invariants (baked in, not bolt-on):
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
+import os
+import posixpath
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 from prismatic.merge_candidate_manifest import (
@@ -114,6 +119,14 @@ class CheckResult:
     passed: bool = True
 
 
+@dataclass(frozen=True)
+class MaterializedArchive:
+    """Exact Git archive extracted into a read-only verification root."""
+
+    path: Path
+    artifact_sha256: str
+
+
 class VerificationWorker:
     """RF-2: Run deterministic verification and produce VerificationEvidence."""
 
@@ -128,10 +141,162 @@ class VerificationWorker:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.test_mode = test_mode
 
+    def _materialize_immutable_archive(
+        self,
+        candidate_commit: str,
+        candidate_tree: str = "",
+    ) -> MaterializedArchive:
+        """Materialize exact Git bytes and bind identity to the archive digest."""
+        sha_pattern = re.compile(r"[0-9a-f]{40}")
+        if not sha_pattern.fullmatch(candidate_commit):
+            raise ValueError(
+                "Candidate commit must be exactly 40 lowercase hex characters"
+            )
+        if not sha_pattern.fullmatch(candidate_tree):
+            raise ValueError(
+                "Candidate tree must be exactly 40 lowercase hex characters"
+            )
+
+        repo = self.repo_path.resolve()
+        if not repo.exists():
+            raise ValueError(f"Repository path does not exist: {repo}")
+
+        def git_text(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout
+
+        def git_bytes(*args: str) -> bytes:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            ).stdout
+
+        resolved_commit = git_text(
+            "rev-parse", f"{candidate_commit}^{{commit}}"
+        ).strip()
+        if resolved_commit != candidate_commit:
+            raise ValueError("Candidate commit did not resolve exactly")
+        resolved_tree = git_text("rev-parse", f"{candidate_commit}^{{tree}}").strip()
+        if resolved_tree != candidate_tree:
+            raise ValueError(
+                f"Candidate tree mismatch: expected {candidate_tree}, got {resolved_tree}"
+            )
+
+        archive_bytes = git_bytes("archive", "--format=tar", candidate_commit)
+        artifact_sha256 = hashlib.sha256(archive_bytes).hexdigest()
+        archive_dir = Path(
+            tempfile.mkdtemp(prefix=f"rf-archive-{artifact_sha256[:12]}-")
+        )
+
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+                for member in archive.getmembers():
+                    member_path = PurePosixPath(member.name)
+                    if (
+                        member_path.is_absolute()
+                        or ".." in member_path.parts
+                        or not member_path.parts
+                    ):
+                        raise ValueError(f"Unsafe archive member: {member.name}")
+                    # A tracked development venv contains an absolute interpreter
+                    # symlink. Its bytes remain covered by artifact_sha256, but it
+                    # is never extracted or used as verification input.
+                    if member_path.parts[0] == ".venv_dev":
+                        continue
+                    if member.islnk():
+                        raise ValueError(f"Hard links are not allowed: {member.name}")
+                    if member.issym():
+                        target = PurePosixPath(member.linkname)
+                        resolved = posixpath.normpath(str(member_path.parent / target))
+                        if (
+                            target.is_absolute()
+                            or resolved == ".."
+                            or resolved.startswith("../")
+                        ):
+                            raise ValueError(f"Unsafe symbolic link: {member.name}")
+                    elif not (member.isfile() or member.isdir()):
+                        raise ValueError(f"Unsupported archive member: {member.name}")
+                    archive.extract(member, path=archive_dir, filter="data")
+
+            for path in sorted(archive_dir.rglob("*"), reverse=True):
+                if path.is_symlink():
+                    continue
+                os.chmod(path, 0o555 if path.is_dir() else 0o444)
+            os.chmod(archive_dir, 0o555)
+            return MaterializedArchive(archive_dir, artifact_sha256)
+        except Exception:
+            os.chmod(archive_dir, 0o755)
+            shutil.rmtree(archive_dir, ignore_errors=True)
+            raise
+
     def verify(
         self,
         job: ReviewJob,
         manifest: MergeCandidateManifest,
+    ) -> tuple[VerificationReceipt, MergeCandidateManifest]:
+        """Materialize once, execute only there, and bind receipt to bytes."""
+        materialized = self._materialize_immutable_archive(
+            job.candidate_commit, job.candidate_tree
+        )
+        mutable_repo_path = self.repo_path
+        self.repo_path = materialized.path
+        try:
+            return self._verify_materialized(
+                job, manifest, materialized.artifact_sha256
+            )
+        finally:
+            self.repo_path = mutable_repo_path
+            self._cleanup_materialized_archive(materialized.path)
+
+    @staticmethod
+    def _cleanup_materialized_archive(path: Path) -> None:
+        for item in path.rglob("*"):
+            if not item.is_symlink():
+                os.chmod(item, 0o755 if item.is_dir() else 0o644)
+        os.chmod(path, 0o755)
+        shutil.rmtree(path)
+
+    def compute_provenance_hash(
+        self,
+        repository: str,
+        commit: str,
+        tree: str,
+        commands: list[str],
+        policy_version: str,
+        exit_codes: dict[str, int],
+        archive_sha256: str,
+        log_hashes: dict[str, str],
+    ) -> str:
+        """Compute content-addressed provenance record bound to repository identity, commit, tree, command manifest, environment policy, exit codes, artifact hashes, and log hashes."""
+        sorted_commands = sorted(commands)
+        sorted_exits = sorted(f"{k}:{v}" for k, v in exit_codes.items())
+        sorted_logs = sorted(f"{k}:{v}" for k, v in log_hashes.items())
+
+        parts = [
+            repository,
+            commit,
+            tree,
+            ",".join(sorted_commands),
+            policy_version,
+            ",".join(sorted_exits),
+            f"sha256:{archive_sha256}",
+            ",".join(sorted_logs),
+        ]
+        raw = "\0".join(parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _verify_materialized(
+        self,
+        job: ReviewJob,
+        manifest: MergeCandidateManifest,
+        artifact_sha256: str,
     ) -> tuple[VerificationReceipt, MergeCandidateManifest]:
         """Run verification and advance the manifest."""
         tier_str = (
@@ -179,10 +344,27 @@ class VerificationWorker:
         updated_manifest = manifest.request_review(evidence_list)
 
         invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
+        archive_identity = f"sha256:{artifact_sha256}"
+        exit_codes_dict = {r.name: r.exit_code for r in results}
+        log_sha_dict = {r.name: r.log_sha256 for r in results}
+        provenance_identity = self.compute_provenance_hash(
+            repository=job.repository,
+            commit=job.candidate_commit,
+            tree=job.candidate_tree,
+            commands=[r.command for r in results],
+            policy_version=job.policy_version
+            if hasattr(job, "policy_version")
+            else "v1",
+            exit_codes=exit_codes_dict,
+            archive_sha256=artifact_sha256,
+            log_hashes=log_sha_dict,
+        )
         receipt = VerificationReceipt(
+            receipt_id=provenance_identity,
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
             candidate_tree=job.candidate_tree or job.candidate_commit,
+            immutable_archive_id=archive_identity,
             commands=json.dumps([r.command for r in results]),
             exit_codes=json.dumps({r.name: r.exit_code for r in results}),
             log_paths=json.dumps({r.name: r.log_path for r in results}),
