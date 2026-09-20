@@ -226,12 +226,29 @@ def _attach_routes(router: Any) -> None:
         principal: Principal = Depends(require_admin_principal),
     ) -> Dict[str, Any]:
         """Authorize a merge-ready job for merge."""
-        actor = principal.identity
         q = _get_queue()
+        job = q.db.get_review_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        # Map the admin principal to the exact domain actor required by the
+        # strict authorization contract. Tier 0/1 use standing policy;
+        # Tier 2/3 require an explicit human identity.
+        tier = job.risk_tier
+        if tier <= 1:
+            actor = f"standing-policy: tier-{tier}"
+        else:
+            actor = f"human:{principal.identity}"
+        expected_merge_tree = body.get("expected_merge_tree", "")
+        if not expected_merge_tree:
+            raise HTTPException(
+                status_code=400,
+                detail="expected_merge_tree is required",
+            )
         auth_id = q.authorize_merge(
             review_job_id=job_id,
             actor=actor,
             expires_minutes=body.get("expires_minutes", 60),
+            expected_merge_tree=expected_merge_tree,
         )
         if auth_id is None:
             raise HTTPException(
@@ -243,6 +260,7 @@ def _attach_routes(router: Any) -> None:
             "authorization_id": auth_id,
             "review_job_id": job_id,
             "actor": actor,
+            "requested_by": principal.identity,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
