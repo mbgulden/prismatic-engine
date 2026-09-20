@@ -15,9 +15,11 @@ ENVIRONMENT VARIABLES
     Optional.  Default team key (e.g. ``"GRO"``) used when no ``team_id``
     is passed to the constructor.
 """
+
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import urllib.request
@@ -33,6 +35,8 @@ _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LinearTaskProvider(TaskProvider):
@@ -82,11 +86,7 @@ class LinearTaskProvider(TaskProvider):
         if data is None:
             return []
 
-        nodes = (
-            data
-            .get("issues", {})
-            .get("nodes", [])
-        )
+        nodes = data.get("issues", {}).get("nodes", [])
         return [self._node_to_issue(n) for n in nodes]
 
     def add_comment(self, issue_id: str, body: str) -> bool:
@@ -102,11 +102,7 @@ class LinearTaskProvider(TaskProvider):
         data = self._graphql_data(query, variables)
         if data is None:
             return False
-        return (
-            data
-            .get("commentCreate", {})
-            .get("success", False)
-        )
+        return data.get("commentCreate", {}).get("success", False)
 
     def set_labels(self, issue_id: str, label_ids: list[str]) -> bool:
         """Replace labels on an issue."""
@@ -121,11 +117,7 @@ class LinearTaskProvider(TaskProvider):
         data = self._graphql_data(query, variables)
         if data is None:
             return False
-        return (
-            data
-            .get("issueUpdate", {})
-            .get("success", False)
-        )
+        return data.get("issueUpdate", {}).get("success", False)
 
     def get_issue(self, issue_id: str) -> Issue | None:
         """Fetch a single issue by its internal ID."""
@@ -210,9 +202,86 @@ class LinearTaskProvider(TaskProvider):
             return None
         return self._node_to_issue(node)
 
-    def get_label_id(
-        self, label_name: str, team_id: str | None = None
-    ) -> str | None:
+    def update_issue_state(
+        self, issue_id: str, state_name: str = "Done"
+    ) -> dict[str, Any]:
+        """Move an issue to a workflow state, looked up by state name.
+
+        State names are team-scoped in Linear, so this first lists the
+        issue's team workflow states and matches ``state_name``
+        case-insensitively — the same logic the Linear skill CLI's
+        ``update-status`` command uses. ``issue_id`` may be a Linear issue
+        UUID or an identifier such as ``"GRO-5105"``.
+
+        Returns ``{"ok": True, "issue": <identifier>, "state": <name>}``
+        on success, or ``{"error": <message>}`` on any failure — including
+        the unconfigured (no ``LINEAR_API_KEY``) case. Transport and API
+        errors never raise; they become ``{"error": ...}`` dicts so
+        callers can record the outcome loudly without breaking their
+        pipeline.
+        """
+        if not self._api_key:
+            logger.warning(
+                "Linear update_issue_state skipped for %s: LINEAR_API_KEY not set",
+                issue_id,
+            )
+            return {"error": "LINEAR_API_KEY not set; transition skipped"}
+
+        states_query = """
+        query IssueTeamStates($id: String!) {
+          issue(id: $id) {
+            identifier
+            team { id states(first: 100) { nodes { id name } } }
+          }
+        }
+        """
+        data = self._graphql_data(states_query, {"id": issue_id})
+        issue = (data or {}).get("issue")
+        if not issue:
+            return {"error": f"Issue not found: {issue_id}"}
+        want = (state_name or "").strip().lower()
+        nodes = issue.get("team", {}).get("states", {}).get("nodes", []) or []
+        match = next(
+            (s for s in nodes if str(s.get("name", "")).strip().lower() == want),
+            None,
+        )
+        if match is None:
+            available = [str(s.get("name", "")) for s in nodes]
+            return {
+                "error": (
+                    f"State '{state_name}' not found for "
+                    f"{issue.get('identifier', issue_id)}. "
+                    f"Available: {available}"
+                )
+            }
+
+        mutation = """
+        mutation IssueUpdateState($id: String!, $stateId: String!) {
+          issueUpdate(id: $id, input: { stateId: $stateId }) {
+            success
+            issue { identifier state { name } url }
+          }
+        }
+        """
+        result = self._graphql_data(mutation, {"id": issue_id, "stateId": match["id"]})
+        payload = (result or {}).get("issueUpdate", {})
+        if not payload.get("success"):
+            return {"error": f"issueUpdate failed for {issue_id}"}
+        node = payload.get("issue") or {}
+        new_state = (node.get("state") or {}).get("name", state_name)
+        logger.info(
+            "Linear issue %s transitioned to %s",
+            node.get("identifier", issue_id),
+            new_state,
+        )
+        return {
+            "ok": True,
+            "issue": node.get("identifier", issue.get("identifier", issue_id)),
+            "state": new_state,
+            "url": node.get("url", ""),
+        }
+
+    def get_label_id(self, label_name: str, team_id: str | None = None) -> str | None:
         """Resolve a label name to its ID, creating it when missing."""
         # NOTE: Linear has no direct "label by name" lookup; list team
         # labels and match client-side.
@@ -239,9 +308,7 @@ class LinearTaskProvider(TaskProvider):
           }
         }
         """
-        created = self._graphql_data(
-            create, {"name": label_name, "teamId": scope}
-        )
+        created = self._graphql_data(create, {"name": label_name, "teamId": scope})
         payload = (created or {}).get("issueLabelCreate", {})
         if payload.get("success"):
             return (payload.get("issueLabel") or {}).get("id")
@@ -328,7 +395,7 @@ class LinearTaskProvider(TaskProvider):
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "Authorization": self._api_key,   # No "Bearer" prefix
+                "Authorization": self._api_key,  # No "Bearer" prefix
             },
             method="POST",
         )
@@ -348,9 +415,7 @@ class LinearTaskProvider(TaskProvider):
 
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:500]
-            print(
-                f"[LinearTaskProvider] HTTP {exc.code}: {body}"
-            )
+            print(f"[LinearTaskProvider] HTTP {exc.code}: {body}")
             return None
 
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
