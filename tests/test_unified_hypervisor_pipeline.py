@@ -143,12 +143,17 @@ def test_unified_action_decorator():
             
             hypervisor = PrismaticHypervisor(journal_db_path=j_db, ledger_db_path=l_db)
 
+            # The proof barrier is fail closed: the target must exist so
+            # verification can run (decision item 5).
+            api_file = Path(tmpdir) / "api.py"
+            api_file.write_text("def endpoint(): return 'ok'\n", encoding="utf-8")
+
             @hypervisor.action(resource_extractor=lambda file_path: f"file:{file_path}", mode="X")
             async def refactor_endpoint(tx, file_path: str):
                 tx.register_step("edit", lambda ctx: ("mutated_result", {}))
                 return "SUCCESS_ENDPOINT"
 
-            res = await refactor_endpoint(str(Path(tmpdir) / "api.py"))
+            res = await refactor_endpoint(str(api_file))
             assert res == "SUCCESS_ENDPOINT"
 
     asyncio.run(_run())

@@ -50,9 +50,11 @@ def test_tier3_barrier_does_not_commit():
         with tempfile.TemporaryDirectory() as tmpdir:
             # ".env" in the path drives the real gate evaluator to TIER_3_BARRIER
             # (structural risk 1.0 -> escalation score ~0.75 >= tier2_max 0.70).
-            # The file does not exist, so SwarmProof verification is skipped.
+            # The file does not exist, so SwarmProof verification is explicitly
+            # skipped via proof policy on_missing=allow; the skip is recorded
+            # in the ledger as PROOF_TARGET_MISSING.
             res = f"file:{tmpdir}/.env"
-            hypervisor = _make_hypervisor(tmpdir)
+            hypervisor = _make_hypervisor(tmpdir, proof_on_missing="allow")
 
             # Isolate the pending-decision store: it defaults to ~/.swarmgate.
             pending_file = Path(tmpdir) / "pending_decisions.json"

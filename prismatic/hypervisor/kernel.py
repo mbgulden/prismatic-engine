@@ -18,6 +18,16 @@ addresses, credentials, or OS-specific locations:
 - Tier-3 barrier decisions queue in ``~/.swarmgate/pending_decisions.json``
   (overridable via the ``swarmgate_pending_file`` constructor argument or the
   ``SWARMGATE_PENDING_FILE`` env var).
+
+Proof policy
+------------
+For ``file:`` resources the SwarmProof verification barrier is fail closed:
+a missing or deleted target fails verification and the transaction cannot
+commit. The ``proof_on_missing`` constructor argument (``"deny"`` default,
+``"allow"`` override) controls this. ``"allow"`` is for legitimate
+create-flows where the transaction itself creates the target; the skip is
+recorded in the ledger as ``PROOF_TARGET_MISSING`` so it stays auditable.
+See docs/proof-policy.md.
 """
 
 from __future__ import annotations
@@ -177,7 +187,18 @@ class PrismaticHypervisor:
         lock_engine: Optional[HierarchyLockEngine] = None,
         mirror_to_gateway: bool = True,
         swarmgate_pending_file: Optional[str | Path] = None,
+        proof_on_missing: str = "deny",
     ):
+        if proof_on_missing not in ("deny", "allow"):
+            raise ValueError(
+                f"proof_on_missing must be 'deny' or 'allow', got {proof_on_missing!r}"
+            )
+        # Fail closed by default: a missing/deleted file: target fails the
+        # SwarmProof verification barrier and blocks the commit. 'allow' is
+        # the explicit per-policy override for legitimate create-flows; the
+        # skip is still recorded in the ledger (PROOF_TARGET_MISSING).
+        # See docs/proof-policy.md.
+        self.proof_on_missing = proof_on_missing
         self.journal = JournalEngine(db_path=journal_db_path)
         self.ledger = StorageEngine(db_path=ledger_db_path)
         if lock_engine is None:
@@ -445,13 +466,62 @@ class PrismaticHypervisor:
             # Step 4: Deterministic Multi-Oracle Verification Barrier (SwarmProof)
             if resource.startswith("file:"):
                 fpath = resource.split("file:", 1)[1]
-                if Path(fpath).exists():
+                target = Path(fpath)
+                target_missing = not target.exists()
+                if target_missing and self.proof_on_missing == "allow":
+                    # Explicit per-policy override for legitimate create-flows
+                    # (e.g. this transaction creates the target). The skip is
+                    # auditable: recorded in the ledger as PROOF_TARGET_MISSING
+                    # with policy=allow.
+                    logger.info(
+                        "Transaction %s: proof target %s is missing; skipping "
+                        "SwarmProof verification per proof policy on_missing=allow",
+                        tx_id,
+                        fpath,
+                    )
+                    self.ledger.append_node(
+                        span_id=span_id,
+                        event_type=EventType.PROOF,
+                        agent_id=agent_id,
+                        payload={
+                            "status": "PROOF_TARGET_MISSING",
+                            "policy": "allow",
+                            "target": fpath,
+                            "tx_id": tx_id,
+                        },
+                        parent_node_ids=[n_root.node_id],
+                    )
+                else:
+                    # Fail closed by default: hand the (possibly missing) target
+                    # to the bridge. A missing/deleted target fails verification
+                    # (the bridge reports a FileNotFoundError diagnostic) and the
+                    # transaction cannot commit. This also covers the TOCTOU
+                    # case: a file deleted between the exists() check above and
+                    # verification fails inside the bridge's own existence check.
                     passed, cert, diags = SwarmproofBridge.verify_and_settle(
-                        target_file=Path(fpath),
+                        target_file=target,
                         tx_id=tx_id,
                         holder=agent_id,
                         run_tests=False,
                     )
+                    if target_missing:
+                        # Name the denied bypass attempt in the audit trail
+                        # before the invariant-failure raise blocks the commit.
+                        self.ledger.append_node(
+                            span_id=span_id,
+                            event_type=EventType.PROOF,
+                            agent_id=agent_id,
+                            payload={
+                                "status": "PROOF_TARGET_MISSING",
+                                "policy": "deny",
+                                "target": fpath,
+                                "tx_id": tx_id,
+                                "diagnostics": [
+                                    f"{d.error_type}: {d.message}" for d in diags
+                                ],
+                            },
+                            parent_node_ids=[n_root.node_id],
+                        )
                     if not passed:
                         raise RuntimeError(
                             f"SwarmProof Invariant Failure: "
