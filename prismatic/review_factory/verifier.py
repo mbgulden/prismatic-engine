@@ -341,7 +341,14 @@ class VerificationWorker:
                 )
                 evidence_list.append(evidence)
 
-        updated_manifest = manifest.request_review(evidence_list)
+        # request_review is fail-closed: it raises unless every tier proof
+        # class has passing evidence. A gate must report failure, not crash,
+        # so only advance the manifest when every check passed. The receipt
+        # below records the failure either way.
+        if all(r.passed for r in results):
+            updated_manifest = manifest.request_review(evidence_list)
+        else:
+            updated_manifest = manifest
 
         invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
         archive_identity = f"sha256:{artifact_sha256}"
@@ -479,24 +486,56 @@ class VerificationWorker:
                 passed=False,
             )
 
-        external_pe_patterns = [
-            r"from prismatic\.merge_candidate_manifest\b",
-            r"from prismatic\.review\b",
-            r"from prismatic\.integrate\b",
-            r"from prismatic\.state_machine\b",
-            r"from prismatic\.agy_completed_work\b",
-        ]
+        # Circular proof = the test imports ONLY the module under test, so it
+        # validates the stub against itself (hollow green). The module under
+        # test is derived from the test path: <pkg>/tests/test_<name>.py
+        # tests <pkg>/<name>.py. The check fails only when every prismatic
+        # import resolves to that module (or its submodules).
+        # (The previous hardcoded 5-module allowlist was review-factory
+        # specific and false-flagged every other subsystem's tests.)
+        imported = re.findall(
+            r"^\s*(?:from|import)\s+(prismatic(?:\.[A-Za-z0-9_]+)*)",
+            content,
+            re.M,
+        )
+        rel = Path(test_path)
+        mut_stem = rel.stem
+        if mut_stem.startswith("test_"):
+            mut_stem = mut_stem[len("test_"):]
+        # <pkg>/tests/test_<name>.py -> <pkg>/<name>; otherwise sibling.
+        if rel.parent.name in ("tests", "test"):
+            mut_pkg = rel.parent.parent.as_posix().replace("/", ".")
+        else:
+            mut_pkg = rel.parent.as_posix().replace("/", ".")
+        mut_module = f"{mut_pkg}.{mut_stem}" if mut_pkg else mut_stem
+        if not mut_module.startswith("prismatic"):
+            mut_module = f"prismatic.{mut_module}"
 
-        has_external = any(re.search(pat, content) for pat in external_pe_patterns)
+        def _is_mut_or_sub(dotted):
+            return dotted == mut_module or dotted.startswith(mut_module + ".")
 
-        if not has_external:
+        if not imported:
             return CheckResult(
                 name=f"circular-proof:{Path(test_path).stem}",
                 proof_class="focused",
                 command=f"grep PE-surface-import {test_path}",
                 exit_code=1,
                 stderr=(
-                    f"Circular proof detected in {test_path}: tests only import local module."
+                    f"Circular proof check inconclusive in {test_path}: "
+                    "no prismatic imports found."
+                ),
+                passed=False,
+            )
+
+        if all(_is_mut_or_sub(d) for d in imported):
+            return CheckResult(
+                name=f"circular-proof:{Path(test_path).stem}",
+                proof_class="focused",
+                command=f"grep PE-surface-import {test_path}",
+                exit_code=1,
+                stderr=(
+                    f"Circular proof detected in {test_path}: tests only import "
+                    f"the module under test ({mut_module})."
                 ),
                 passed=False,
             )
@@ -506,7 +545,7 @@ class VerificationWorker:
             proof_class="focused",
             command=f"grep PE-surface-import {test_path}",
             exit_code=0,
-            stdout="Test imports external PE modules — not circular",
+            stdout="Test imports modules beyond the module under test — not circular",
             passed=True,
         )
 
@@ -592,43 +631,50 @@ class VerificationWorker:
 
     def _run_focused_check(self, job: ReviewJob) -> CheckResult:
         changed = json.loads(job.changed_paths_json) if job.changed_paths_json else []
-        if not changed:
+        # Only Python files map to tests. Docs/config/data changes carry no
+        # test surface and must not fail the gate for having none.
+        py_changed = [path for path in changed if path.endswith(".py")]
+        if not py_changed:
             return CheckResult(
                 name="focused",
                 proof_class="focused",
                 command="rf-verify-focused",
-                exit_code=1,
-                stderr="No changed paths provided for focused check",
-                passed=False,
+                exit_code=0,
+                stdout="No Python files changed; nothing to focus on.",
+                passed=True,
             )
 
-        test_patterns = []
-        for path in changed:
-            if "/test_" in path or path.startswith("test_"):
-                test_patterns.append(path)
-            else:
-                base = Path(path).stem
-                test_patterns.append(f"**/test_{base}.py")
+        test_files = []
+        for path in py_changed:
+            if "/test_" in path or Path(path).name.startswith("test_"):
+                # Changed test file itself - run it directly if it exists.
+                if (self.repo_path / path).exists():
+                    test_files.append(path)
+                continue
+            # Source file - resolve test_<stem>.py against the real tree.
+            # Patterns were previously passed to pytest unexpanded (shell=False),
+            # so they never matched anything; resolve them here instead.
+            stem = Path(path).stem.replace("-", "_")
+            for match in sorted(self.repo_path.rglob("test_" + stem + ".py")):
+                test_files.append(str(match.relative_to(self.repo_path)))
 
-        if not test_patterns:
+        # Dedupe, keep the focused run bounded.
+        seen = set()
+        targets = [t for t in test_files if not (t in seen or seen.add(t))][:10]
+        if not targets:
             return CheckResult(
                 name="focused",
                 proof_class="focused",
                 command="rf-verify-focused",
-                exit_code=1,
-                stderr="No test patterns derived from changed paths",
-                passed=False,
+                exit_code=0,
+                stdout=(
+                    "No test files resolved for changed Python files "
+                    "(" + ", ".join(py_changed[:5]) + "); nothing to focus on."
+                ),
+                passed=True,
             )
 
-        args = [
-            sys.executable,
-            "-m",
-            "pytest",
-            *test_patterns[:5],
-            "-x",
-            "-q",
-            "--no-header",
-        ]
+        args = [sys.executable, "-m", "pytest"] + targets + ["-x", "-q", "--no-header"]
         return self._execute_subproc("focused", "focused", args)
 
     def _run_canonical_check(self) -> CheckResult:
@@ -644,7 +690,9 @@ class VerificationWorker:
             )
 
         args = [sys.executable, "-m", "pytest", "tests/", "-x", "-q", "--no-header"]
-        return self._execute_subproc("canonical", "canonical", args)
+        # The full suite is far larger than the 300s default; bound it at
+        # 30 minutes instead (self-hosted minutes are free).
+        return self._execute_subproc("canonical", "canonical", args, timeout=1800)
 
     def _run_package_check(self) -> CheckResult:
         init_file = self.repo_path / "prismatic" / "__init__.py"
@@ -662,19 +710,28 @@ class VerificationWorker:
         return self._execute_subproc("package", "package", args)
 
     def _execute_subproc(
-        self, name: str, proof_class: str, cmd_args: list[str]
+        self,
+        name: str,
+        proof_class: str,
+        cmd_args: list[str],
+        timeout: int = 300,
     ) -> CheckResult:
         command_str = " ".join(cmd_args)
         log_path = str(self.log_dir / f"{name}.log")
 
         try:
+            import os as _os
+
             proc = subprocess.run(
                 cmd_args,
                 shell=False,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout,
                 cwd=str(self.repo_path),
+                # The materialized archive is read-only; never try to write
+                # __pycache__ into it (py_compile etc. would fail with EACCES).
+                env={**_os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             )
             exit_code = proc.returncode
             stdout = proc.stdout

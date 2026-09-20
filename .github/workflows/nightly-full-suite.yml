@@ -1,0 +1,50 @@
+name: nightly full suite
+
+# Nightly review-factory tier B run (focused + FULL unit suite + package)
+# on the self-hosted webtop-hermes runner, where minutes are free.
+# This replaces the old per-PR 8-job matrix: the full suite is tracked
+# daily instead of billed per push. Non-blocking by design — failures
+# here are reported as an issue signal, not a PR gate.
+
+on:
+  schedule:
+    # 2:00 AM MDT = 08:00 UTC
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-full-suite
+  cancel-in-progress: true
+
+jobs:
+  full-suite:
+    name: review factory gate (tier B)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package and release dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[release]"
+
+      - name: Run review factory gate (tier B: full suite)
+        run: python scripts/review_factory_gate.py --base origin/main --tier B
+
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-full-suite-${{ github.run_id }}
+          path: rf-gate-logs/
+          if-no-files-found: warn
