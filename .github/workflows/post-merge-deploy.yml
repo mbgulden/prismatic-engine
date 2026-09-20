@@ -14,7 +14,14 @@ on:
 
 jobs:
   post-merge-deploy:
-    runs-on: ubuntu-latest
+    # Self-hosted webtop-hermes runner (free minutes; GitHub-hosted
+    # minutes are blocked by the account billing state).
+    # NOTE: on the runner, the curl below reaches localhost:9460 on
+    # webtop-hermes, where the real deploy receiver (pe.deploy.receiver)
+    # listens -- a correctly-signed POST triggers the actual post-merge
+    # deploy pipeline. On GitHub-hosted runners this was a silent
+    # no-op because nothing listened on the runner's localhost.
+    runs-on: [self-hosted, linux, x64]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
