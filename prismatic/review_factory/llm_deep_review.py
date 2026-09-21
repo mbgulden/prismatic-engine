@@ -24,6 +24,8 @@ after that the job goes to a human.
 
 Model names and endpoint are configuration, never hardcoded: Michael
 supplies the exact Ned / George model names and endpoint at enable time.
+Set PRISMATIC_REVIEW_LLM_PROTOCOL=vllm to talk to a vLLM
+OpenAI-compatible endpoint instead of Ollama.
 """
 
 from __future__ import annotations
@@ -50,6 +52,8 @@ _ENV_MODEL_BOUNDED = (
 )
 _ENV_TIMEOUT = "PRISMATIC_REVIEW_LLM_TIMEOUT"
 _ENV_MAX_DIFF = "PRISMATIC_REVIEW_LLM_MAX_DIFF"
+_ENV_PROTOCOL = "PRISMATIC_REVIEW_LLM_PROTOCOL"  # "vllm" | "ollama" (default)
+_ENV_VLLM_KEY = "VLLM_API_KEY"  # fallback VLLM_NED_API_KEY, read by the client
 
 _TOGGLE_FILE = Path.home() / ".prismatic" / "review-factory-llm.json"
 
@@ -97,6 +101,7 @@ class LLMReviewConfig:
 
     enabled: bool = False
     endpoint: str = "http://localhost:11434"
+    protocol: str = "ollama"  # "ollama" (Ollama /api/chat) or "vllm" (OpenAI /v1)
     model_full: str = ""  # Ned-class full-review model (262k ctx)
     model_bounded: str = ""  # George-class bounded-review model (64k ctx)
     timeout_seconds: float = 180.0
@@ -111,8 +116,12 @@ class LLMReviewConfig:
             enabled = _toggle_file_enabled()
         timeout = os.environ.get(_ENV_TIMEOUT, "").strip()
         max_diff = os.environ.get(_ENV_MAX_DIFF, "").strip()
+        protocol = os.environ.get(_ENV_PROTOCOL, "").strip().lower()
+        if protocol not in ("ollama", "vllm"):
+            protocol = "ollama"
         return cls(
             enabled=enabled,
+            protocol=protocol,
             endpoint=os.environ.get(_ENV_ENDPOINT, "").strip()
             or "http://localhost:11434",
             model_full=os.environ.get(_ENV_MODEL_FULL, "").strip(),
@@ -674,10 +683,12 @@ def rereview_budget_remaining(db: Any, job_id: str, max_rereviews: int) -> int:
 
 
 class LLMDeepReviewAdapter:
-    """Runs the optional LLM deep-review stage against Ollama.
+    """Runs the optional LLM deep-review stage against Ollama or vLLM.
 
-    All failure modes return None (stage skipped) so the deterministic
-    pipeline never depends on this stage.
+    Protocol is selected by PRISMATIC_REVIEW_LLM_PROTOCOL ("vllm" selects
+    the OpenAI-compatible vLLM client; anything else keeps the Ollama
+    client). All failure modes return None (stage skipped) so the
+    deterministic pipeline never depends on this stage.
     """
 
     def __init__(self, config: LLMReviewConfig, client: Any = None):
@@ -687,12 +698,22 @@ class LLMDeepReviewAdapter:
     @property
     def client(self) -> Any:
         if self._client is None:
-            from prismatic.providers.ollama import OllamaClient
+            if (self.config.protocol or "ollama").lower() == "vllm":
+                from prismatic.providers.vllm import VLLMClient
 
-            self._client = OllamaClient(
-                base_url=self.config.endpoint,
-                timeout=10.0,
-            )
+                # API key comes from VLLM_API_KEY / VLLM_NED_API_KEY in the
+                # environment (read inside the client); never hardcoded.
+                self._client = VLLMClient(
+                    base_url=self.config.endpoint,
+                    timeout=10.0,
+                )
+            else:
+                from prismatic.providers.ollama import OllamaClient
+
+                self._client = OllamaClient(
+                    base_url=self.config.endpoint,
+                    timeout=10.0,
+                )
         return self._client
 
     # -- gates ----------------------------------------------------------
@@ -709,12 +730,13 @@ class LLMDeepReviewAdapter:
                 False,
                 "no model configured (set PRISMATIC_REVIEW_LLM_MODEL / _BOUNDED)",
             )
+        proto = (self.config.protocol or "ollama").lower()
         try:
             healthy = self.client.check_health()
         except Exception as exc:
-            return False, f"ollama health check raised: {exc}"
+            return False, f"llm health check raised ({proto}): {exc}"
         if not healthy:
-            return False, f"ollama endpoint unreachable: {self.config.endpoint}"
+            return False, f"llm endpoint unreachable ({proto}): {self.config.endpoint}"
         full_ok = bool(self.config.model_full) and self._model_ok(
             self.config.model_full
         )
@@ -724,7 +746,7 @@ class LLMDeepReviewAdapter:
         if not (full_ok or bounded_ok):
             return (
                 False,
-                "configured model not available on the ollama host "
+                f"configured model not available on the {proto} host "
                 f"(full={self.config.model_full or '-'}, "
                 f"bounded={self.config.model_bounded or '-'})",
             )
