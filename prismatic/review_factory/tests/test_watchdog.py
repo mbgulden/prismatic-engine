@@ -10,6 +10,7 @@ Every test asserts a safety property the watchdog claims:
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -369,6 +370,29 @@ def test_halted_audit_row_marks_halted(tmp_path):
     rows = _audit_rows(tmp_path)
     assert rows[-1]["halted"] is True
     assert rows[-1]["state"] == STATE_TRIPPED_HALTED
+
+
+def test_audit_dir_removed_mid_run_self_heals(tmp_path):
+    """Deleting the audit dir mid-run must not drop later signals or verdicts.
+
+    The cached-dir optimization must not wedge: the first emit after the
+    removal retries the mkdir once, re-creates the dir, and still writes
+    its row. Evaluation outcomes are unaffected throughout (fail-closed).
+    (The row written before the deletion is gone with the dir itself —
+    only post-deletion signals are the component's responsibility.)
+    """
+    log = tmp_path / "nested" / "audit.jsonl"
+    dog = Watchdog(_write_policy(tmp_path, enabled=True), audit_log=log)
+    dog.evaluate(_clean_snapshot())
+    assert log.exists()
+    shutil.rmtree(tmp_path / "nested")
+    assert not log.exists()
+    result = dog.evaluate(_clean_snapshot(rollback_rate=0.5))
+    assert result.state == STATE_TRIPPED_MONITOR  # verdict unaffected
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1  # dir re-created; the new row was written, not dropped
+    assert rows[0]["state"] == STATE_TRIPPED_MONITOR
+    assert rows[0]["trips"]  # trip detail intact
 
 
 # ── page payload ─────────────────────────────────────────────────────
