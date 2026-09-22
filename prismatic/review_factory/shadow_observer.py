@@ -37,7 +37,7 @@ from prismatic.review_factory.models import RiskTier
 from prismatic.review_factory.policy import PolicyEngine
 
 SPEC_DIR = Path(__file__).resolve().parent / "spec"
-DEFAULT_POLICY_FILE = SPEC_DIR / "shadow_merge_policy_v2.yaml"
+DEFAULT_POLICY_FILE = SPEC_DIR / "shadow_merge_policy_v3.yaml"
 DEFAULT_SHADOW_LOG = Path(
     os.path.expanduser("~/.prismatic/audit/shadow-decisions.jsonl")
 )
@@ -148,9 +148,12 @@ class ShadowInput:
     changed_files: tuple[str, ...]
     ci_green_self_hosted: bool
     ruff_clean: bool
-    review_verdict: str  # CLEAN | REPAIR | REJECT | ...
+    review_verdict: str  # CLEAN | ADVISORY | REJECT | ...
     merge_conflicts: bool
     branch_protection_satisfied: bool
+    # Advisory (non-blocking) flags, e.g. a completed tier-A failure under
+    # the 2026-09-22 recalibration. Recorded and visible, never blocking.
+    advisory_flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -175,6 +178,9 @@ class ShadowDecision:
     call: str  # "merge" | "skip"
     reasons: tuple[str, ...]
     policy_version: str
+    # Advisory (non-blocking) flags carried through from the input, e.g.
+    # a completed tier-A failure. Visible in the record; never blocking.
+    advisory_flags: tuple[str, ...] = ()
 
     def to_signal(self) -> dict[str, Any]:
         """Render as an agent_signal_stream audit signal (same schema as
@@ -184,6 +190,8 @@ class ShadowDecision:
         summary = f"shadow call for PR #{self.pr_number}: {self.call.upper()}" + (
             f" ({', '.join(failed)} failed)" if failed else " (all gates passed)"
         )
+        if self.advisory_flags:
+            summary += f" [advisory: {', '.join(self.advisory_flags)}]"
         return {
             "agent": "prismatic-shadow-observer",
             "event_type": "decision",
@@ -205,6 +213,7 @@ class ShadowDecision:
                 "bands": self.bands,
                 "call": self.call,
                 "reasons": list(self.reasons),
+                "advisory_flags": list(self.advisory_flags),
                 "policy_version": self.policy_version,
                 "shadow_mode": True,
             },
@@ -263,6 +272,8 @@ def evaluate(
     deterministic gate passes AND the tier is within the policy's
     shadow_merge_max_tier. Jev is not consulted (not built); jev_score
     stays null and bands are recorded for the audit trail only.
+    Advisory flags (e.g. a completed tier-A failure) are carried through
+    to the decision record but never block: they are not gates.
     """
     gate_results = tuple(_run_gate(g, inp, policy) for g in policy.gates)
 
@@ -308,6 +319,7 @@ def evaluate(
         call=call,
         reasons=tuple(reasons),
         policy_version=policy.version,
+        advisory_flags=inp.advisory_flags,
     )
 
 
@@ -377,4 +389,5 @@ def load_input_from_dict(data: dict[str, Any]) -> ShadowInput:
         branch_protection_satisfied=bool(
             data.get("branch_protection_satisfied", False)
         ),
+        advisory_flags=tuple(data.get("advisory_flags", ())),
     )

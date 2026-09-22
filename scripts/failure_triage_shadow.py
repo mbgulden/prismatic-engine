@@ -28,17 +28,34 @@ LOG_EXCERPT_CHARS = 4000
 
 
 def _gh_api(path: str) -> str:
-    return subprocess.run(
-        ["gh", "api", path, "--paginate"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    try:
+        return subprocess.run(
+            ["gh", "api", path, "--paginate"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        # Include gh's stderr so the next failure is diagnosable from logs
+        # instead of a bare CalledProcessError.
+        raise RuntimeError(
+            f"gh api {path} failed (exit {exc.returncode}): "
+            f"{(exc.stderr or '').strip()[:500]}"
+        ) from exc
 
 
-def failed_jobs(repo: str, run_id: str) -> list[dict]:
-    """Fetch failed jobs for a run. Read-only GitHub API calls."""
-    data = json.loads(_gh_api(f"repos/{repo}/actions/runs/{run_id}/jobs"))
+def failed_jobs(repo: str, run_id: str) -> list[dict] | None:
+    """Fetch failed jobs for a run. Read-only GitHub API calls.
+
+    Returns ``None`` when the jobs API itself is unreadable (e.g. the
+    workflow token lacks ``actions:read``) so the caller can degrade to
+    names-only triage instead of crashing.
+    """
+    try:
+        data = json.loads(_gh_api(f"repos/{repo}/actions/runs/{run_id}/jobs"))
+    except RuntimeError as exc:
+        print(f"jobs API unreadable ({exc}); degrading to names-only triage")
+        return None
     jobs: list[dict] = []
     for job in data.get("jobs", []):
         if job.get("conclusion") != "failure":
@@ -52,7 +69,7 @@ def failed_jobs(repo: str, run_id: str) -> list[dict]:
         try:
             logs = _gh_api(f"repos/{repo}/actions/jobs/{job['id']}/logs")
             log_excerpt = logs[-LOG_EXCERPT_CHARS:]
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             pass  # logs unavailable: triage proceeds on names alone
         jobs.append(
             {
@@ -98,14 +115,43 @@ def main() -> int:
         workflow_name, conclusion = "manual", "failure"
 
     jobs = failed_jobs(repo, run_id)
-    print(f"triaging {len(jobs)} failed job(s) from run {run_id} ({workflow_name})")
 
     from prismatic.review_factory.failure_triage import (
+        FailureInput,
         FailureTriage,
         triage_ci_failure,
     )
 
     triager = FailureTriage(audit_log=args.audit_log)
+    if jobs is None:
+        # Degraded path: the jobs API was unreadable, so triage the run by
+        # name only. The workflow still emits its one shadow audit signal
+        # (uploaded as the artifact) instead of crashing.
+        result = triager.triage(
+            FailureInput(
+                failure_id=f"ci:{run_id}:jobs-unavailable",
+                source="ci",
+                error_text=(
+                    "failed-jobs API unreadable for this run; "
+                    "names-only triage (no job detail available)"
+                ),
+                test_name=workflow_name,
+                metadata={
+                    "workflow_name": workflow_name,
+                    "run_id": run_id,
+                    "conclusion": conclusion,
+                    "degraded": True,
+                },
+            )
+        )
+        print(
+            f"  {result.failure_id}: [shadow \u2014 jobs API unavailable, "
+            "no action taken]"
+        )
+        print(f"shadow audit log: {args.audit_log}")
+        return 0
+
+    print(f"triaging {len(jobs)} failed job(s) from run {run_id} ({workflow_name})")
     results = triage_ci_failure(
         workflow_name=workflow_name,
         run_id=run_id,
