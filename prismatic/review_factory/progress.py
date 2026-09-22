@@ -13,6 +13,12 @@ READ-ONLY CONTRACT (do not weaken):
   ``prismatic.review_factory.phase_advancement``; this module only
   formats the returned ``ExitResult.checks`` plus display values read
   from the evidence with the same public helpers.
+- Exception (display-only): the agreement section's v2 *readiness*
+  preview reuses the canonical ``shadow_exit_met_v2`` gate function
+  itself — not a reimplementation — and only to render numbers. It never
+  changes which metric the phase gates use; that is the
+  ``agreement_metric`` policy flag (default "v1"), owned by
+  phase_advancement.
 - Missing evidence files render as zeros; nothing here raises on a fresh
   install.
 
@@ -45,10 +51,18 @@ from prismatic.review_factory.phase_advancement import (
     load_evidence,
 )
 from prismatic.review_factory.shadow_agreement import (
+    ACTUAL_CLOSED_UNMERGED,
+    ACTUAL_MERGED,
+    AGREEMENT_OUTCOME_WINDOW_DAYS,
+    CLASS_PENDING,
     SHADOW_MIN_AGREEMENT,
+    SHADOW_MIN_EFFECTIVE_N,
     SHADOW_MIN_PRS,
     agreement_rate,
     calls_agree,
+    classify_disagreement,
+    decayed_agreement_rate,
+    shadow_exit_met_v2,
 )
 
 LEVEL_NAMES = {
@@ -280,6 +294,106 @@ def _agreement_teaching(records: list[dict[str, Any]]) -> str:
             parts.append(f"#{pr}: Jev said {call}, outcome was {actual}")
     suffix = f" (+{len(disagreements) - 5} more)" if len(disagreements) > 5 else ""
     return "Disagreements: " + "; ".join(parts) + suffix + "."
+
+
+def _observation_windows_open(
+    records: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    window_days: int = AGREEMENT_OUTCOME_WINDOW_DAYS,
+) -> int:
+    """Count decided skip→merged disagreements still inside the outcome window.
+
+    Display-only definition for the v2 readiness line. A window is "open"
+    when the record is a pending skip/merged disagreement with a known
+    ``decided_at`` inside the outcome window. Records with no ``decided_at``
+    are legacy — no outcome will ever arrive for them — so they never hold
+    a window open.
+    """
+    now = now or datetime.now(timezone.utc)
+    open_count = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("actual_outcome") not in (
+            ACTUAL_MERGED,
+            ACTUAL_CLOSED_UNMERGED,
+        ):
+            continue
+        if classify_disagreement(record) != CLASS_PENDING:
+            continue
+        decided = _parse_ts(record.get("decided_at"))
+        if decided is None:
+            continue
+        age_days = (now - decided).total_seconds() / 86400
+        if 0 <= age_days <= window_days:
+            open_count += 1
+    return open_count
+
+
+def agreement_section(
+    evidence: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    active_metric: str = "v1",
+) -> list[str]:
+    """Render the v1/v2 side-by-side agreement block. Pure, read-only.
+
+    v1 numbers come from ``agreement_rate``; v2 numbers and three of the
+    four readiness checks come from the canonical ``shadow_exit_met_v2``
+    (reused for display — this does not activate v2; the phase gates keep
+    using whichever metric the ``agreement_metric`` policy flag selects).
+    Replayed backfill records are never counted here: only the live
+    ``shadow_records`` evidence the caller passes in is rendered.
+    """
+    records = [
+        r for r in (evidence.get("shadow_records", []) or []) if isinstance(r, dict)
+    ]
+    bad = evidence.get("bad_merge_calls", 0) or 0
+
+    v1 = agreement_rate(records)
+    v1_rate = v1["rate"]
+    v1_line = (
+        f"  v1: {f'{v1_rate:.1%}' if v1_rate is not None else 'n/a'}"
+        f" over {v1['n_decided']} decided PRs"
+        + (" (active metric)" if active_metric == "v1" else "")
+    )
+
+    v2stats = decayed_agreement_rate(records, as_of=now)
+    v2gate = shadow_exit_met_v2(records, bad_merge_calls=bad, as_of=now)
+    v2_rate = v2stats["decayed_rate"]
+    v2_line = (
+        f"  v2: {f'{v2_rate:.1%}' if v2_rate is not None else 'n/a'} decayed"
+        f" · {v2stats['n_decided']} decided PRs"
+        f" · effective sample {v2stats['effective_n']:.1f}"
+        + (" (active metric)" if active_metric == "v2" else "")
+    )
+
+    checks = v2gate["checks"]
+    windows_open = _observation_windows_open(records, now=now)
+    readiness_items = [
+        (f"PRs≥{SHADOW_MIN_PRS}", bool(checks["min_prs"])),
+        (
+            f"effective sample≥{SHADOW_MIN_EFFECTIVE_N:g}",
+            bool(checks["min_effective_n"]),
+        ),
+        ("zero bad merges", bool(checks["zero_bad_merges"])),
+        ("observation windows complete", windows_open == 0),
+    ]
+    readiness = "  v2 readiness: " + " · ".join(
+        f"{label} {_mark(met)}" for label, met in readiness_items
+    )
+
+    other = "v2" if active_metric == "v1" else "v1"
+    lines = [
+        f"Agreement — {active_metric} active · {other} shadow:",
+        v1_line,
+        v2_line,
+        readiness,
+    ]
+    if active_metric != "v2":
+        lines.append("  ↳ v2 shown for readiness only; v1 remains the active metric.")
+    return lines
 
 
 def _phase0_rows(evidence: dict[str, Any], result: ExitResult) -> list[GateRow]:
@@ -549,6 +663,7 @@ class StatusReport:
     fresh_install: bool = False
     policy_error: str | None = None
     detail: str = ""
+    agreement_lines: tuple[str, ...] = ()
 
 
 def build_report(
@@ -582,6 +697,17 @@ def build_report(
         rows = tuple(builder(evidence, result, now))
     else:
         rows = tuple(builder(evidence, result))
+    agreement_lines: tuple[str, ...] = ()
+    if rows:
+        # Display-only v2 preview. The phase gates above still use the
+        # policy-selected metric; this changes no activation state.
+        agreement_lines = tuple(
+            agreement_section(
+                evidence,
+                now=now,
+                active_metric=str(evidence.get("agreement_metric", "v1")),
+            )
+        )
     return StatusReport(
         phase=phase,
         advancements_enabled=advancements_enabled,
@@ -590,6 +716,7 @@ def build_report(
         fresh_install=fresh,
         policy_error=policy_error,
         detail=result.detail,
+        agreement_lines=agreement_lines,
     )
 
 
@@ -651,6 +778,10 @@ def render_status(report: StatusReport) -> str:
         lines.append(f"  {row.label:<32} {row.current:>12}  {bar} {_mark(row.met)}")
         if row.detail:
             lines.append(f"    ↳ {row.detail}")
+
+    if report.agreement_lines:
+        lines.append("")
+        lines.extend(report.agreement_lines)
 
     closing: list[str] = []
     if report.ready and report.advancements_enabled:
