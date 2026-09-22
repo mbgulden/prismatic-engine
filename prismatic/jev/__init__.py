@@ -1,45 +1,47 @@
-"""swarmjev — typed-decision primitive for Prismatic.
+"""SwarmJev: the typed decision primitive for Prismatic swarm agents.
 
-Jev is TypeSafe's "System One" model: it does not generate text. You send it
-application state plus typed questions — Choice (pick from options you
-define), Score (position on a scale), Noul (yes/no probability) — and it
-answers all of them in parallel, returning calibrated probabilities.
+Jev is exception-path only: deterministic code owns the happy path; Jev owns
+failures and novel situations. ``decide()`` takes agent state (provenance
+delimited, PII redacted) and typed questions, sends them to the OpenRouter
+decisions API (or the TypeSafe direct API), and returns strictly validated
+answers. It never returns raw text; it never invents a decision.
 
-Safety contract (build-sequence rule 4, spec §6):
+.. code-block:: python
 
-- Jev is **exception-path only**: deterministic code owns the happy path;
-  Jev owns failures, weird PRs, novel situations.
-- Jev may **escalate** (pause for a human) but NEVER downgrades a
-  deterministic REPAIR/REJECT — enforced mechanically by
-  :func:`apply_jev_advice`.
-- Jev calls **fail closed**: any backend error raises ``DecisionError``
-  unless the caller supplied deterministic defaults.
-- Every Jev call site is **individually gated, default-off** via
-  :class:`CallSiteGate`. No call sites are wired in this package yet.
-- Credentials come **only** from environment variables and are never
-  logged, persisted, or included in audit signals or error messages.
-- Default backend is ``fallback`` (no network, no key): zero-AI installs
-  run exactly as today.
+    from prismatic.jev import DecisionClient, Choice, Noul, apply_jev_advice, advice_choice
 
-Extraction note: this package is stdlib-only and imports nothing else from
-``prismatic.*``, so it lifts unchanged into the standalone ``swarmjev``
-PyPI repo when Michael gives the word.
+    client = DecisionClient()  # resolves backend from SWARMJEV_BACKEND
+    result = client.decide(
+        state,
+        [Choice("verdict", "Triage this failure.", options=["CLEAN", "REPAIR", "ESCALATE"])],
+        on_error="deterministic",
+        defaults={"verdict": "CLEAN"},
+    )
+    final = apply_jev_advice("CLEAN", advice_choice(result.answers["verdict"]))
+    # final: CLEAN | ESCALATE — never a downgrade of a deterministic REPAIR/REJECT
+
+Every decision emits one trace record (no raw state). Telemetry is the one
+fail-open seam; everything else fails closed.
 """
 
-from __future__ import annotations
-
 from .backends import (
+    BackendResult,
+    CallParams,
     FallbackBackend,
     OpenRouterDecisionsBackend,
     TypeSafeDecisionsBackend,
     resolve_backend,
 )
-from .client import DecisionClient, DecisionResult
+from .client import DecisionClient, DecisionResult, PreCheck
+from .config import JevConfig
 from .errors import (
+    BudgetExceededError,
+    CircuitOpenError,
     DecisionError,
     MissingCredentialError,
     NoBackendError,
     SchemaViolationError,
+    TransportError,
 )
 from .gates import (
     VERDICT_CLEAN,
@@ -47,29 +49,51 @@ from .gates import (
     VERDICT_REJECT,
     VERDICT_REPAIR,
     CallSiteGate,
+    advice_choice,
     apply_jev_advice,
 )
-from .questions import Choice, Noul, Question, Score
+from .memo import MemoCache, memo_key
+from .prompts import PromptRef, PromptRegistry
+from .questions import Choice, Noul, Question, Score, apply_abstain_floor
+from .redact import Untrusted, serialize_state
+from .trace import TraceRecord, emit_trace
 
 __all__ = [
-    "DecisionClient",
-    "DecisionResult",
-    "Choice",
-    "Score",
-    "Noul",
-    "Question",
+    "BackendResult",
+    "CallParams",
     "FallbackBackend",
     "OpenRouterDecisionsBackend",
     "TypeSafeDecisionsBackend",
     "resolve_backend",
+    "DecisionClient",
+    "DecisionResult",
+    "PreCheck",
+    "JevConfig",
     "DecisionError",
-    "NoBackendError",
     "MissingCredentialError",
+    "NoBackendError",
     "SchemaViolationError",
+    "TransportError",
+    "CircuitOpenError",
+    "BudgetExceededError",
     "CallSiteGate",
+    "advice_choice",
     "apply_jev_advice",
     "VERDICT_CLEAN",
-    "VERDICT_REPAIR",
-    "VERDICT_REJECT",
     "VERDICT_ESCALATE",
+    "VERDICT_REJECT",
+    "VERDICT_REPAIR",
+    "MemoCache",
+    "memo_key",
+    "PromptRef",
+    "PromptRegistry",
+    "Question",
+    "Choice",
+    "Noul",
+    "Score",
+    "apply_abstain_floor",
+    "Untrusted",
+    "serialize_state",
+    "TraceRecord",
+    "emit_trace",
 ]

@@ -1,0 +1,103 @@
+# Typed failure-diagnosis signatures — versioned policy data.
+#
+# Rule (build-sequence #5): behavior changes ship as NEW versioned files;
+# this file is never edited in place. A v2 supersedes v1 by filename.
+#
+# Layout:
+#   signatures: ordered list; FIRST match in file order wins. Each rule has
+#     a stable name (recorded in the audit signal), a diagnosis, and a list
+#     of regex patterns (matched case-insensitively against error_text and
+#     each error_classes entry).
+#   watchdog_metric_map: deterministic diagnosis per watchdog metric name.
+#     Metrics not listed here diagnose as "unknown" (route: human).
+
+version: diagnosis-signatures-v1
+
+signatures:
+  # ---- infra: the platform/runner/network failed, not the change ----
+  - name: runner-lost
+    diagnosis: infra
+    patterns:
+      - "runner .* (lost|died|went offline|was removed)"
+      - "the runner has received a shutdown signal"
+      - "a task was canceled"  # runner preemption phrasing (Azure/GH)
+  - name: connection-reset
+    diagnosis: infra
+    patterns:
+      - "connection reset by peer"
+      - "connection refused"
+      - "econnreset"
+  - name: network-timeout
+    diagnosis: infra
+    patterns:
+      - "network (is unreachable|timed out|timeout)"
+      - "temporary failure in name resolution"
+      - "could not resolve host"
+      - "tls handshake timeout"
+  - name: registry-transient
+    diagnosis: infra
+    patterns:
+      - "registry.*(50\\d|timeout|unavailable)"
+      - "toomanyrequests"
+      - "manifest unknown"  # registry-side race, not a code bug
+  - name: github-api-transient
+    diagnosis: infra
+    patterns:
+      - "api\\.github\\.com.*(50\\d|timeout)"
+      - "secondary rate limit"
+      - "was submitted too quickly"  # GH abuse-rate phrasing
+  - name: disk-full
+    diagnosis: infra
+    patterns:
+      - "no space left on device"
+      - "enospc"
+
+  # ---- code: the change itself is broken ----
+  - name: assertion-failure
+    diagnosis: code
+    patterns:
+      - "assertionerror"
+      - "assert .* failed"
+      - "expect\\(.*\\)\\.(to|toBe|toEqual)"
+  - name: compile-error
+    diagnosis: code
+    patterns:
+      - "syntaxerror"
+      - "compilation failed"
+      - "cannot find module"  # missing dep in the change
+      - "modulenotfounderror"
+      - "importerror"
+  - name: lint-failure
+    diagnosis: code
+    patterns:
+      - "\\bruff\\b.*(error|failed)"
+      - "flake8.*error"
+      - "would reformat"  # ruff format check failure
+  - name: type-error
+    diagnosis: code
+    patterns:
+      - "typeerror"
+      - "mypy.*error"
+
+  # ---- flake: nondeterministic; a retry is the honest response ----
+  - name: known-flaky-marker
+    diagnosis: flake
+    patterns:
+      - "flaky"
+      - "intermittent failure"
+      - "passed on retry"
+  - name: timing-flake
+    diagnosis: flake
+    patterns:
+      - "test timed out"
+      - "deadline exceeded"
+      - "port already in use"  # parallel-runner port collision
+
+watchdog_metric_map:
+  # metric_name -> deterministic diagnosis
+  jev_backend_error_rate: infra
+  ci_failure_rate: code
+  rollback_rate: code
+  auto_merge_volume: infra
+  escalation_rate: unknown
+  band_change_velocity: unknown

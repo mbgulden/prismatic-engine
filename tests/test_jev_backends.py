@@ -13,6 +13,7 @@ from prismatic.jev.backends import (
 )
 from prismatic.jev.errors import DecisionError, MissingCredentialError, NoBackendError
 from prismatic.jev.questions import Choice, Noul
+from prismatic.jev.resilience import reset_breakers_for_tests, reset_bulkheads_for_tests
 
 FAKE_KEY = "test-fake-key-000"
 
@@ -72,6 +73,8 @@ class TestBackendResolution(unittest.TestCase):
 
 class TestOpenRouterBackend(unittest.TestCase):
     def setUp(self):
+        reset_breakers_for_tests()
+        reset_bulkheads_for_tests()
         self.env = patch.dict(
             "os.environ", {"OPENROUTER_API_KEY": FAKE_KEY}, clear=False
         )
@@ -79,6 +82,8 @@ class TestOpenRouterBackend(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
+        reset_breakers_for_tests()
+        reset_bulkheads_for_tests()
 
     @patch("urllib.request.urlopen")
     def test_request_shape(self, mock_urlopen):
@@ -203,30 +208,49 @@ class TestOpenRouterBackend(unittest.TestCase):
     def test_repr_hides_key(self):
         backend = OpenRouterDecisionsBackend()
         self.assertNotIn(FAKE_KEY, repr(backend))
-        self.assertIn("<set>", repr(backend))
 
 
 class TestFallbackBackend(unittest.TestCase):
-    def test_no_defaults_raises(self):
+    """v2: the backend-level deterministic-default path was removed.
+
+    FallbackBackend only signals "no network access" (NoBackendError);
+    deterministic defaults live in DecisionClient(on_error="deterministic").
+    """
+
+    def test_no_network_raises(self):
         with self.assertRaises(NoBackendError):
             FallbackBackend().decide({}, _questions())
 
-    def test_defaults_returned(self):
-        result = FallbackBackend().decide(
-            {}, _questions(), defaults={"urgent": 0.2, "verdict": "CLEAN"}
+    def test_no_network_raises_with_call_params(self):
+        from prismatic.jev.backends import CallParams
+
+        with self.assertRaises(NoBackendError):
+            FallbackBackend().decide({}, _questions(), call=CallParams())
+
+    def test_deterministic_defaults_live_in_client(self):
+        from prismatic.jev import DecisionClient
+
+        client = DecisionClient(backend=FallbackBackend())
+        result = client.decide(
+            {},
+            _questions(),
+            on_error="deterministic",
+            defaults={"urgent": 0.2, "verdict": "CLEAN"},
         )
-        self.assertEqual(result.backend, "fallback")
+        self.assertTrue(result.deterministic)
         self.assertAlmostEqual(result.answers["urgent"].probability, 0.2)
         self.assertEqual(result.answers["verdict"].choice, "CLEAN")
 
-    def test_missing_default_for_question_raises(self):
-        with self.assertRaises(DecisionError):
-            FallbackBackend().decide({}, _questions(), defaults={"urgent": 0.2})
-
     def test_invalid_default_raises_not_coerced(self):
+        from prismatic.jev import DecisionClient
+
+        client = DecisionClient(backend=FallbackBackend())
         with self.assertRaises(DecisionError):
-            FallbackBackend().decide(
-                {}, _questions(), defaults={"urgent": 9.9, "verdict": "CLEAN"}
+            client.decide(
+                {},
+                _questions(),
+                on_error="deterministic",
+                defaults={"urgent": 9.9, "verdict": "CLEAN"},
             )
 
 

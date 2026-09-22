@@ -9,7 +9,10 @@ from prismatic.jev.questions import Choice, Noul, Score
 class TestQuestionWire(unittest.TestCase):
     def test_noul_wire_shape(self):
         q = Noul("urgent", "Is this urgent?")
-        self.assertEqual(q.to_wire(), {"type": "noul", "question": "Is this urgent?"})
+        self.assertEqual(
+            q.to_wire(),
+            {"type": "noul", "question": "Is this urgent?", "wire_version": "noul.v1"},
+        )
 
     def test_choice_wire_shape(self):
         q = Choice("verdict", "Triage verdict.", options=["CLEAN", "REPAIR"])
@@ -19,6 +22,7 @@ class TestQuestionWire(unittest.TestCase):
                 "type": "choice",
                 "question": "Triage verdict.",
                 "options": ["CLEAN", "REPAIR"],
+                "wire_version": "choice.v1",
             },
         )
 
@@ -26,7 +30,13 @@ class TestQuestionWire(unittest.TestCase):
         q = Score("risk", "Risk 0-1.")
         self.assertEqual(
             q.to_wire(),
-            {"type": "score", "question": "Risk 0-1.", "min": 0.0, "max": 1.0},
+            {
+                "type": "score",
+                "question": "Risk 0-1.",
+                "min": 0.0,
+                "max": 1.0,
+                "wire_version": "score.v1",
+            },
         )
 
     def test_choice_requires_unique_nonempty_options(self):
@@ -38,6 +48,14 @@ class TestQuestionWire(unittest.TestCase):
     def test_score_requires_min_lt_max(self):
         with self.assertRaises(ValueError):
             Score("r", "p", min=1.0, max=1.0)
+
+
+class TestWirePromptRequired(unittest.TestCase):
+    def test_empty_prompt_fails_closed(self):
+        from prismatic.jev.errors import DecisionError
+
+        with self.assertRaises(DecisionError):
+            Noul("u", "").to_wire()
 
 
 class TestNoulParsing(unittest.TestCase):

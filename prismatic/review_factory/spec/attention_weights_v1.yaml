@@ -1,0 +1,65 @@
+# Attention-routing weights — versioned policy data.
+#
+# Rule (build-sequence #5): behavior changes ship as NEW versioned files;
+# this file is never edited in place. A v2 supersedes v1 by filename.
+#
+# score = 100 * clamp01(sum(weight[i] * subscore[i])); weights should sum
+# to ~1.0 (the loader warns but does not fail otherwise — fail-closed on
+# *missing* data, tolerant of tuning drift).
+#
+# Bands: score < low -> "low"; < medium -> "medium"; < high -> "high";
+# otherwise "critical".
+
+version: attention-weights-v1
+
+weights:
+  size: 0.25
+  blast_radius: 0.30
+  novelty: 0.20
+  history: 0.15
+  checks: 0.10
+
+bands:
+  low: 25
+  medium: 50
+  high: 75
+
+# Lines changed (additions + deletions) at which the size sub-score
+# saturates at 1.0. Log-scaled below this: a 5k-line PR is not 100x a
+# 50-line PR.
+size_saturation_lines: 2000
+
+# Path prefixes whose changes carry outsized blast radius. A PR's blast
+# sub-score is the fraction of changed files under any of these prefixes,
+# weighted by the per-prefix factor below.
+critical_paths:
+  prismatic/deploy/: 1.0
+  prismatic/review_factory/merge_executor.py: 1.0
+  prismatic/jev/: 1.0
+  prismatic/hypervisor/: 0.9
+  prismatic/core/locking.py: 0.9
+  .github/workflows/: 0.8
+  prismatic/review_factory/: 0.7
+
+# Error classes the deterministic rules understand. A failing check whose
+# error class is NOT in this list trips the novelty detector (Jev #29 may
+# be consulted — gated, default-off).
+known_error_classes:
+  - AssertionError
+  - SyntaxError
+  - ModuleNotFoundError
+  - ImportError
+  - TypeError
+  - CompileError
+  - LintError
+  - TestTimeout
+  - ConnectionError
+  - TimeoutError
+
+# Sub-score knobs.
+novelty_first_time_contributor: 0.6
+novelty_first_time_path: 0.8
+history_per_rollback: 0.25
+history_max: 1.0
+checks_per_failing: 0.2
+checks_max: 1.0
