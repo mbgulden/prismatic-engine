@@ -86,7 +86,7 @@ def default_db_path() -> Path:
 # Schema DDL
 # ─────────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _CREATE_TABLES = """
 -- Schema version tracking
@@ -315,6 +315,17 @@ class ReviewFactoryDB:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)"
         )
+        # Migration v2: composite index for submit-time (task_id,
+        # candidate_commit) uniqueness lookups (zombie-job safeguard, Gap 1).
+        schema_row = self.conn.execute(
+            "SELECT version FROM rf_schema_version ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+        recorded_version = int(schema_row["version"]) if schema_row else 0
+        if recorded_version < 2:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_review_jobs_task_candidate "
+                "ON review_jobs(task_id, candidate_commit)"
+            )
         # Record schema version if not already present
         cur = self.conn.execute(
             "SELECT version FROM rf_schema_version ORDER BY version DESC LIMIT 1"
@@ -399,6 +410,32 @@ class ReviewFactoryDB:
         cur = self.conn.execute(
             "SELECT * FROM review_jobs WHERE completed_work_id = ? LIMIT 1",
             (completed_work_id,),
+        )
+        row = cur.fetchone()
+        return self._row_to_review_job(row) if row else None
+
+    def get_job_by_task_and_candidate(
+        self, task_id: str, candidate_commit: str
+    ) -> Optional[ReviewJob]:
+        """Fetch the newest non-terminal job for a (task_id, candidate_commit).
+
+        Backs the submit-time uniqueness guard (zombie-job safeguard, Gap 1):
+        the same candidate submitted under a new completed_work_id links to
+        the surviving job instead of creating a duplicate. Restricted to
+        known non-terminal states so legacy rows (e.g. manually retired
+        ``stale``) are never matched or touched.
+        """
+        non_terminal = [
+            s.value
+            for s in ReviewJobState
+            if ReviewJobState.valid_transitions()[s.value]
+        ]
+        placeholders = ",".join("?" for _ in non_terminal)
+        cur = self.conn.execute(
+            "SELECT * FROM review_jobs WHERE task_id = ? AND candidate_commit = ? "
+            f"AND state IN ({placeholders}) "
+            "ORDER BY created_at DESC LIMIT 1",
+            (task_id, candidate_commit, *non_terminal),
         )
         row = cur.fetchone()
         return self._row_to_review_job(row) if row else None

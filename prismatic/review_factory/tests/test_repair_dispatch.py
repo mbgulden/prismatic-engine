@@ -145,7 +145,12 @@ def test_repair_dispatch_target_agent_override(tmp_path, isolated_state):
     assert rows[0]["event_id"] == event_id
 
     # Unknown agents fall back to a resolvable one instead of poisoning routing.
-    job_id2 = _enqueue(queue, completed_work_id="cw-repair-2")
+    # NOTE: distinct candidate_commit -- the zombie-job safeguard (Gap 1)
+    # links a resubmit of the same (task_id, candidate_commit) to the
+    # surviving job instead of creating a second one.
+    job_id2 = _enqueue(
+        queue, completed_work_id="cw-repair-2", candidate_commit="d" * 40
+    )
     _to_repair_required(queue, job_id2)
     queue.dispatch_repair_task(job_id2, target_agent="not-an-agent")
     rows = _queue_rows()

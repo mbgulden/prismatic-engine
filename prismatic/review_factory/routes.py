@@ -549,7 +549,10 @@ def _attach_routes(router: Any) -> None:
         if ok:
             payload.update(
                 state="active",
-                detail="Ollama reachable; a configured model is available",
+                detail=(
+                    f"{(config.protocol or 'ollama').upper()} reachable; "
+                    "a configured model is available"
+                ),
             )
         else:
             payload.update(state="skipped", detail=reason)
