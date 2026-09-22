@@ -10,6 +10,7 @@ Every test asserts a safety property the detector claims:
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -373,6 +374,36 @@ def test_enforcing_release_wrong_principal_refused(tmp_path):
 def test_enforcing_release_not_quarantined_is_noop(tmp_path):
     det = _enforcing_detector(tmp_path)
     assert det.release("mbgulden", "ghost") == "noop"
+
+
+def test_audit_dir_removed_mid_run_self_heals(tmp_path):
+    """Deleting the audit dir mid-run must not drop later signals or verdicts.
+
+    Covers both the evaluate-audit and the release-audit paths: each
+    re-creates the dir and writes its row after the removal, and verdicts
+    (quarantine, release, familiar) stand throughout (fail-closed).
+    """
+    log = tmp_path / "nested" / "audit.jsonl"
+    det = NoveltyDetector(
+        _write_policy(tmp_path, enabled=True, mode=MODE_ENFORCING),
+        audit_log=log,
+    )
+    result = det.evaluate(_familiar_input(precedent_matches=0))
+    assert result.state == STATE_NOVEL_QUARANTINED
+    assert det.quarantined_ids == ("cand-1",)
+    shutil.rmtree(tmp_path / "nested")
+    # Release writes via the release-audit path on a fresh dir.
+    assert det.release("mbgulden", "cand-1") == "released"
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["event"] == "quarantine_release"
+    assert rows[0]["outcome"] == "released"
+    # And the evaluate-audit path self-heals too.
+    result = det.evaluate(_familiar_input())
+    assert result.state == STATE_FAMILIAR
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    assert rows[1]["state"] == STATE_FAMILIAR
 
 
 def test_enforcing_invalid_input_is_contained_fail_closed(tmp_path):
