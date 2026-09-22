@@ -35,6 +35,7 @@ future step on Michael's explicit word). No polling anywhere in this module.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -60,6 +61,8 @@ from prismatic.jev.gates import (
     apply_jev_advice,
 )
 from prismatic.jev.questions import Choice, ChoiceAnswer, Noul, NoulAnswer
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────
 # Verdict vocabulary (the Jev question options, exactly these four)
@@ -499,6 +502,18 @@ class FailureTriage:
         except DecisionError as exc:
             # Fail-closed: a failed Jev call never invents a decision.
             # No credential or backend detail leaks into the record.
+            # Watchdog metrics feed (Phase 0 observe-only): record the
+            # failed Jev call. A feed failure must never break triage.
+            try:
+                from prismatic.review_factory.metrics_feed import record_jev_call
+
+                record_jev_call(
+                    call_site="failure_triage.FailureTriage._consult_jev",
+                    ok=False,
+                    error=type(exc).__name__,
+                )
+            except Exception:
+                logger.warning("watchdog feed record_jev_call failed", exc_info=True)
             return JevAdvice(status=JEV_ERRORED, error=type(exc).__name__)
         choice_ans = decided.answers.get("triage_verdict")
         choice = choice_ans.choice if isinstance(choice_ans, ChoiceAnswer) else None
@@ -513,6 +528,17 @@ class FailureTriage:
             confidence = noul_ans.probability
         elif isinstance(choice_ans, ChoiceAnswer):
             confidence = choice_ans.confidence
+        # Watchdog metrics feed (Phase 0 observe-only): record the
+        # successful Jev call. A feed failure must never break triage.
+        try:
+            from prismatic.review_factory.metrics_feed import record_jev_call
+
+            record_jev_call(
+                call_site="failure_triage.FailureTriage._consult_jev",
+                ok=True,
+            )
+        except Exception:
+            logger.warning("watchdog feed record_jev_call failed", exc_info=True)
         return JevAdvice(
             status=JEV_ADVISED,
             choice=choice,
