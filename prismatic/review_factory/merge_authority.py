@@ -26,6 +26,7 @@ authority never consults it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ except ImportError:  # pragma: no cover - exercised only without PyYAML
     _HAS_YAML = False
 
 SPEC_DIR = Path(__file__).resolve().parent / "spec"
+
+logger = logging.getLogger(__name__)
 DEFAULT_POLICY_FILE = SPEC_DIR / "auto_merge_policy_v1.yaml"
 DEFAULT_AUDIT_LOG = Path(
     os.path.expanduser("~/.prismatic/audit/auto-merge-decisions.jsonl")
@@ -417,6 +420,15 @@ class MergeAuthority:
             jev_score=None,
         )
         self._emit_audit(decision, pr)
+        # Watchdog metrics feed (Phase 0 observe-only): a refused
+        # auto-merge attempt is escalated to human review. Append-only;
+        # a feed failure must never change the refusal.
+        try:
+            from prismatic.review_factory.metrics_feed import record_escalation
+
+            record_escalation(job_id=pr.job_id, reason=reason)
+        except Exception:
+            logger.warning("watchdog feed record_escalation failed", exc_info=True)
         return decision
 
     # -- the gate ----------------------------------------------------

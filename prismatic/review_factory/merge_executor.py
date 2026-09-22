@@ -492,6 +492,27 @@ class MergeExecutor:
                             original_head=target_head_before,
                             failed_head=failed_head,
                         )
+                        # Watchdog metrics feed (Phase 0 observe-only): the
+                        # auto-merge was rolled back. A feed failure must
+                        # never break the hot path.
+                        try:
+                            from prismatic.review_factory.metrics_feed import (
+                                record_rollback,
+                            )
+
+                            record_rollback(
+                                job_id=job.review_job_id,
+                                merge_sha=failed_head,
+                                reason=(
+                                    "integration merge failed; target "
+                                    f"{target_branch} CAS-rolled back: {exc}"
+                                ),
+                            )
+                        except Exception:
+                            logger.warning(
+                                "watchdog feed record_rollback failed",
+                                exc_info=True,
+                            )
                 except Exception as rollback_exc:
                     rollback_error = rollback_exc
                     logger.error(
