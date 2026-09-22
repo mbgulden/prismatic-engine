@@ -53,6 +53,11 @@ _STANDING_POLICY_PREFIX = "standing-policy"
 # rejected at config time as well as at decision time (defense in depth).
 _AUTO_MERGEABLE_TIERS = frozenset({0, 1})
 
+# Sentinel for the MergeStage novelty_detector kwarg: unset means "build
+# the default detector from the shipped policy"; an explicit None disables
+# the screen entirely.
+_UNSET: Any = object()
+
 
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -121,10 +126,32 @@ class MergeStage:
         queue: Any,
         config: Optional[MergeStageConfig] = None,
         linear_hooks: Any = None,
+        novelty_detector: Any = _UNSET,
     ) -> None:
         self.queue = queue
         self.config = config or MergeStageConfig()
         self.linear_hooks = linear_hooks
+        # The novelty screen is advisory-only (see _novelty_screen). Unset =
+        # build the default detector lazily from the shipped novelty policy
+        # (disabled -> inert); explicit None = screen off entirely.
+        self._novelty_detector: Any = novelty_detector
+
+    @property
+    def novelty_detector(self) -> Any:
+        """The novelty detector for the monitor-only screen, built lazily.
+
+        Fail-closed: if the detector cannot be constructed the screen is
+        skipped (never a quiet pass, never a halt).
+        """
+        if self._novelty_detector is _UNSET:
+            try:
+                from prismatic.review_factory.novelty import NoveltyDetector
+
+                self._novelty_detector = NoveltyDetector()
+            except Exception as exc:
+                logger.warning("novelty detector unavailable: %s", exc)
+                self._novelty_detector = None
+        return self._novelty_detector
 
     # ── entry point ──────────────────────────────────────────────
 
@@ -177,6 +204,13 @@ class MergeStage:
             )
 
         actor = f"{_STANDING_POLICY_PREFIX}: tier-{tier}"
+
+        # Monitor-only novelty screen: trips are logged to the novelty
+        # audit trail and the merge-stage audit; the verdict is advisory
+        # only — the pipeline is NEVER halted and nothing is quarantined
+        # by this path. Inert while the novelty policy is disabled.
+        self._novelty_screen(job, job_id)
+
         auth_id = self.queue.authorize_merge(job_id, actor=actor)
         if not auth_id:
             # authorize_merge re-validates the standing-policy actor and the
@@ -307,6 +341,99 @@ class MergeStage:
             action="merged",
             authorization_id=auth_id,
             merge_sha=result.merge_sha,
+        )
+
+    # ── monitor-only novelty screen ─────────────────────────────────
+
+    @staticmethod
+    def _novelty_input_for_job(job: Any, job_id: str) -> Any:
+        """Build the detector's pure-data input for one merge candidate.
+
+        Every novelty input is data the caller supplies, never a judgment
+        the stage makes. Unavailable inputs stay at their defaults
+        (None/empty = unavailable, never a trip): the precedent similarity
+        search is a later chunk and Jev does not exist yet. Optional
+        ``novelty_*`` attributes on the job let tests and future callers
+        supply real evidence.
+        """
+        from prismatic.review_factory.novelty import NoveltyInput
+
+        def _get(name: str, default: Any) -> Any:
+            return getattr(job, name, default)
+
+        def _seq(name: str) -> tuple:
+            value = _get(name, ())
+            if value is None:
+                return ()
+            if isinstance(value, (str, bytes)):
+                return (value,)
+            try:
+                return tuple(value)
+            except TypeError:
+                return ()
+
+        def _fset(name: str) -> frozenset:
+            try:
+                return frozenset(_seq(name))
+            except TypeError:
+                return frozenset()
+
+        tier = _get("risk_tier", 0)
+        try:
+            tier = int(tier or 0)
+        except (TypeError, ValueError):
+            tier = 0
+        change_shape = _get("novelty_change_shape", None)
+        if change_shape is None:
+            change_shape = {"risk_tier": tier}
+        return NoveltyInput(
+            candidate_id=job_id,
+            jev_confidences=_get("novelty_jev_confidences", None),
+            precedent_matches=_get("novelty_precedent_matches", None),
+            change_shape=change_shape,
+            error_classes=_seq("novelty_error_classes"),
+            known_error_classes=_fset("novelty_known_error_classes"),
+            event_types=_seq("novelty_event_types"),
+            seen_event_types=_fset("novelty_seen_event_types"),
+            input_schema_hash=_get("novelty_input_schema_hash", None),
+            expected_schema_hash=_get("novelty_expected_schema_hash", None),
+        )
+
+    def _novelty_screen(self, job: Any, job_id: str) -> None:
+        """Run the monitor-only novelty screen for a merge candidate.
+
+        The shipped novelty policy is disabled, so this is inert until the
+        rollout ladder arms the detector (the Phase 0 -> 1 exit criteria
+        require it). When armed in monitor-only mode, trips are logged to
+        the novelty audit trail AND the merge-stage audit; the verdict is
+        advisory only — the pipeline is NEVER halted and nothing is
+        quarantined by this path. Enforcing mode is a separate
+        phase-advancement step consumed by the quarantine-routing path,
+        which is deliberately NOT wired here.
+        """
+        detector = self.novelty_detector
+        if detector is None:
+            return
+        try:
+            result = detector.evaluate(self._novelty_input_for_job(job, job_id))
+        except Exception as exc:
+            logger.warning("novelty screen failed for %s: %s", job_id, exc)
+            return
+        self._audit(
+            job_id,
+            "merge_novelty_screen",
+            {
+                "novelty_state": result.state,
+                "policy_version": result.policy_version,
+                "mode": result.mode,
+                "tripped_inputs": [t.input for t in result.trips],
+                "quarantined": result.quarantined,
+                "pipeline_halted": result.pipeline_halted,
+                "note": (
+                    "advisory only: the monitor-only screen never halts "
+                    "the pipeline or quarantines"
+                ),
+            },
         )
 
     # ── audit helpers ────────────────────────────────────────────
