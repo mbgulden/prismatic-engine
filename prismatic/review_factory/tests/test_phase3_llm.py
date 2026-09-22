@@ -333,14 +333,17 @@ class TestFailureFallback:
 
     def test_model_selection_prefers_bounded_for_large_diff(self):
         adapter, client = self._adapter()
-        small = adapter._select_model(100)
+        small, small_limit = adapter._select_model(100)
         assert small == "ned-test"
-        large = adapter._select_model(100_000)
+        assert small_limit == adapter.config.max_diff_full_chars
+        large, large_limit = adapter._select_model(100_000)
         assert large == "george-test"
+        assert large_limit == adapter.config.max_diff_chars
 
     def test_model_selection_falls_back(self):
         adapter, _ = self._adapter(models={"george-test"})
-        assert adapter._select_model(100) == "george-test"
+        model, _limit = adapter._select_model(100)
+        assert model == "george-test"
 
 
 # ── Repair-packet compilation ──────────────────────────────────────────

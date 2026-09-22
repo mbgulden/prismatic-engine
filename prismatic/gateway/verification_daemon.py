@@ -616,7 +616,8 @@ class VerificationWorkerDaemon:
                     status = {
                         "state": "active",
                         "detail": (
-                            "Ollama reachable; a configured model is available"
+                            f"{(config.protocol or 'ollama').upper()} reachable; "
+                            "a configured model is available"
                         ),
                         "endpoint": config.endpoint,
                         "model_full": config.model_full or None,
