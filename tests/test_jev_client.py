@@ -9,6 +9,7 @@ from prismatic.jev import DecisionClient
 from prismatic.jev.backends import FallbackBackend
 from prismatic.jev.errors import DecisionError, NoBackendError
 from prismatic.jev.questions import Choice, Noul, Score
+from prismatic.jev.resilience import reset_breakers_for_tests, reset_bulkheads_for_tests
 
 FAKE_KEY = "test-fake-key-000"
 
@@ -44,6 +45,8 @@ def _payload():
 
 class TestDecide(unittest.TestCase):
     def setUp(self):
+        reset_breakers_for_tests()
+        reset_bulkheads_for_tests()
         self.env = patch.dict(
             "os.environ",
             {"SWARMJEV_BACKEND": "openrouter", "OPENROUTER_API_KEY": FAKE_KEY},
@@ -52,6 +55,8 @@ class TestDecide(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
+        reset_breakers_for_tests()
+        reset_bulkheads_for_tests()
 
     @patch("urllib.request.urlopen")
     def test_one_call_answers_all_questions_in_parallel(self, mock_urlopen):

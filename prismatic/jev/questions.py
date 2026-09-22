@@ -2,16 +2,25 @@
 
 The primitive owns the question schema and validates every backend answer
 against it at parse time. Wire shapes follow the public OpenRouter decisions
-API examples (Sep 2026); if the vendor publishes a differing schema, this is
-the single module to adjust.
+API examples (Sep 2026), extended with a top-level ``schema_version`` and
+per-type ``wire_version`` (see :mod:`prismatic.jev.schema`).
+
+Abstain is first-class: a question may set ``abstain_below`` (a confidence
+floor). When the answer's confidence — or a documented per-type uncertainty
+proxy when the backend returned no confidence — falls below the floor, the
+answer is marked ``abstained`` with a reason, but the raw probabilities are
+kept for provenance. The primitive never escalates on abstain; the caller
+decides (human review or a stronger model).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .errors import SchemaViolationError
+from .errors import DecisionError, SchemaViolationError
+from .prompts import PromptRef, PromptRegistry
+from .schema import wire_version_for
 
 
 def _is_number(value: Any) -> bool:
@@ -39,6 +48,8 @@ class ChoiceAnswer:
     choice: str
     probabilities: dict[str, float]
     confidence: float | None = None
+    abstained: bool = False
+    abstain_reason: str | None = None
 
     def to_audit_dict(self) -> dict[str, Any]:
         return {
@@ -46,6 +57,8 @@ class ChoiceAnswer:
             "choice": self.choice,
             "probabilities": dict(self.probabilities),
             "confidence": self.confidence,
+            "abstained": self.abstained,
+            "abstain_reason": self.abstain_reason,
         }
 
 
@@ -55,12 +68,16 @@ class NoulAnswer:
 
     probability: float
     confidence: float | None = None
+    abstained: bool = False
+    abstain_reason: str | None = None
 
     def to_audit_dict(self) -> dict[str, Any]:
         return {
             "type": "noul",
             "probability": self.probability,
             "confidence": self.confidence,
+            "abstained": self.abstained,
+            "abstain_reason": self.abstain_reason,
         }
 
 
@@ -70,16 +87,61 @@ class ScoreAnswer:
 
     score: float
     confidence: float | None = None
+    abstained: bool = False
+    abstain_reason: str | None = None
 
     def to_audit_dict(self) -> dict[str, Any]:
         return {
             "type": "score",
             "score": self.score,
             "confidence": self.confidence,
+            "abstained": self.abstained,
+            "abstain_reason": self.abstain_reason,
         }
 
 
 Answer = ChoiceAnswer | NoulAnswer | ScoreAnswer
+
+
+def _uncertainty_proxy(answer: Answer) -> float | None:
+    """Confidence proxy when the backend returned no explicit confidence.
+
+    - Choice: the top probability (decisiveness of the pick).
+    - Noul: ``2*|p-0.5`` — 0 at maximum uncertainty, 1 at certainty.
+    - Score: no proxy — a score is a position, not a belief; without an
+      explicit confidence there is nothing to judge against a floor.
+    """
+    if isinstance(answer, ChoiceAnswer):
+        return max(answer.probabilities.values())
+    if isinstance(answer, NoulAnswer):
+        return 2.0 * abs(answer.probability - 0.5)
+    return None
+
+
+def apply_abstain_floor(question: "Question", answer: Answer) -> Answer:
+    """Mark the answer abstained when confidence is below the floor.
+
+    The raw probabilities are kept (provenance); ``abstained`` + reason are
+    set. Never raises, never escalates — the caller decides what an abstain
+    means.
+    """
+    floor = question.abstain_below
+    if floor is None or answer.abstained:
+        return answer
+    confidence = answer.confidence
+    source = "confidence"
+    if confidence is None:
+        confidence = _uncertainty_proxy(answer)
+        source = "uncertainty proxy"
+    if confidence is None:
+        return answer  # nothing to judge against the floor
+    if confidence < floor:
+        return replace(
+            answer,
+            abstained=True,
+            abstain_reason=(f"{source} {confidence:.3f} below abstain floor {floor}"),
+        )
+    return answer
 
 
 @dataclass(frozen=True)
@@ -87,10 +149,12 @@ class Question:
     """Base typed question. Subclasses define kind, wire shape, and parsing."""
 
     name: str
-    prompt: str
+    prompt: str = ""
     kind: str = field(init=False)
+    abstain_below: float | None = None
+    prompt_id: str | None = None
 
-    def to_wire(self) -> dict[str, Any]:
+    def to_wire(self, *, prompt_text: str | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
     def parse_answer(self, payload: Any) -> Answer:
@@ -100,6 +164,30 @@ class Question:
         """Build a deterministic answer from a caller-supplied default value."""
         raise NotImplementedError
 
+    def effective_prompt(
+        self, registry: PromptRegistry
+    ) -> tuple[str, PromptRef | None]:
+        """Resolve the prompt text, via the registry when ``prompt_id`` set.
+
+        Fail-closed: unknown prompt ids and empty prompts raise
+        ``DecisionError`` — a question with no prompt is a configuration bug.
+        """
+        if self.prompt_id:
+            ref = registry.resolve(self.prompt_id)
+            return ref.text, ref
+        if not self.prompt:
+            raise DecisionError(
+                f"question {self.name!r} has neither prompt text nor prompt_id"
+            )
+        return self.prompt, None
+
+    def _wire_prompt(self, prompt_text: str | None) -> str:
+        """Prompt text for the wire; fails closed when empty."""
+        text = prompt_text if prompt_text is not None else self.prompt
+        if not text:
+            raise DecisionError(f"question {self.name!r} has no prompt text to send")
+        return text
+
 
 @dataclass(frozen=True)
 class Noul(Question):
@@ -107,8 +195,12 @@ class Noul(Question):
 
     kind: str = field(default="noul", init=False)
 
-    def to_wire(self) -> dict[str, Any]:
-        return {"type": "noul", "question": self.prompt}
+    def to_wire(self, *, prompt_text: str | None = None) -> dict[str, Any]:
+        return {
+            "wire_version": wire_version_for(self.kind),
+            "type": "noul",
+            "question": self._wire_prompt(prompt_text),
+        }
 
     def parse_answer(self, payload: Any) -> NoulAnswer:
         where = f"answer[{self.name!r}]"
@@ -142,10 +234,11 @@ class Choice(Question):
             raise ValueError("Choice requires a non-empty list of unique options")
         object.__setattr__(self, "options", tuple(self.options))
 
-    def to_wire(self) -> dict[str, Any]:
+    def to_wire(self, *, prompt_text: str | None = None) -> dict[str, Any]:
         return {
+            "wire_version": wire_version_for(self.kind),
             "type": "choice",
-            "question": self.prompt,
+            "question": self._wire_prompt(prompt_text),
             "options": list(self.options),
         }
 
@@ -213,10 +306,11 @@ class Score(Question):
         if not _is_number(self.min) or not _is_number(self.max) or self.min >= self.max:
             raise ValueError("Score requires min < max")
 
-    def to_wire(self) -> dict[str, Any]:
+    def to_wire(self, *, prompt_text: str | None = None) -> dict[str, Any]:
         return {
+            "wire_version": wire_version_for(self.kind),
             "type": "score",
-            "question": self.prompt,
+            "question": self._wire_prompt(prompt_text),
             "min": self.min,
             "max": self.max,
         }
