@@ -1,0 +1,47 @@
+name: Shadow Event Feed (Phase 0)
+
+# Event-driven shadow observer: GitHub tells us when a PR changes instead of
+# the 15-minute timer asking. The VM has no public ingress, so inbound
+# webhooks are impossible — pull_request events on the existing self-hosted
+# runner are the event source.
+#
+# Observe-only: runs the shadow observer per PR and appends one audit signal
+# per new (pr, head_sha) to ~/.prismatic/audit/shadow-decisions.jsonl.
+# Read-only gh calls; a PR that can't be read or has unsettled CI is
+# deferred (logged, exit 0), never crashes the run. Nothing here merges,
+# edits, or notifies about anything.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+# One in-flight shadow evaluation per PR; a newer event supersedes an older one.
+concurrency:
+  group: shadow-event-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  shadow-call:
+    # Self-hosted webtop-hermes runner (free minutes; GitHub-hosted
+    # minutes are blocked by the account billing state).
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout observer code
+        uses: actions/checkout@v4
+
+      - name: Run shadow observer for this PR
+        env:
+          # gh CLI authenticates via GH_TOKEN; no dependence on the
+          # runner user's stored gh credentials.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          /home/ubuntu/.prismatic/venv_current/bin/python \
+            prismatic/review_factory/shadow_event.py \
+            --pr-number "${{ github.event.pull_request.number }}" \
+            --event "${{ github.event.action }}"
