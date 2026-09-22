@@ -40,6 +40,7 @@ scheduler is a later chunk.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -1171,3 +1172,76 @@ class LearnLoop:
         if not proposals:
             parts.append("no band changes proposed")
         return " — ".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# CLI: the weekly self-review job
+# ─────────────────────────────────────────────────────────────────────
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Run the periodic learn-loop self-review from a scheduler.
+
+    This is the pure core of the weekly systemd timer: it runs
+    ``self_review()`` and prints the resulting report. Inert while the
+    learn loop is disabled — ``self_review()`` returns the ``"disabled"``
+    report, one audit row is emitted, and nothing else happens. The loop
+    activates only when the rollout ladder advances the learn policy
+    (a phase-advancement step on Michael's word).
+
+    Exit code 0 = the review ran (reviewed, disabled, or invalid).
+    Exit code 1 = misconfigured CLI input (not a review verdict).
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Learn-loop self-review: aggregate decision/outcome logs, "
+            "propose band changes, print the report. "
+            "Inert while the learn policy is disabled."
+        )
+    )
+    parser.add_argument("--policy", default=str(DEFAULT_LEARN_POLICY_FILE))
+    parser.add_argument("--bands", default=str(DEFAULT_BANDS_FILE))
+    parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG))
+    parser.add_argument("--outcome-log", default=str(DEFAULT_OUTCOME_LOG))
+    parser.add_argument("--band-change-log", default=str(DEFAULT_BAND_CHANGE_LOG))
+    parser.add_argument("--audit-log", default=str(DEFAULT_AUDIT_LOG))
+    args = parser.parse_args(argv)
+
+    try:
+        loop = LearnLoop(
+            policy_path=args.policy,
+            bands_path=args.bands,
+            decision_log=args.decision_log,
+            outcome_log=args.outcome_log,
+            band_change_log=args.band_change_log,
+            audit_log=args.audit_log,
+        )
+    except LearnConfigError as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}))
+        return 1
+
+    report = loop.self_review()
+    print(
+        json.dumps(
+            {
+                "status": report.state,
+                "policy_version": report.policy_version,
+                "window_days": report.window_days,
+                "auto_merges": report.auto_merges,
+                "refusals": report.refusals,
+                "rollbacks": report.rollbacks,
+                "escalations": report.escalations,
+                "cleans": report.cleans,
+                "coverage_gaps": report.coverage_gaps,
+                "consecutive_clean": report.consecutive_clean,
+                "proposals": len(report.proposals),
+                "summary": report.summary,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -24,6 +24,7 @@ signal. No signal, no action.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -951,3 +952,102 @@ class PhaseAdvancement:
             severity="warning",
         )
         return row
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Heartbeat CLI (the tick the daily systemd timer runs)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Heartbeat: evaluate exit criteria, file a request when they pass.
+
+    This is the only caller the phase-advancement machinery needs: the
+    daily systemd timer runs the tick, the tick evaluates the current
+    phase's mechanical exit criteria against the evidence pointers, and
+    files an ``AdvancementRequest`` when they pass.
+
+    Requesting is NOT executing. Filing only records intent in the
+    hash-chained log; the phase still moves only through ``execute()``,
+    which requires the master switch (``advancements_enabled: true``),
+    Michael's approval record, and the criteria re-evaluated on live
+    evidence at execution time.
+
+    The resulting state is printed as JSON. Exit code 0 means the
+    heartbeat completed (request filed, or nothing to file). Exit code 1
+    means the tick could not evaluate (misconfigured policy or unreadable
+    evidence) — fail-closed, never an assumed verdict.
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Phase-advancement heartbeat: evaluate the current phase's exit "
+            "criteria and file an advancement request when they pass. "
+            "Requesting is NOT executing."
+        )
+    )
+    parser.add_argument(
+        "--spec-dir",
+        default=str(SPEC_DIR),
+        help="directory holding the phase_policy_v*.yaml files",
+    )
+    parser.add_argument("--log", default=str(DEFAULT_ADVANCEMENT_LOG))
+    parser.add_argument("--audit-sink", default=str(DEFAULT_ADVANCEMENT_AUDIT))
+    parser.add_argument(
+        "--evidence-pointers",
+        default=None,
+        help=(
+            "JSON file mapping evidence keys to file pointers "
+            "(see load_evidence); omitted = empty evidence"
+        ),
+    )
+    parser.add_argument("--requester", default="phase-advancement-tick")
+    args = parser.parse_args(argv)
+
+    adv = PhaseAdvancement(
+        spec_dir=args.spec_dir, log_path=args.log, audit_sink=args.audit_sink
+    )
+    try:
+        from_phase = adv.current_phase()
+    except PhaseAdvancementError as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}))
+        return 1
+
+    if from_phase >= MAX_PHASE:
+        print(json.dumps({"status": "at-max-phase", "phase": from_phase}))
+        return 0
+
+    to_phase = from_phase + 1
+    try:
+        if args.evidence_pointers:
+            with open(args.evidence_pointers, encoding="utf-8") as fh:
+                pointers = json.load(fh)
+            if not isinstance(pointers, dict):
+                raise PhaseAdvancementError(
+                    "evidence pointers file must hold a JSON object"
+                )
+        else:
+            pointers = {}
+        evidence = load_evidence(pointers)
+    except (PhaseAdvancementError, OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"status": "error", "error": f"cannot load evidence: {exc}"}))
+        return 1
+
+    result = evaluate_exit_criteria(from_phase, to_phase, evidence)
+    state: dict[str, Any] = {
+        "status": "request-filed" if result.met else "no-request",
+        "phase": from_phase,
+        "target": to_phase,
+        "criteria_met": result.met,
+        "checks": result.checks,
+        "detail": result.detail,
+    }
+    if result.met:
+        request = adv.request(to_phase, pointers, requester=args.requester)
+        state["request_id"] = request.request_id
+        state["requester"] = request.requester
+    print(json.dumps(state, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
