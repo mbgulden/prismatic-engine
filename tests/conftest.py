@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -52,6 +53,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) in sys.path:
     sys.path.remove(str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT))
+
+
+# Deploy-receiver tests import pe.deploy.receiver at module scope, which builds
+# the receiver app (and its pipeline) at import time. The pipeline refuses to
+# guess a deploy source from CWD, so give the test session a benign default
+# pointing at this checkout. Tests that exercise real deploys pass an explicit
+# source_repo anyway; tests that prove the fail-fast unset behavior delete the
+# var with monkeypatch first.
+os.environ.setdefault("PRISMATIC_DEPLOY_SOURCE_REPO", str(REPO_ROOT))
 
 loaded = sys.modules.get("prismatic")
 if loaded is not None:
