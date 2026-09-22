@@ -108,9 +108,20 @@ def test_review_verdict_fail_safe():
 def test_ci_green_requires_all_self_hosted():
     assert ci_green_self_hosted(ALL_GREEN) is True
     runs = [_run("smoke (ruff lint)"), _run("review factory gate (tier A)")]
-    assert ci_green_self_hosted(runs) is False  # one check missing entirely
+    # Recalibration 2026-09-22: a never-triggered check (here the
+    # path-conditional plugin-load workflow, absent from the check-runs)
+    # is N/A and excluded from the green requirement — it no longer
+    # forces a skip on ordinary PRs.
+    assert ci_green_self_hosted(runs) is True
     runs = ALL_GREEN + [_run("extra check", conclusion="failure")]
     assert ci_green_self_hosted(runs) is True  # extra checks don't matter here
+    # But a triggered check that failed still fails the evaluation.
+    runs = [
+        _run("smoke (ruff lint)"),
+        _run("review factory gate (tier A)"),
+        _run("Verify shipped plugins load", conclusion="failure"),
+    ]
+    assert ci_green_self_hosted(runs) is False
 
 
 def test_branch_protection_stand_in():
