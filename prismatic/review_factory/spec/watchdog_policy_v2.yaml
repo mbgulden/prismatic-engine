@@ -1,0 +1,50 @@
+# Watchdog policy — versioned config for the deterministic watchdog (chunk 2).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the watchdog at it.
+#
+# Status: ARMED MONITOR-ONLY. Armed Sep 22, 2026 on Michael's word. This is
+# the v2 arming file: `enabled: true` so the watchdog evaluates, and
+# `mode: monitor-only` so trips are LOGGED (audit signal per trip) and the
+# system NEVER halts. Moving to "enforcing" requires a FUTURE versioned
+# file plus phase advancement — never a quiet config flip.
+#
+# The watchdog is pure deterministic code — no Jev. The watcher cannot be
+# fuzzy. (Jev backend errors are a *metric* the watchdog observes, not a
+# component it consults.)
+#
+# Thresholds are a BYTE-IDENTICAL copy of watchdog-v1 — arming changes
+# nothing about what trips, only that the watchdog evaluates at all.
+
+version: watchdog-v2
+enabled: true
+mode: monitor-only  # monitor-only | enforcing
+
+# Re-arm authority. The ONLY re-arm path is Watchdog.rearm(principal) with
+# principal == rearm_principal. There is no timeout, no auto-clear, no
+# self re-arm — a halted watchdog stays halted until this human re-arms it.
+rearm_principal: mbgulden
+
+# Thresholds. A metric strictly ABOVE its threshold trips the watchdog.
+# *_rate metrics are fractions in [0, 1]; velocity/volume are counts per
+# the named window and must be >= 0.
+thresholds:
+  # Fraction of auto-merges rolled back. A bad merge is cheap only if we
+  # notice fast — sustained rollback rates mean the gates are wrong.
+  rollback_rate: 0.05
+  # Fraction of auto-merge attempts escalated to human review instead of
+  # merging cleanly. High escalation means the policy is out of its depth.
+  escalation_rate: 0.20
+  # Fraction of CI runs failing on the self-hosted runner (excludes
+  # deliberate fault-injection runs). A sick runner poisons every gate.
+  ci_failure_rate: 0.30
+  # Fraction of Jev backend calls erroring. Jev is exception-path only, so
+  # its errors must stay rare — a blind exception path is no safety net.
+  jev_error_rate: 0.10
+  # Max risk-band changes per day. Bands may tighten any time; velocity
+  # above this means something is thrashing the policy.
+  band_change_velocity_per_day: 3
+  # Max auto-merges per hour. Compared against the authority's own rate
+  # limits — volume above the caps means the limiter is being bypassed or
+  # the caps are misconfigured.
+  merge_volume_per_hour: 1.5
