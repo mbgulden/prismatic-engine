@@ -1,0 +1,131 @@
+# prismatic-consensus — quorum capability plugin manifest
+#
+# Governance quorum primitive (e.g. 2-of-3 approvals) that the gate
+# evaluator's escalation path can CONSULT. The plugin keeps a record of
+# quorum proposals and approvals; it never approves or denies anything
+# itself, never writes gate decisions, and never calls into the gate.
+# Direction of the arrow is fixed: the kernel reads the plugin; the
+# plugin never drives the kernel.
+#
+# Disabled by default (auto_enable: false): the operator must explicitly
+# enable it after attaching. Quorum governance is infrastructure, not an
+# agent tool.
+
+schema_version: "1.0.0"
+
+name: "prismatic-consensus"
+
+version: "0.1.0"
+
+description: >-
+  Consensus capability plugin for the Prismatic Engine generic plugin
+  lifecycle. Opens quorum questions (subject, required approvals, expiry),
+  records approvals with caller identity (no self-approval, no duplicate
+  approval), and reports quorum state (pending/met/failed) with expiry
+  evaluated at query time. Quorum state persists via on_suspend/on_resume
+  under $PRISMATIC_HOME/plugin-state/prismatic-consensus/. The gate
+  evaluator's escalation path may CONSULT this plugin; the plugin never
+  writes gate decisions and never calls into the gate. Registers no agent
+  tools.
+
+author: "Prismatic Engine Swarm"
+
+license: "MIT"
+
+# Fully qualified Python class path acting as the entry point.
+# Module path uses UNDERSCORES (dir name matches first module segment);
+# the plugin `name` (dashed) is what humans read.
+entry_point: "consensus.plugin:ConsensusPlugin"
+
+core_version_constraint: ">=0.2.0, <2.0.0"
+
+dependencies:
+  pip:
+    - "swarmconsensus>=0.1.0"
+
+# Plugin registers but starts DISABLED. The operator enables it explicitly
+# after attach; on enable the loader calls on_init() with the validated config.
+auto_enable: false
+
+permissions:
+  - "filesystem-write"
+
+risk_level: "low"
+
+policy_checks:
+  - "no self-approval: the proposer cannot approve their own proposal"
+  - "no duplicate approval: one approval per caller identity per proposal"
+  - "expiry evaluated at query time (event-driven on read); no background sweeper"
+  - "the plugin never writes gate decisions and never calls into the gate"
+
+audit_events:
+  - "quorum_proposed"
+  - "quorum_approved"
+  - "quorum_met"
+  - "quorum_failed"
+  - "suspend"
+  - "resume"
+
+endpoints:
+  - method: "POST"
+    path: "/api/consensus/propose"
+    description: "Open a quorum question: subject, required approvals, expiry."
+  - method: "POST"
+    path: "/api/consensus/approve"
+    description: "Record an approval for a proposal with caller identity; the proposer cannot approve their own proposal."
+  - method: "GET"
+    path: "/api/consensus/status/{id}"
+    description: "Quorum state (pending/met/failed) with expiry evaluated at query time."
+
+tags:
+  - "infrastructure"
+  - "optional"
+
+# JSON Schema for the plugin config. Validated by the PluginLoader at attach
+# time; ConsensusPlugin.on_init() re-validates defensively and raises
+# PluginValidationError on any violation.
+#
+# `quorum_policy` is READ-ONLY gate-config knowledge: it maps gate decision
+# names to the approvals they require, so the plugin knows what needs
+# quorum. The plugin reads this config; it never writes gate state.
+config_schema:
+  type: "object"
+  additionalProperties: false
+  properties:
+    default_required_approvals:
+      type: "integer"
+      minimum: 1
+      default: 2
+      description: "Approvals required when a proposal names no policy decision and sets no explicit count."
+    max_required_approvals:
+      type: "integer"
+      minimum: 1
+      default: 9
+      description: "Upper bound for required approvals on any single proposal."
+    default_expiry_sec:
+      type: "integer"
+      minimum: 1
+      default: 86400
+      description: "Proposal lifetime in seconds when the request sets no explicit expiry."
+    max_expiry_sec:
+      type: "integer"
+      minimum: 1
+      default: 2592000
+      description: "Upper bound for proposal lifetime in seconds (default 30 days)."
+    quorum_policy:
+      type: "object"
+      description: >-
+        Read-only mapping of gate decision names to their quorum
+        requirements. The plugin reads this to know what needs quorum;
+        it never writes gate state.
+      additionalProperties:
+        type: "object"
+        additionalProperties: false
+        required: ["required_approvals"]
+        properties:
+          required_approvals:
+            type: "integer"
+            minimum: 1
+          description:
+            type: "string"
+  required: []
