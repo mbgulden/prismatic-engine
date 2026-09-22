@@ -2,7 +2,8 @@
 """Phase 0 shadow-mode event adapter — per-PR entry point for the event-driven feed.
 
 Invoked by the ``shadow-event-feed`` GitHub Actions workflow on webtop-hermes
-for ``pull_request`` events (opened, synchronize, reopened, closed). Evaluates
+for ``pull_request`` events (opened, synchronize, reopened, closed) and the
+``workflow_run`` completed re-trigger (CI-settled re-evaluation). Evaluates
 ONE PR against the shadow merge policy and appends one audit signal per new
 ``(pr_number, head_sha)`` to ``~/.prismatic/audit/shadow-decisions.jsonl``.
 
@@ -57,7 +58,7 @@ REPO = "mbgulden/prismatic-engine"
 # Field set proven against the VM's gh 2.45.0 (baseRefOid is NOT supported).
 PR_FIELDS = "number,title,headRefOid,mergeable,state"
 
-EVENT_ACTIONS = ("opened", "synchronize", "reopened", "closed")
+EVENT_ACTIONS = ("opened", "synchronize", "reopened", "closed", "completed")
 
 
 def fetch_pr(pr_number: int, repo: str = REPO) -> dict[str, Any]:

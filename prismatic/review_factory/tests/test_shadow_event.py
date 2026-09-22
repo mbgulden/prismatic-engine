@@ -257,3 +257,49 @@ def test_workflow_triggers_and_runner():
     steps_text = json.dumps(data["jobs"]["shadow-call"]["steps"])
     assert "shadow_event.py" in steps_text
     assert "--pr-number" in steps_text
+
+
+# ── workflow_run completed re-trigger (Sep 22, 2026) ───────────────────
+
+
+def test_completed_event_takes_reevaluation_path(monkeypatch, tmp_path):
+    # The workflow_run completed trigger passes --event completed; it must
+    # take the same non-closed re-evaluation path as synchronize.
+    sha = "d" * 40
+    source = FakeSource(checks={sha: ALL_GREEN})
+    pr = _pr(sha=sha)
+    rc, signals, _ = _run_eval(monkeypatch, tmp_path, pr, source, event="completed")
+    assert rc == 0
+    assert len(signals) == 1
+    assert signals[0]["metadata"]["pr_number"] == 101
+
+
+def test_completed_event_applies_mergeability_gate(monkeypatch, tmp_path):
+    # Unlike "closed", "completed" is subject to the mergeability gate.
+    sha = "e" * 40
+    source = FakeSource(checks={sha: ALL_GREEN})
+    pr = _pr(sha=sha, mergeable="UNKNOWN")
+    rc, signals, _ = _run_eval(monkeypatch, tmp_path, pr, source, event="completed")
+    assert rc == 0
+    assert signals == []
+
+
+def test_main_accepts_completed_event(monkeypatch, tmp_path):
+    # argparse must not reject the event value the workflow passes.
+    monkeypatch.setattr(
+        shadow_event,
+        "default_components",
+        lambda: (_policy(), _bands(), _tier_engine()),
+    )
+    seen = {}
+
+    def fake_eval(
+        pr_number, event, source, policy, bands, tier_engine, state_path, sink
+    ):
+        seen["event"] = event
+        return 0
+
+    monkeypatch.setattr(shadow_event, "evaluate_pr", fake_eval)
+    rc = shadow_event.main(["--pr-number", "101", "--event", "completed"])
+    assert rc == 0
+    assert seen["event"] == "completed"
