@@ -52,6 +52,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pe.deploy.deploy_alerts import emit_deploy_alert
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_GATEWAY_SERVICE = "prismatic-gateway.service"
@@ -328,6 +330,15 @@ class GatewayRedeployer:
             health = self._health_check(venv_dir)
             res.health = health
             if not health["passed"]:
+                # Alert-log: the DETECT moment. Additive only -- the raise
+                # below is unchanged.
+                emit_deploy_alert(
+                    "GatewayDeployHealthCheckFailed",
+                    "critical",
+                    f"gateway deploy health check failed for {full_sha[:12]}",
+                    f"pr_sha={full_sha} failed_release={version_dir.name} "
+                    f"reason={health['details']}",
+                )
                 raise DeployFailed(
                     f"post-restart health check failed: {health['details']}"
                 )
@@ -346,6 +357,16 @@ class GatewayRedeployer:
             res.success = False
             res.reason = str(exc)
             logger.error("gateway redeploy FAILED: %s", exc)
+            # Alert-log: the FAILURE moment (fires for every failure path,
+            # including the health-check failure above). Additive only --
+            # the rollback call below is unchanged.
+            emit_deploy_alert(
+                "GatewayDeployFailed",
+                "critical",
+                f"gateway deploy failed for {res.pr_sha[:12]}: {str(exc)[:120]}",
+                f"pr_sha={res.pr_sha} attempted_release={res.version_dir} "
+                f"reason={str(exc)[:300]}",
+            )
             res.rolled_back = self._rollback(
                 res, flipped_venv=flipped_venv, flipped_current=flipped_current
             )
@@ -544,6 +565,18 @@ class GatewayRedeployer:
         if not flipped_venv and not flipped_current:
             logger.info("rollback: nothing was flipped, no restart needed")
             return True
+        # Alert-log: the ROLLBACK-STARTED moment. Additive only.
+        prev_release = (
+            Path(res.previous_version_dir).name if res.previous_version_dir else ""
+        )
+        failed_release = Path(res.version_dir).name if res.version_dir else ""
+        emit_deploy_alert(
+            "GatewayRollbackStarted",
+            "critical",
+            f"gateway rollback started: restoring {prev_release[-12:] or 'previous release'}",
+            f"pr_sha={res.pr_sha} failed_release={failed_release} "
+            f"previous_release={prev_release}",
+        )
         try:
             if flipped_venv and res.previous_venv_dir:
                 self._atomic_symlink_swap(Path(res.previous_venv_dir), self.venv_link)
@@ -552,17 +585,46 @@ class GatewayRedeployer:
                     Path(res.previous_version_dir), self.current_link)
         except Exception as exc:
             logger.error("rollback: symlink restore failed: %s", exc)
+            emit_deploy_alert(
+                "GatewayRollbackFailed",
+                "critical",
+                f"gateway rollback failed for {res.pr_sha[:12]}: symlink restore",
+                f"pr_sha={res.pr_sha} failure_point=symlink_restore reason={exc}",
+            )
             return False
         try:
             self._systemctl("restart", timeout=180)
         except DeployFailed as exc:
             logger.error("rollback: service restart failed: %s", exc)
+            emit_deploy_alert(
+                "GatewayRollbackFailed",
+                "critical",
+                f"gateway rollback failed for {res.pr_sha[:12]}: service restart",
+                f"pr_sha={res.pr_sha} failure_point=service_restart reason={exc}",
+            )
             return False
         if not self._service_active(timeout_s=90):
             logger.error("rollback: service did not recover to active state")
+            emit_deploy_alert(
+                "GatewayRollbackFailed",
+                "critical",
+                f"gateway rollback failed for {res.pr_sha[:12]}: service not active",
+                f"pr_sha={res.pr_sha} failure_point=service_active "
+                "reason=recovery verification timed out",
+            )
             return False
         logger.warning(
             "rollback: gateway restored to previous release %s",
             (res.previous_version_dir or "")[-12:],
+        )
+        # Alert-log: the ROLLBACK-COMPLETED moment (recovery confirmed).
+        # Additive only -- the return value is unchanged.
+        emit_deploy_alert(
+            "GatewayRollbackCompleted",
+            "critical",
+            "gateway rollback completed: restored to "
+            f"{prev_release[-12:] or 'previous release'}",
+            f"pr_sha={res.pr_sha} restored_release={prev_release} "
+            "service_active=true",
         )
         return True
