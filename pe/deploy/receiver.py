@@ -26,6 +26,7 @@ except ImportError:
     _HAS_FASTAPI = False
 
 from pe.deploy.gateway_redeploy import GatewayRedeployer
+from pe.deploy.deploy_alerts import emit_deploy_alert
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
 from pe.deploy.linear_transition import LinearDeployTransitioner
@@ -320,6 +321,36 @@ class DeployReceiverPipeline:
 
         # Step 5: Persist deploy record
         self.store.record_deploy(record)
+
+        # Step 5b: Alert-log the pipeline's terminal state (additive only).
+        # This sits AFTER the dry-run early return above, so dry runs keep
+        # zero side effects. Event names are pipeline-level to distinguish
+        # them from the gateway-redeploy step events in gateway_redeploy.py.
+        # emit_deploy_alert never raises by contract; the guard below is
+        # belt-and-braces so logging can never break the deploy path.
+        try:
+            if record.success:
+                version_name = Path(str(version_dir)).name if version_dir else ""
+                emit_deploy_alert(
+                    "PostMergeDeploySucceeded",
+                    "info",
+                    f"deploy {record.deploy_id} succeeded: gateway at {pr_sha[:12]}",
+                    f"deploy_id={record.deploy_id} pr_sha={pr_sha} "
+                    f"pr_number={pr_number} version_dir={version_name} "
+                    f"duration_ms={duration_ms}",
+                )
+            else:
+                gw = record.gateway_deploy or {}
+                emit_deploy_alert(
+                    "PostMergeDeployFailed",
+                    "critical",
+                    f"deploy {record.deploy_id} failed: {str(err_msg)[:120]}",
+                    f"deploy_id={record.deploy_id} pr_sha={pr_sha} "
+                    f"failure_reason={str(err_msg)[:300]} "
+                    f"rolled_back={gw.get('rolled_back', False)}",
+                )
+        except Exception as exc:  # pragma: no cover - emit never raises
+            logger.warning("deploy-alerts: terminal-state emit failed: %s", exc)
 
         # Step 6: Feed the review factory's learn loop. Deploy success and
         # gateway rollback are the mechanical ground truth for merge
