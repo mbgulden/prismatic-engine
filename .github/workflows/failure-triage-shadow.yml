@@ -32,6 +32,12 @@ on:
         required: false
         default: ""
 
+# Least privilege: read the run's jobs via the API. Without actions:read
+# the jobs fetch 403s and the workflow can never succeed (Sep 22, 2026).
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   triage-shadow:
     name: shadow triage
