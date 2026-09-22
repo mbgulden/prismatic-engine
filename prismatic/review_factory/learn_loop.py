@@ -50,6 +50,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from prismatic.review_factory.shadow_agreement import (
+    CLASS_JEV_WAS_RIGHT,
+    CLASS_TOO_AGGRESSIVE,
+    CORRECTION_JEV_WAS_RIGHT,
+    classify_disagreement,
+)
+
 try:
     import yaml
 
@@ -72,6 +79,15 @@ DEFAULT_BAND_CHANGE_LOG = Path(
 DEFAULT_AUDIT_LOG = Path(
     os.path.expanduser("~/.prismatic/audit/learn-loop-decisions.jsonl")
 )
+DEFAULT_SHADOW_RECORDS_FILE = Path(
+    os.path.expanduser("~/.prismatic/audit/shadow-records.jsonl")
+)
+DEFAULT_CORRECTIONS_LOG = Path(
+    os.path.expanduser("~/.prismatic/audit/agreement-corrections.jsonl")
+)
+
+# Schema tag on every appended agreement-correction row.
+CORRECTION_SCHEMA = "agreement-correction/v1"
 
 MODE_REPORT_ONLY = "report-only"
 MODE_PROPOSE = "propose"
@@ -1189,8 +1205,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     activates only when the rollout ladder advances the learn policy
     (a phase-advancement step on Michael's word).
 
-    Exit code 0 = the review ran (reviewed, disabled, or invalid).
-    Exit code 1 = misconfigured CLI input (not a review verdict).
+    The ``correct`` subcommand records a human "Jev was right" agreement
+    correction for one shadow PR: append-only, the original record is
+    never mutated.
+
+    Exit code 0 = the review ran (reviewed, disabled, or invalid), or the
+    correction was recorded (or was already recorded).
+    Exit code 1 = misconfigured CLI input (not a review verdict), or a
+    refused correction.
     """
     parser = argparse.ArgumentParser(
         description=(
@@ -1199,6 +1221,42 @@ def main(argv: Optional[list[str]] = None) -> int:
             "Inert while the learn policy is disabled."
         )
     )
+    subparsers = parser.add_subparsers(dest="command")
+    correct_parser = subparsers.add_parser(
+        "correct",
+        help=(
+            "record a human agreement correction for one shadow PR "
+            "('Jev was right'): append-only, original records preserved"
+        ),
+    )
+    correct_parser.add_argument(
+        "--pr", type=int, required=True, help="shadow PR number to correct"
+    )
+    correct_parser.add_argument(
+        "--verdict",
+        required=True,
+        choices=[CORRECTION_JEV_WAS_RIGHT],
+        help="the human's verdict on their own override",
+    )
+    correct_parser.add_argument(
+        "--note", default="", help="optional free-text note on the correction"
+    )
+    correct_parser.add_argument(
+        "--by",
+        default="mbgulden",
+        help="who is teaching (the correction is a human judgment)",
+    )
+    correct_parser.add_argument(
+        "--shadow-records",
+        default=str(DEFAULT_SHADOW_RECORDS_FILE),
+        help="joined shadow records JSONL "
+        "(one {system_call, actual_outcome, pr_number, ...} row per PR)",
+    )
+    correct_parser.add_argument(
+        "--corrections-log",
+        default=str(DEFAULT_CORRECTIONS_LOG),
+        help="append-only corrections log",
+    )
     parser.add_argument("--policy", default=str(DEFAULT_LEARN_POLICY_FILE))
     parser.add_argument("--bands", default=str(DEFAULT_BANDS_FILE))
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG))
@@ -1206,6 +1264,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--band-change-log", default=str(DEFAULT_BAND_CHANGE_LOG))
     parser.add_argument("--audit-log", default=str(DEFAULT_AUDIT_LOG))
     args = parser.parse_args(argv)
+
+    if args.command == "correct":
+        return _correct_command(args)
 
     try:
         loop = LearnLoop(
@@ -1240,6 +1301,149 @@ def main(argv: Optional[list[str]] = None) -> int:
             indent=2,
         )
     )
+    return 0
+
+
+def _read_records_jsonl(path: str) -> list[dict[str, Any]]:
+    """Read a JSONL file of record dicts, skipping corrupt lines."""
+    rows: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _correct_command(args: argparse.Namespace) -> int:
+    """Implement ``learn_loop correct``.
+
+    Records the human's explicit "Jev was right" teaching for one shadow
+    PR: the override was the human's mistake, not Jev's. Append-only —
+    the correction row goes to the corrections log; the original shadow
+    record is never mutated. ``apply_corrections`` (shadow_agreement)
+    folds corrections into the metric at read time.
+
+    Fail-closed: refuses when there is no shadow record for the PR, when
+    the record agrees (or is undecided), and when the verdict is
+    incoherent (D1: Jev said merge, the PR was closed — there is no
+    "Jev was right" to record there).
+    """
+    try:
+        records = _read_records_jsonl(args.shadow_records)
+    except OSError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "error": f"cannot read shadow records: {exc}",
+                }
+            )
+        )
+        return 1
+
+    matches = [r for r in records if str(r.get("pr_number")) == str(args.pr)]
+    if not matches:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": f"no shadow record for PR #{args.pr}",
+                }
+            )
+        )
+        return 1
+    if len(matches) > 1:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": (
+                        f"multiple shadow records for PR #{args.pr}; correct manually"
+                    ),
+                }
+            )
+        )
+        return 1
+    record = matches[0]
+
+    try:
+        cls = classify_disagreement(record)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": f"PR #{args.pr}: unclassifiable record ({exc})",
+                }
+            )
+        )
+        return 1
+
+    if cls is None:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": (
+                        f"PR #{args.pr}: Jev's call and the outcome agree "
+                        "(or the PR is still open); nothing to correct"
+                    ),
+                }
+            )
+        )
+        return 1
+    if cls == CLASS_TOO_AGGRESSIVE:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": (
+                        f"PR #{args.pr}: jev-was-right does not apply "
+                        "(D1: Jev said merge, the PR was closed)"
+                    ),
+                }
+            )
+        )
+        return 1
+    if cls == CLASS_JEV_WAS_RIGHT or record.get("corrected_by"):
+        print(
+            json.dumps(
+                {
+                    "status": "already_recorded",
+                    "pr_number": args.pr,
+                    "class": cls,
+                }
+            )
+        )
+        return 0
+
+    entry = {
+        "schema": CORRECTION_SCHEMA,
+        "pr_number": args.pr,
+        "verdict": args.verdict,
+        "previous_class": cls,
+        "note": args.note,
+        "corrected_by": args.by,
+        "corrected_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        path = Path(args.corrections_log)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        print(
+            json.dumps({"status": "error", "error": f"cannot append correction: {exc}"})
+        )
+        return 1
+    print(json.dumps({"status": "recorded", **entry}, indent=2))
     return 0
 
 
