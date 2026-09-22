@@ -1,0 +1,108 @@
+name: Failure Diagnosis + Attention Routing (Shadow)
+
+# Chunk 6 shadow observer: typed failure diagnosis (infra/code/flake/deploy/
+# unknown) on CI and deploy failures, plus advisory PR risk scoring.
+#
+# Observe-only: diagnoses and scores are appended to the JSONL shadow audit
+# logs and printed to the job summary. Nothing is dispatched, frozen,
+# commented, or gated — response actions keep their own deterministic gates.
+# Both Jev call sites ship default-off, so the workflow makes zero Jev calls
+# as configured.
+#
+# Event-driven: workflow_run completions and pull_request events on the
+# self-hosted runner (no public ingress, so inbound webhooks are impossible).
+# workflow_dispatch is a manual backstop. No polling, no cron.
+
+on:
+  workflow_run:
+    workflows: ["test", "Post-Merge Production Deploy Hook (WB-1)"]
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Workflow run id to diagnose (CI or deploy)"
+        required: false
+      pr_number:
+        description: "PR number to risk-score"
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  actions: read
+
+# A newer event supersedes an older one for the same PR/run.
+concurrency:
+  group: failure-diagnosis-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose-failure:
+    name: diagnose failed run (shadow)
+    # Only failures; the workflow cannot trigger itself (its own name is not
+    # in the workflow_run filter above).
+    if: >
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'failure') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.run_id != '')
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout observer code
+        uses: actions/checkout@v4
+
+      - name: Diagnose (shadow, no action)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id || inputs.run_id }}"
+          RUN_NAME="${{ github.event.workflow_run.name }}"
+          PY=/home/ubuntu/.prismatic/venv_current/bin/python
+          if [ "$RUN_NAME" = "Post-Merge Production Deploy Hook (WB-1)" ]; then
+            $PY scripts/failure_diagnosis_shadow.py diagnose-deploy \
+              --run-id "$RUN_ID" --repo "${{ github.repository }}"
+          else
+            $PY scripts/failure_diagnosis_shadow.py diagnose-ci \
+              --run-id "$RUN_ID" --repo "${{ github.repository }}"
+          fi
+
+      - name: Upload shadow audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-shadow-${{ github.run_id }}
+          path: /home/ubuntu/.prismatic/audit/failure-diagnosis-shadow.jsonl
+          if-no-files-found: warn
+
+  score-pr:
+    name: risk-score PR (advisory, shadow)
+    if: >
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.pr_number != '')
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout observer code
+        uses: actions/checkout@v4
+
+      - name: Score PR (advisory only, never gates)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || inputs.pr_number }}"
+          /home/ubuntu/.prismatic/venv_current/bin/python \
+            scripts/failure_diagnosis_shadow.py score-pr \
+              --pr-number "$PR_NUMBER" --repo "${{ github.repository }}"
+
+      - name: Upload shadow audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attention-routing-shadow-${{ github.run_id }}
+          path: /home/ubuntu/.prismatic/audit/attention-routing-shadow.jsonl
+          if-no-files-found: warn
