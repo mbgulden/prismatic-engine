@@ -311,6 +311,8 @@ def _make_pipeline(tmp_path, gateway_redeployer):
     from pe.deploy.manifest import DeployManifestStore
     from pe.deploy.receiver import DeployReceiverPipeline
 
+    import subprocess
+
     versions = tmp_path / "versions"
     releases = tmp_path / "releases"
     versions.mkdir()
@@ -318,7 +320,21 @@ def _make_pipeline(tmp_path, gateway_redeployer):
     source = tmp_path / "repo"
     (source / "prismatic").mkdir(parents=True)
     (source / "prismatic" / "__init__.py").write_text("# main")
-    return DeployReceiverPipeline(
+    # Real git repo: deploys build a pristine worktree of an exact commit
+    # (fail-fast source validation, Sep 22 2026).
+    def _g(*args):
+        subprocess.run(["git", *args], cwd=str(source), check=True,
+                       capture_output=True, text=True)
+    _g("init", "-q", "-b", "main", ".")
+    _g("config", "user.email", "test@example.com")
+    _g("config", "user.name", "test")
+    _g("add", ".")
+    _g("commit", "-qm", "seed")
+    head_sha = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    pipeline = DeployReceiverPipeline(
         source_repo=source,
         deploy_runner=AtomicDeployRunner(
             versions_dir=versions,
@@ -330,12 +346,14 @@ def _make_pipeline(tmp_path, gateway_redeployer):
         gateway_redeployer=gateway_redeployer,
         mirror_repo=tmp_path / "no-such-dir",  # fail-closed, no fetch
     )
+    pipeline.test_head_sha = head_sha
+    return pipeline
 
 
 def test_process_deploy_success_emits_info(tmp_path, alert_log):
     pipeline = _make_pipeline(tmp_path, _StubGatewayRedeployer())
     record = pipeline.process_deploy(
-        {"pr_sha": "d" * 40, "pr_number": 7, "pr_title": "alert test"}
+        {"pr_sha": pipeline.test_head_sha, "pr_number": 7, "pr_title": "alert test"}
     )
     assert record.success is True
     (entry,) = [
@@ -343,7 +361,7 @@ def test_process_deploy_success_emits_info(tmp_path, alert_log):
     ]
     assert entry["severity"] == "info"
     assert record.deploy_id in entry["summary"]
-    assert f"pr_sha={'d' * 40}" in entry["details"]
+    assert f"pr_sha={pipeline.test_head_sha}" in entry["details"]
     assert "duration_ms=" in entry["details"]
 
 
@@ -354,7 +372,9 @@ def test_process_deploy_rollback_emits_critical(tmp_path, alert_log):
             success=False, skipped=False, reason="boom", rolled_back=True
         ),
     )
-    record = pipeline.process_deploy({"pr_sha": "e" * 40, "pr_number": 8})
+    record = pipeline.process_deploy(
+        {"pr_sha": pipeline.test_head_sha, "pr_number": 8}
+    )
     assert record.success is False
     (entry,) = [
         e for e in read_entries(alert_log) if e["name"] == "PostMergeDeployFailed"
