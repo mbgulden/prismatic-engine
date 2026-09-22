@@ -107,6 +107,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     merge_factory.add_argument("args", nargs=argparse.REMAINDER)
 
+    progress = subparsers.add_parser(
+        "progress",
+        help="Show Jev level-up progress meter (read-only)",
+    )
+    progress.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON output"
+    )
+    progress.add_argument(
+        "--audit-dir",
+        default=None,
+        help="Override the audit directory (default: ~/.prismatic/audit)",
+    )
+
     verify = subparsers.add_parser(
         "verify",
         help="Run clean-room execution verification in an isolated temporary worktree",
@@ -502,6 +515,16 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.cli.merge_factory import main as merge_factory_cli_main
 
         return int(merge_factory_cli_main(args.args) or 0)
+
+    if args.command == "progress":
+        from prismatic.cli.progress import main as progress_cli_main
+
+        forwarded: list[str] = []
+        if args.json:
+            forwarded.append("--json")
+        if args.audit_dir:
+            forwarded.extend(["--audit-dir", args.audit_dir])
+        return int(progress_cli_main(forwarded) or 0)
 
     if args.command == "verify":
         import json
