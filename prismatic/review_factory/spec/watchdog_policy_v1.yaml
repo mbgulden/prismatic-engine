@@ -1,0 +1,53 @@
+# Watchdog policy — versioned config for the deterministic watchdog (chunk 2).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the watchdog at it.
+#
+# Status: HARD-DISABLED. `enabled: false` means the watchdog's evaluate()
+# returns "disabled" without computing any metric: no trips, no halts,
+# no re-arm surface. Arming requires Michael's explicit word (Phase 0 exit
+# criteria demand it armed monitor-only before Phase 1).
+#
+# Mode: "monitor-only". Trips are LOGGED (audit signal per trip) and the
+# system NEVER halts — a watchdog that never trips in testing is not a
+# watchdog, so Phase 0 collects trip evidence first. A later versioned file
+# may set mode "enforcing" (Phase 1+): trips then halt all auto-merge /
+# auto-deploy and only Michael re-arms. The enforcing transition is a
+# phase-advancement step on his word, not a quiet config flip.
+#
+# The watchdog is pure deterministic code — no Jev. The watcher cannot be
+# fuzzy. (Jev backend errors are a *metric* the watchdog observes, not a
+# component it consults.)
+
+version: watchdog-v1
+enabled: false
+mode: monitor-only  # monitor-only | enforcing
+
+# Re-arm authority. The ONLY re-arm path is Watchdog.rearm(principal) with
+# principal == rearm_principal. There is no timeout, no auto-clear, no
+# self re-arm — a halted watchdog stays halted until this human re-arms it.
+rearm_principal: mbgulden
+
+# Thresholds. A metric strictly ABOVE its threshold trips the watchdog.
+# *_rate metrics are fractions in [0, 1]; velocity/volume are counts per
+# the named window and must be >= 0.
+thresholds:
+  # Fraction of auto-merges rolled back. A bad merge is cheap only if we
+  # notice fast — sustained rollback rates mean the gates are wrong.
+  rollback_rate: 0.05
+  # Fraction of auto-merge attempts escalated to human review instead of
+  # merging cleanly. High escalation means the policy is out of its depth.
+  escalation_rate: 0.20
+  # Fraction of CI runs failing on the self-hosted runner (excludes
+  # deliberate fault-injection runs). A sick runner poisons every gate.
+  ci_failure_rate: 0.30
+  # Fraction of Jev backend calls erroring. Jev is exception-path only, so
+  # its errors must stay rare — a blind exception path is no safety net.
+  jev_error_rate: 0.10
+  # Max risk-band changes per day. Bands may tighten any time; velocity
+  # above this means something is thrashing the policy.
+  band_change_velocity_per_day: 3
+  # Max auto-merges per hour. Compared against the authority's own rate
+  # limits — volume above the caps means the limiter is being bypassed or
+  # the caps are misconfigured.
+  merge_volume_per_hour: 1.5
