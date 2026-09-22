@@ -34,6 +34,19 @@ def tmp_deploy_env(tmp_path):
     (source_repo / "docs").mkdir()
     (source_repo / "docs" / "readme.md").write_text("# Readme", encoding="utf-8")
 
+    # Real git repo: deploys build a pristine worktree of an exact commit, so
+    # the source must be a git checkout containing prismatic/ (fail-fast
+    # validation, Sep 22 2026).
+    _git("init", "-q", "-b", "main", str(source_repo), cwd=str(tmp_path))
+    _git("config", "user.email", "test@example.com", cwd=str(source_repo))
+    _git("config", "user.name", "test", cwd=str(source_repo))
+    _git("add", ".", cwd=str(source_repo))
+    _git("commit", "-qm", "seed", cwd=str(source_repo))
+    head_sha = subprocess.run(
+        ["git", "-C", str(source_repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
     symlink_path = releases_dir / "prismatic-engine"
 
     return {
@@ -42,6 +55,7 @@ def tmp_deploy_env(tmp_path):
         "symlink_path": symlink_path,
         "db_file": db_file,
         "source_repo": source_repo,
+        "head_sha": head_sha,
     }
 
 
@@ -117,7 +131,7 @@ class TestAtomicDeployRunner:
 
         success, ver_dir, err = runner.deploy(
             source_repo=tmp_deploy_env["source_repo"],
-            pr_sha="a" * 40,
+            pr_sha=tmp_deploy_env["head_sha"],
         )
 
         assert success is True
@@ -168,7 +182,7 @@ class TestDeployReceiverPipeline:
         )
 
         payload = {
-            "pr_sha": "c" * 40,
+            "pr_sha": tmp_deploy_env["head_sha"],
             "pr_number": 42,
             "pr_title": "Fix GRO-5000 deploy hook",
             "deployer": "github-action",
@@ -176,7 +190,7 @@ class TestDeployReceiverPipeline:
 
         record = pipeline.process_deploy(payload)
         assert record.success is True
-        assert record.pr_sha == "c" * 40
+        assert record.pr_sha == tmp_deploy_env["head_sha"]
         assert len(record.linear_transitions) == 1
         assert record.linear_transitions[0]["issue_id"] == "GRO-5000"
 
@@ -251,7 +265,7 @@ class TestMirrorFetchPiggyback:
 
         pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
         record = pipeline.process_deploy(
-            {"pr_sha": "d" * 40, "pr_number": 7, "pr_title": "mirror test"}
+            {"pr_sha": tmp_deploy_env["head_sha"], "pr_number": 7, "pr_title": "mirror test"}
         )
 
         assert record.success is True
@@ -272,7 +286,7 @@ class TestMirrorFetchPiggyback:
         )
 
         pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=broken)
-        record = pipeline.process_deploy({"pr_sha": "e" * 40})
+        record = pipeline.process_deploy({"pr_sha": tmp_deploy_env["head_sha"]})
 
         assert record.success is True
         assert record.mirror_refresh["refreshed"] is False
@@ -282,7 +296,7 @@ class TestMirrorFetchPiggyback:
         pipeline = _make_mirror_pipeline(
             tmp_deploy_env, mirror_repo=tmp_path / "no-such-dir"
         )
-        record = pipeline.process_deploy({"pr_sha": "f" * 40})
+        record = pipeline.process_deploy({"pr_sha": tmp_deploy_env["head_sha"]})
 
         assert record.success is True
         assert record.mirror_refresh == {
@@ -293,12 +307,29 @@ class TestMirrorFetchPiggyback:
     def test_mirror_refresh_git_missing_is_fail_closed(
         self, tmp_path, tmp_deploy_env, monkeypatch
     ):
-        # No git on PATH: subprocess raises FileNotFoundError, caught.
+        # git fetch blows up inside the mirror refresh only: stub
+        # subprocess in the receiver module's namespace so the deploy's own
+        # git validation still runs. The refresh must stay fail-closed.
         _, _, mirror = _make_git_mirror(tmp_path)
-        monkeypatch.setenv("PATH", "")
 
+        # git fetch blows up inside the mirror refresh only: raise for
+        # the fetch argv, delegate everything else (the deploy's own git
+        # validation must still run). The refresh must stay fail-closed.
+        real_run = subprocess.run
+
+        def selective_boom(*args, **kwargs):
+            argv = args[0] if args else kwargs.get("args", [])
+            if "fetch" in argv:
+                raise FileNotFoundError("git: command not found")
+            return real_run(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", selective_boom)
         pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
-        record = pipeline.process_deploy({"pr_sha": "g" * 40})
+        record = pipeline.process_deploy(
+            {"pr_sha": tmp_deploy_env["head_sha"]}
+        )
+
+        assert record.success is True
 
         assert record.success is True
         assert record.mirror_refresh["refreshed"] is False
@@ -329,7 +360,7 @@ class TestMirrorFetchPiggyback:
                 success=False, skipped=False, reason="boom"
             ),
         )
-        record = pipeline.process_deploy({"pr_sha": "i" * 40})
+        record = pipeline.process_deploy({"pr_sha": tmp_deploy_env["head_sha"]})
 
         assert record.success is False
         assert record.mirror_refresh == {
@@ -342,3 +373,163 @@ class TestMirrorFetchPiggyback:
         rec = DeployRecord.from_dict({"pr_sha": "j" * 40})
         assert rec.mirror_refresh == {}
         assert rec.to_dict()["mirror_refresh"] == {}
+class _FailingDeployRunner(AtomicDeployRunner):
+    """Deploy runner stub whose deploy() always fails with a fixed error."""
+
+    def __init__(self, err, versions_dir, symlink_path):
+        super().__init__(versions_dir=versions_dir, release_symlink=symlink_path)
+        self._err = err
+
+    def deploy(self, source_repo=None, pr_sha="", **kwargs):
+        return False, self.versions_dir / "prismatic-engine-deadbeef", self._err
+
+
+class _FailingHealthChecker:
+    """Health checker stub that always fails the version-dir check."""
+
+    def check(self, version_dir=None, release_symlink=None, dry_run=False):
+        return {
+            "passed": False,
+            "checks": {"version_dir_valid": False},
+            "details": {"version_dir_error": "missing"},
+        }
+
+
+class TestDeploySourceDecoupling:
+    """The deploy source is never derived from CWD (Sep 22, 2026)."""
+
+    def test_unset_source_repo_fails_fast_at_startup(self, monkeypatch):
+        monkeypatch.delenv("PRISMATIC_DEPLOY_SOURCE_REPO", raising=False)
+        with pytest.raises(RuntimeError, match="PRISMATIC_DEPLOY_SOURCE_REPO"):
+            DeployReceiverPipeline()
+
+    def test_env_source_repo_is_used(self, tmp_path, monkeypatch, tmp_deploy_env):
+        monkeypatch.setenv(
+            "PRISMATIC_DEPLOY_SOURCE_REPO", str(tmp_deploy_env["source_repo"])
+        )
+        pipeline = DeployReceiverPipeline()
+        assert pipeline.source_repo == tmp_deploy_env["source_repo"]
+
+    def test_none_source_repo_fails_before_copy(self, tmp_deploy_env):
+        runner = AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        )
+        success, version_dir, err = runner.deploy(
+            source_repo=None, pr_sha="a" * 40
+        )
+        assert success is False
+        assert "source_repo is required" in err
+        assert not version_dir.exists()
+
+    def test_non_git_source_fails_before_copy(self, tmp_deploy_env):
+        runner = AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        )
+        plain = tmp_deploy_env["versions_dir"] / "not-a-repo"
+        plain.mkdir()
+        (plain / "prismatic").mkdir()
+        success, version_dir, err = runner.deploy(
+            source_repo=plain, pr_sha="a" * 40
+        )
+        assert success is False
+        assert "not a git repository" in err
+        assert not version_dir.exists()
+
+    def test_source_missing_prismatic_dir_fails(self, tmp_path, tmp_deploy_env):
+        repo = tmp_path / "empty-repo"
+        _git("init", "-q", "-b", "main", str(repo), cwd=str(tmp_path))
+        runner = AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        )
+        success, version_dir, err = runner.deploy(
+            source_repo=repo, pr_sha="a" * 40
+        )
+        assert success is False
+        assert "no prismatic/" in err
+        assert not version_dir.exists()
+
+    def test_unresolvable_sha_fails(self, tmp_deploy_env):
+        runner = AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        )
+        success, version_dir, err = runner.deploy(
+            source_repo=tmp_deploy_env["source_repo"], pr_sha="f" * 40
+        )
+        assert success is False
+        assert "not a commit" in err
+        assert not version_dir.exists()
+
+    def test_version_dir_inside_source_is_refused(self, tmp_deploy_env):
+        runner = AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        )
+        nested = tmp_deploy_env["source_repo"] / "versions"
+        with pytest.raises(ValueError, match="inside source"):
+            runner._copy_release_files(
+                tmp_deploy_env["source_repo"],
+                nested / "prismatic-engine-abc",
+                tmp_deploy_env["head_sha"],
+            )
+
+    def test_rsync_fallback_has_timeout_and_exclusions(
+        self, tmp_deploy_env, monkeypatch
+    ):
+        import pe.deploy.integrate as integrate_mod
+
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen["argv"] = argv
+            seen["timeout"] = kwargs.get("timeout")
+            # pretend rsync does the copy
+            (tmp_deploy_env["versions_dir"] / "x").mkdir(exist_ok=True)
+            class R:
+                returncode = 0
+            return R()
+
+        monkeypatch.setattr(integrate_mod.subprocess, "run", fake_run)
+        runner = AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        )
+        dest = tmp_deploy_env["versions_dir"] / "prismatic-engine-rsynctest"
+        runner._copy_release_files(
+            tmp_deploy_env["source_repo"],
+            dest,
+            tmp_deploy_env["head_sha"],
+            copy_method="rsync",
+        )
+        assert seen["timeout"] == 900
+        assert "--exclude=versions/" in seen["argv"]
+        assert "--exclude=releases/" in seen["argv"]
+        assert "--exclude=.git" in seen["argv"]
+
+    def test_health_check_preserves_deploy_step_error(self, tmp_path):
+        versions = tmp_path / "versions"
+        releases = tmp_path / "releases"
+        versions.mkdir()
+        releases.mkdir()
+        pipeline = DeployReceiverPipeline(
+            source_repo=tmp_path / "repo",
+            deploy_runner=_FailingDeployRunner(
+                "rsync died: No space left on device",
+                versions_dir=versions,
+                symlink_path=releases / "prismatic-engine",
+            ),
+            health_checker=_FailingHealthChecker(),
+            transitioner=LinearDeployTransitioner(dry_run=True),
+            store=DeployManifestStore(db_path=tmp_path / "deploy_records.json"),
+            gateway_redeployer=_StubGatewayRedeployer(),
+            mirror_repo=tmp_path / "no-such-dir",
+        )
+        record = pipeline.process_deploy({"pr_sha": "a" * 40, "pr_number": 9})
+        assert record.success is False
+        # The underlying deploy error must survive; the health failure is
+        # appended, not substituted (Sep 22, 2026 incident).
+        assert "rsync died: No space left on device" in record.failure_reason
+        assert "Post-deploy health check failed" in record.failure_reason
