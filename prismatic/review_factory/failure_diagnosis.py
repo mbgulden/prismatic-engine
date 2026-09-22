@@ -333,12 +333,47 @@ class FailureDiagnoser:
             )
         except DecisionError as exc:
             logger.warning("Jev diagnosis call failed closed: %s", exc)
+            # Watchdog metrics feed (Phase 0 observe-only).
+            # A feed failure must never break diagnosis.
+            try:
+                from prismatic.review_factory.metrics_feed import record_jev_call
+
+                record_jev_call(
+                    call_site="failure_diagnosis.FailureDiagnoser._consult_jev",
+                    ok=False,
+                    error=str(exc)[:300],
+                )
+            except Exception:
+                logger.warning("watchdog feed record_jev_call failed", exc_info=True)
             return "errored", None
         except Exception as exc:  # fail-closed on anything unexpected
             logger.warning("Jev diagnosis call failed closed (unexpected): %r", exc)
+            # Watchdog metrics feed (Phase 0 observe-only).
+            # A feed failure must never break diagnosis.
+            try:
+                from prismatic.review_factory.metrics_feed import record_jev_call
+
+                record_jev_call(
+                    call_site="failure_diagnosis.FailureDiagnoser._consult_jev",
+                    ok=False,
+                    error=str(exc)[:300],
+                )
+            except Exception:
+                logger.warning("watchdog feed record_jev_call failed", exc_info=True)
             return "errored", None
         advice = result.to_audit_dict()
         advice["advisory_only"] = True
+        # Watchdog metrics feed (Phase 0 observe-only).
+        # A feed failure must never break diagnosis.
+        try:
+            from prismatic.review_factory.metrics_feed import record_jev_call
+
+            record_jev_call(
+                call_site="failure_diagnosis.FailureDiagnoser._consult_jev",
+                ok=True,
+            )
+        except Exception:
+            logger.warning("watchdog feed record_jev_call failed", exc_info=True)
         return "advised", advice
 
     # -- public API ----------------------------------------------------
