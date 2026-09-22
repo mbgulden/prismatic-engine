@@ -1,0 +1,1 @@
+{"_comment":"prompt_id -> {version, file}. Empty: the primitive ships no call sites, so no prompts are bundled. Callers register their own versioned prompt files here (or in their own directories via PromptRegistry(dirs=[...])). Traces record prompt_id@version#sha256.","prompts":{}}
