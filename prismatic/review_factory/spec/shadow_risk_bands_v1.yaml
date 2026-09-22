@@ -1,0 +1,27 @@
+# Shadow risk bands — versioned config for Jev-assisted calls.
+#
+# NOT USED YET: Jev is not built, so the shadow observer records
+# jev_score: null and never consults these bands. They exist so the
+# schema, thresholds, and fail-closed behavior are decided BEFORE any
+# model output can influence a call.
+#
+# Versioned: never edit in place — add shadow_risk_bands_v2.yaml.
+
+version: bands-v1
+
+# Jev Score("safe_to_merge") interpretation (0 = certainly unsafe,
+# 1 = certainly safe). Conservative initial values.
+auto_below: 0.2
+human_above: 0.6
+
+# Score in [0.2, 0.6] is the ambiguous middle: system call stays "skip"
+# (human decides). No auto-merge from the middle, ever.
+
+# On Jev timeout/error/missing backend: fail closed — treat as
+# human-required. A failed Jev call never invents a decision.
+on_jev_error: fail_closed
+
+# Guardrails (enforced when bands go live, recorded here for the audit):
+# bands may tighten automatically at any time; loosening requires evidence
+# and Michael's word. Auto-tighten-only until the learn loop proves otherwise.
+loosening_requires: michael_word_and_evidence
