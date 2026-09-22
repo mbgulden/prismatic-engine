@@ -56,6 +56,7 @@ class DeployRecord:
     duration_ms: int = 0
     success: bool = True
     failure_reason: str | None = None
+    dry_run: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -79,6 +80,7 @@ class DeployRecord:
             duration_ms=d.get("duration_ms", 0),
             success=d.get("success", True),
             failure_reason=d.get("failure_reason"),
+            dry_run=d.get("dry_run", False),
         )
 
 
