@@ -42,7 +42,11 @@ import threading
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; runtime uses _swarmcron_or_raise()
+    from swarmcron.core import SwarmCronRegistry
+    from swarmcron.scheduler import CronScheduleEvaluator
 
 from prismatic.interface.plugin import (
     PluginContext,
