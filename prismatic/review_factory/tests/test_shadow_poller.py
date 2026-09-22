@@ -248,3 +248,106 @@ def test_poll_failing_gate_produces_skip_call(tmp_path):
     assert len(out) == 1
     assert out[0].call == "skip"
     assert any("ruff_clean" in r for r in out[0].reasons)
+
+
+# ── GhCliPRSource parsing (gh --jq streaming regression) ──────────────
+#
+# gh --jq streams one JSON value per line, not a JSON array. The filters
+# must therefore be wrapped in brackets so _gh always parses a list.
+# These tests feed the real parsing path (mocked subprocess only) with
+# the exact bytes gh would stream for the wrapped filters.
+
+from unittest import mock  # noqa: E402
+
+from prismatic.review_factory import shadow_poller  # noqa: E402
+
+
+def _fake_proc(stdout: str):
+    proc = mock.Mock()
+    proc.returncode = 0
+    proc.stdout = stdout
+    proc.stderr = ""
+    return proc
+
+
+def _jq_arg(captured: dict) -> str:
+    args = captured["args"]
+    return args[args.index("--jq") + 1]
+
+
+def test_get_check_runs_single_run_parses_to_one_dict():
+    # gh streams one JSON array per page for the wrapped filter.
+    captured: dict = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        return _fake_proc(
+            '[{"name": "smoke (ruff lint)", "status": "completed",'
+            ' "conclusion": "success"}]\n'
+        )
+
+    src = shadow_poller.GhCliPRSource(repo="owner/repo")
+    with mock.patch.object(shadow_poller.subprocess, "run", fake_run):
+        runs = src.get_check_runs("a" * 40)
+    assert runs == [
+        {
+            "name": "smoke (ruff lint)",
+            "status": "completed",
+            "conclusion": "success",
+        }
+    ]
+    # The old unwrapped filter streamed a bare object for one run, so
+    # list(dict) yielded keys and this crashed with a str .get error.
+    assert checks_settled(runs) is True
+    jq = _jq_arg(captured)
+    assert jq.startswith("[") and jq.endswith("]"), jq
+
+
+def test_get_check_runs_multiple_runs_parses_to_list():
+    def fake_run(args, **kwargs):
+        return _fake_proc(
+            '[{"name": "a", "status": "completed", "conclusion": "success"},'
+            ' {"name": "b", "status": "in_progress", "conclusion": null}]\n'
+        )
+
+    src = shadow_poller.GhCliPRSource(repo="owner/repo")
+    with mock.patch.object(shadow_poller.subprocess, "run", fake_run):
+        runs = src.get_check_runs("b" * 40)
+    assert len(runs) == 2
+    assert checks_settled(runs) is False
+
+
+def test_get_check_runs_empty_stays_empty():
+    def fake_run(args, **kwargs):
+        return _fake_proc("[]\n")
+
+    src = shadow_poller.GhCliPRSource(repo="owner/repo")
+    with mock.patch.object(shadow_poller.subprocess, "run", fake_run):
+        assert src.get_check_runs("c" * 40) == []
+
+
+def test_get_pr_files_single_file_returns_one_path():
+    # gh streams one JSON array per page for the wrapped filter.
+    captured: dict = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        return _fake_proc('["prismatic/review_factory/shadow_poller.py"]\n')
+
+    src = shadow_poller.GhCliPRSource(repo="owner/repo")
+    with mock.patch.object(shadow_poller.subprocess, "run", fake_run):
+        files = src.get_pr_files(101)
+    # The old unwrapped filter streamed a bare string for one file, so
+    # the old code returned a list of individual characters.
+    assert files == ["prismatic/review_factory/shadow_poller.py"]
+    jq = _jq_arg(captured)
+    assert jq.startswith("[") and jq.endswith("]"), jq
+
+
+def test_get_pr_files_multiple_files():
+    def fake_run(args, **kwargs):
+        return _fake_proc('["a.md", "b.md"]\n')
+
+    src = shadow_poller.GhCliPRSource(repo="owner/repo")
+    with mock.patch.object(shadow_poller.subprocess, "run", fake_run):
+        assert src.get_pr_files(102) == ["a.md", "b.md"]

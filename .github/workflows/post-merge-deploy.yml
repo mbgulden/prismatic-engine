@@ -31,7 +31,7 @@ jobs:
       - name: Calculate Payload & HMAC Signature
         id: payload
         env:
-          HMAC_SECRET: ${{ secrets.DEPLOY_HMAC_SECRET }}
+HMAC_SECRET: <redacted>
         run: |
           if [ -z "$HMAC_SECRET" ]; then
             echo "::error::DEPLOY_HMAC_SECRET repository secret is missing!"
@@ -55,7 +55,17 @@ jobs:
           echo "payload=$PAYLOAD_JSON" >> $GITHUB_OUTPUT
           echo "sig=$HMAC_SIG" >> $GITHUB_OUTPUT
 
+      - name: Dry-run — deploy trigger skipped
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}
+        run: |
+          echo "DRY RUN: deploy trigger was NOT sent to the deploy receiver."
+          echo "The payload above was computed and HMAC-signed to validate the signing path."
+          echo "Re-run this workflow with dry_run=false to perform a real deploy."
+
       - name: Send Post-Merge Deploy Trigger to Receiver
+        # The dry_run workflow_dispatch input is a real gate: push events always
+        # deploy; manual dispatches deploy only when dry_run is explicitly false.
+        if: ${{ github.event_name == 'push' || inputs.dry_run == 'false' }}
         env:
           PAYLOAD_JSON: ${{ steps.payload.outputs.payload }}
           HMAC_SIG: ${{ steps.payload.outputs.sig }}
