@@ -321,11 +321,28 @@ def poll_once(
             )
             continue
 
-        inp: ShadowInput = load_input_from_dict(build_input_dict(pr, check_runs, files))
-        if sink is None:
-            decision = observe(inp, policy, bands, tier_engine)
-        else:
-            decision = observe(inp, policy, bands, tier_engine, sink)
+        try:
+            inp: ShadowInput = load_input_from_dict(
+                build_input_dict(pr, check_runs, files)
+            )
+        except Exception as exc:  # malformed gh payload: quarantine this PR
+            logger.warning(
+                "PR #%d payload unmappable (%s: %s); deferring to next poll",
+                pr_number,
+                type(exc).__name__,
+                exc,
+            )
+            continue
+        try:
+            if sink is None:
+                decision = observe(inp, policy, bands, tier_engine)
+            else:
+                decision = observe(inp, policy, bands, tier_engine, sink)
+        except Exception:  # never let one PR's evaluation abort the poll
+            logger.exception(
+                "PR #%d evaluation failed; continuing with next PR", pr_number
+            )
+            continue
         if decision is not None:
             seen.add(key)
             emitted.append(decision)
