@@ -51,6 +51,7 @@ class ReviewJobState(enum.Enum):
     MERGING = "merging"
     MERGED = "merged"
     MERGE_VERIFICATION_FAILED = "merge_verification_failed"
+    SUPERSEDED = "superseded"  # terminal: candidate already in main (zombie guard)
 
     @staticmethod
     def valid_transitions() -> dict[str, list[str]]:
@@ -59,22 +60,28 @@ class ReviewJobState(enum.Enum):
         Keys are source states, values are lists of valid target states.
         """
         S = ReviewJobState
+        # SUPERSEDED is reachable from every non-terminal state: it is the
+        # zombie-job guard's terminal verdict for candidates that are
+        # already merged into main. Terminal states never transition.
         return {
             S.QUEUED.value: [
                 S.VERIFYING.value,
                 S.QUARANTINED.value,  # poison: too many consecutive failures
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
             ],
             S.VERIFYING.value: [
                 S.REVIEW_READY.value,
                 S.QUEUED.value,
                 S.REPAIR_REQUIRED.value,  # verification checks failed -> producer rework
                 S.QUARANTINED.value,  # poison: too many consecutive failures
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
             ],
             S.REVIEW_READY.value: [
                 S.REVIEWING.value,
                 S.REPAIR_REQUIRED.value,
                 S.QUEUED.value,  # requeue for re-verification (e.g. manifest not persisted)
                 S.QUARANTINED.value,  # poison: too many consecutive failures
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
             ],
             S.REVIEWING.value: [
                 S.MERGE_READY.value,
@@ -82,20 +89,37 @@ class ReviewJobState(enum.Enum):
                 S.REJECTED.value,
                 S.REVIEW_READY.value,
                 S.QUARANTINED.value,  # poison: too many consecutive failures
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
             ],
-            S.REPAIR_REQUIRED.value: [S.QUEUED.value],
+            S.REPAIR_REQUIRED.value: [
+                S.QUEUED.value,
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
+            ],
             S.REJECTED.value: [],  # terminal
             S.QUARANTINED.value: [],  # terminal (poison jobs; manual recovery)
-            S.MERGE_READY.value: [S.MERGE_AUTHORIZED.value, S.REPAIR_REQUIRED.value],
+            S.MERGE_READY.value: [
+                S.MERGE_AUTHORIZED.value,
+                S.REPAIR_REQUIRED.value,
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
+            ],
             # A dry-run authorization (or any unused authorization) may be
             # stood down back to MERGE_READY: the spent auth row is marked
             # consumed and the audit trail records the outcome. This is the
             # ONLY way back -- it keeps dry runs repeatable and never
             # strands a job.
-            S.MERGE_AUTHORIZED.value: [S.MERGING.value, S.MERGE_READY.value],
-            S.MERGING.value: [S.MERGED.value, S.MERGE_VERIFICATION_FAILED.value],
+            S.MERGE_AUTHORIZED.value: [
+                S.MERGING.value,
+                S.MERGE_READY.value,
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
+            ],
+            S.MERGING.value: [
+                S.MERGED.value,
+                S.MERGE_VERIFICATION_FAILED.value,
+                S.SUPERSEDED.value,  # zombie guard: candidate already in main
+            ],
             S.MERGED.value: [],  # terminal
             S.MERGE_VERIFICATION_FAILED.value: [],  # terminal (manual recovery)
+            S.SUPERSEDED.value: [],  # terminal (candidate already in main; history preserved)
         }
 
     def can_transition_to(self, target: ReviewJobState) -> bool:
