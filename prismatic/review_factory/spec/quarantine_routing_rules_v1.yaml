@@ -1,0 +1,34 @@
+# Novelty quarantine routing rules — versioned policy data.
+#
+# Rule (build-sequence #5): behavior changes ship as NEW versioned files;
+# this file is never edited in place. A v2 supersedes v1 by filename.
+#
+# Layout:
+#   familiar_precedent_min: a candidate needs at least this many precedent
+#     matches to be eligible for the familiar short-circuit.
+#   familiar_path_patterns: regexes over changed paths; EVERY changed path
+#     must match at least one for the familiar short-circuit.
+#   deterministic_quarantine_rules: ordered; evaluated BEFORE the familiar
+#     rule (fail-closed ordering). Each rule has a stable name (recorded in
+#     the audit signal) and a `when` description of its condition. The
+#     semantics live in prismatic/review_factory/quarantine_routing.py and
+#     the rule set here must be exactly the three known triggers — an
+#     unknown name is a config error.
+
+version: quarantine-routing-rules-v1
+
+familiar_precedent_min: 3
+
+familiar_path_patterns:
+  - "^docs/"
+  - "^tests/"
+  - "^prismatic/review_factory/tests/"
+  - "\\.(md|txt|yaml|yml|json)$"
+
+deterministic_quarantine_rules:
+  - name: migration-without-tests
+    when: has_migration and not has_test_change
+  - name: unknown-error-classes
+    when: unknown_error_classes is non-empty
+  - name: first-time-event-types
+    when: first_time_event_types is non-empty

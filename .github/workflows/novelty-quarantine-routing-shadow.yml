@@ -1,0 +1,64 @@
+name: Novelty Quarantine Routing (Shadow)
+
+# Jev #27 shadow observer: hybrid deterministic + Jev-gray-zone routing
+# advice for PR novelty ("is this PR weird enough to hold?").
+#
+# Observe-only: the recommendation is appended to the JSONL shadow audit
+# log and printed to the job summary. Nothing is quarantined, halted,
+# paged, or gated. The Jev call site ships default-off, so the workflow
+# makes zero Jev calls as configured.
+#
+# Event-driven: pull_request events on the self-hosted runner (no public
+# ingress, so inbound webhooks are impossible). workflow_dispatch is a
+# manual backstop. No polling, no cron.
+#
+# Note: merge-main back-merge PRs (a branch catching up with main) carry
+# large diffs that usually land in the gray zone; a `quarantine`
+# recommendation there is expected shadow noise, not a signal.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to route (shadow)"
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer event supersedes an older one for the same PR.
+concurrency:
+  group: novelty-quarantine-routing-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  route-quarantine:
+    name: route PR novelty (advisory, shadow)
+    if: >
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'workflow_dispatch' && inputs.pr_number != '')
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout observer code
+        uses: actions/checkout@v4
+
+      - name: Route (shadow, no action)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || inputs.pr_number }}"
+          /home/ubuntu/.prismatic/venv_current/bin/python \
+            scripts/quarantine_routing_shadow.py route-pr \
+              --pr-number "$PR_NUMBER" --repo "${{ github.repository }}"
+
+      - name: Upload shadow audit log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: novelty-quarantine-routing-shadow-${{ github.run_id }}
+          path: /home/ubuntu/.prismatic/audit/novelty-quarantine-routing-shadow.jsonl
+          if-no-files-found: warn
