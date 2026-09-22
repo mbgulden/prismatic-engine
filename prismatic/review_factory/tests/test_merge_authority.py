@@ -423,7 +423,9 @@ def test_real_swarmlock_mutex_serializes(tmp_path):
         )
         decision = auth.request_merge(_green_input())
         assert decision.decision == "refused"
-        assert decision.reason.startswith("merge_mutex_unavailable")
+        # Pinned swarmlock lease() is lazy: contention raises at __enter__,
+        # so the authority reports it via the executor-error path.
+        assert decision.reason.startswith("executor_error")
         assert executor.calls == []
 
     # Mutex free: the same request is now allowed through the real mutex.
