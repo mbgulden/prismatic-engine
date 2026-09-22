@@ -37,7 +37,7 @@ from prismatic.review_factory.models import RiskTier
 from prismatic.review_factory.policy import PolicyEngine
 
 SPEC_DIR = Path(__file__).resolve().parent / "spec"
-DEFAULT_POLICY_FILE = SPEC_DIR / "shadow_merge_policy_v1.yaml"
+DEFAULT_POLICY_FILE = SPEC_DIR / "shadow_merge_policy_v2.yaml"
 DEFAULT_SHADOW_LOG = Path(
     os.path.expanduser("~/.prismatic/audit/shadow-decisions.jsonl")
 )

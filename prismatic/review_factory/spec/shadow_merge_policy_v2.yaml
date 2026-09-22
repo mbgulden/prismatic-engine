@@ -1,0 +1,51 @@
+# Shadow merge policy — versioned config for the Phase 0 shadow observer.
+#
+# The shadow observer runs on live PRs, logs every decision, and changes
+# nothing. This file is the complete deterministic policy it evaluates.
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the observer at it.
+#
+# Status: ENABLED (observe-only). `enabled: true` means observe() emits an
+# audit signal per evaluated PR; the engine still ignores every decision.
+# v1 is preserved untouched per its own rule.
+# Enabled 2026-09-22 on Michael's explicit word ("turn it on and wire it up").
+
+version: shadow-v2
+enabled: true
+
+# Deterministic gates, evaluated in order. The system's call is "merge"
+# only if EVERY gate passes AND the tier check below passes.
+# Gate ids map to fields on the observer's input — no network calls.
+gates:
+  - id: ci_green_self_hosted
+    description: CI green on the self-hosted webtop-hermes runner
+  - id: ruff_clean
+    description: ruff check and ruff format clean (CI-pinned ruff)
+  - id: verdict_not_reject
+    description: deterministic review verdict is mergeable (see verdicts_mergeable)
+  - id: no_merge_conflicts
+    description: PR is mergeable with no conflicts
+  - id: branch_protection_satisfied
+    description: branch protection required checks are satisfied
+
+# Verdicts that keep the verdict_not_reject gate green. A deterministic
+# REPAIR or REJECT verdict fails the gate — Jev (when wired) may escalate
+# but can never clear a deterministic REJECT.
+verdicts_mergeable:
+  - CLEAN
+
+# Tier policy is single-sourced: the observer classifies changed files with
+# the existing PolicyEngine and this tier policy file.
+tier_policy_file: prismatic/review_factory/spec/policy_file_v1.yaml
+
+# Shadow "merge" calls are limited to these tiers. Conservative initial
+# value: tiers 0 and 1 only (the Phase-1-eligible set). Tier 2/3 always
+# produce a "skip" call — human-only, unchanged.
+shadow_merge_max_tier: 1
+
+# Jev is not built yet. The observer records jev_score: null and does not
+# consult bands for its call. When Jev lands, bands come from
+# shadow_risk_bands_v1.yaml (auto_below / human_above), fail-closed on error.
+jev:
+  enabled: false
+  bands_file: prismatic/review_factory/spec/shadow_risk_bands_v1.yaml

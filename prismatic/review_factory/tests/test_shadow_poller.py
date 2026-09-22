@@ -11,6 +11,7 @@ from pathlib import Path
 
 from prismatic.review_factory.policy import PolicyEngine
 from prismatic.review_factory.shadow_observer import (
+    SPEC_DIR,
     RiskBands,
     ShadowPolicy,
     load_policy,
@@ -216,7 +217,9 @@ def test_poll_defers_unsettled_and_unknown(tmp_path):
 def test_poll_default_off_emits_nothing(tmp_path):
     pr = _pr(sha="a" * 40)
     src = FakeSource([pr], checks={"a" * 40: ALL_GREEN})
-    policy = _policy(tmp_path)
+    # The shipped default policy is now enabled (v2); the default-off path
+    # is pinned to the preserved v1 file.
+    policy = load_policy(SPEC_DIR / "shadow_merge_policy_v1.yaml")
     assert policy.enabled is False
     out = poll_once(
         src,
