@@ -1,0 +1,45 @@
+# Auto-merge risk bands — versioned config for Jev-assisted auto-merge calls.
+#
+# Extends the shadow bands (spec/shadow_risk_bands_v1.yaml) into the bands
+# the chunk-4 learn loop tunes. NOT CONSULTED BY ANY LIVE CODE YET: Jev is
+# not built, the merge authority is hard-disabled, and the learn loop ships
+# hard-disabled. These values exist so the schema, thresholds, and
+# fail-closed behavior are decided BEFORE any band can influence a call.
+#
+# Versioned: never edit in place — add auto_merge_bands_v2.yaml.
+#
+# Semantics (same as the shadow bands):
+#   score < auto_below            -> refuse (Jev says unsafe)
+#   auto_below <= score <= human_above -> ambiguous middle: human decides
+#   score > human_above           -> Jev-clear for the deterministic path
+#
+# Tightening = making auto-merge HARDER. Per-key tighten directions:
+#   human_above: up   (require higher confidence to clear)
+#   auto_below:  up   (refuse more of the low end)
+
+version: auto-bands-v1
+
+auto_below: 0.20
+human_above: 0.60
+
+# On Jev timeout/error/missing backend: fail closed — treat as
+# human-required. A failed Jev call never invents a decision.
+on_jev_error: fail_closed
+
+# Hard caps. Proposals outside these are refused, not clamped —
+# the learn loop never silently rewrites a band.
+human_above_min: 0.40
+human_above_max: 0.90
+auto_below_min: 0.05
+auto_below_max: 0.50
+
+# Which direction is "tighter" for each band key.
+tighten_direction:
+  human_above: up
+  auto_below: up
+
+# Guardrails (enforced when bands go live, recorded here for the audit):
+# bands may tighten automatically at any time; loosening requires evidence
+# and Michael's word. Auto-tighten-only until the learn loop proves
+# otherwise.
+loosening_requires: michael_word_and_evidence

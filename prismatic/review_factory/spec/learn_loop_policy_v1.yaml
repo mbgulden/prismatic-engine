@@ -1,0 +1,54 @@
+# Learn-loop policy — versioned config for the chunk-4 learn loop.
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file (learn_loop_policy_v2.yaml) and point the learn loop at it.
+#
+# Status: HARD-DISABLED. `enabled: false` means LearnLoop.self_review()
+# returns "disabled" without reading any log, and LearnLoop.record_outcome()
+# refuses every call. Enabling requires Michael's explicit word (a
+# phase-advancement step per the rollout ladder).
+#
+# Mode: "report-only". The loop proposes band changes and writes
+# plain-language reports; it never applies a change. "propose" mode is a
+# later phase (it changes who consumes proposals, not the safety rules —
+# loosening stays rate-limited, beyond-limit loosening stays
+# requires_michael).
+#
+# Ground truth is mechanical: rolled_back = bad merge, an explicit "clean"
+# outcome recorded after good_after_days = good merge. Nothing here infers
+# cleanliness from silence — an outcome row with no match is "pending", not
+# clean, and a pending merge breaks the consecutive-clean streak.
+
+version: learn-v1
+enabled: false
+mode: report-only  # report-only | propose
+
+# How many days of the decision log each self-review covers.
+review_window_days: 30
+
+# A merge counts as "clean" only when an explicit clean outcome row exists.
+# The 7-day clean-verification backstop (a later chunk) is the only writer
+# allowed to record a clean outcome after this many days with no rollback.
+good_after_days: 7
+
+# Loosening evidence bar: N consecutive allowed merges with explicit clean
+# outcomes, newest-first, unbroken by rollback / escalation / pending.
+# 20 mirrors the Phase-1 -> 2 gate shape (20 consecutive auto-merges,
+# 0 rollbacks).
+clean_outcomes_for_loosen: 20
+
+# Tighten triggers (tighten any time — bad outcomes are evidence enough).
+# rollback_rate = rolled_back / allowed in the review window.
+tighten_rollback_rate: 0.03
+# escalation_rate = escalated / allowed in the review window.
+tighten_escalation_rate: 0.35
+
+# Loosen rate limit: total loosening of one band key per 7-day window.
+# Beyond this, a loosen proposal is still generated but marked
+# requires_michael: true — the learn loop blesses nothing it cannot
+# mechanically justify.
+max_loosen_per_week: 0.05
+
+# Proposal step sizes (band units, bands are fractions in [0, 1]).
+tighten_step: 0.05
+loosen_step: 0.05
