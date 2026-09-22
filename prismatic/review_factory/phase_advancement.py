@@ -44,8 +44,11 @@ except ImportError:  # pragma: no cover - exercised only without PyYAML
     _HAS_YAML = False
 
 from prismatic.review_factory.shadow_agreement import (
+    AGREEMENT_METRIC_V1,
+    AGREEMENT_METRIC_V2,
     agreement_rate,
     shadow_exit_met,
+    shadow_exit_met_v2,
 )
 
 SPEC_DIR = Path(__file__).resolve().parent / "spec"
@@ -144,6 +147,10 @@ class PhasePolicy:
     advancements_enabled: bool
     approver: str
     chunks: dict[str, Any] = field(default_factory=dict)
+    # Which agreement metric the Phase 0 exit gate uses: "v1" (legacy flat
+    # rate) or "v2" (decayed, outcome-classified). Default "v1": flipping
+    # the flag is a versioned config change on Michael's word.
+    agreement_metric: str = AGREEMENT_METRIC_V1
     source_file: str = ""
 
     @classmethod
@@ -158,12 +165,18 @@ class PhasePolicy:
             raise PhaseAdvancementError(
                 f"phase policy has unknown phase {phase}: {source_file}"
             )
+        metric = str(data.get("agreement_metric", AGREEMENT_METRIC_V1))
+        if metric not in (AGREEMENT_METRIC_V1, AGREEMENT_METRIC_V2):
+            raise PhaseAdvancementError(
+                f"phase policy has unknown agreement_metric {metric!r}: {source_file}"
+            )
         return cls(
             version=str(data.get("version", "unknown")),
             phase=phase,
             advancements_enabled=bool(data.get("advancements_enabled", False)),
             approver=str(data.get("approver", "")),
             chunks=dict(data.get("chunks", {}) or {}),
+            agreement_metric=metric,
             source_file=source_file,
         )
 
@@ -210,6 +223,7 @@ def render_policy_yaml(policy: PhasePolicy) -> str:
         "phase": policy.phase,
         "advancements_enabled": policy.advancements_enabled,
         "approver": policy.approver,
+        "agreement_metric": policy.agreement_metric,
         "chunks": policy.chunks,
     }
     return yaml.safe_dump(data, sort_keys=False)
@@ -243,7 +257,10 @@ def _shadow_signal_complete(signal: dict[str, Any]) -> bool:
     return all(k in metadata for k in SHADOW_SIGNAL_METADATA_REQUIRED)
 
 
-def check_phase0_exit(evidence: dict[str, Any]) -> ExitResult:
+def check_phase0_exit(
+    evidence: dict[str, Any],
+    agreement_metric: str = AGREEMENT_METRIC_V1,
+) -> ExitResult:
     """Phase 0 -> 1 exit criteria (build-sequence.md §Phase gates).
 
     Pure: evidence is already-parsed data, never fetched here.
@@ -252,22 +269,62 @@ def check_phase0_exit(evidence: dict[str, Any]) -> ExitResult:
       - bad_merge_calls: int
       - shadow_signals: list of emitted shadow audit-signal dicts
       - watchdog: {enabled: bool, mode: str} parsed from the watchdog policy
+      - agreement_metric (optional): "v1" (default, legacy flat rate) or
+        "v2" (decayed, outcome-classified). Unknown values fail closed.
     """
     records = evidence.get("shadow_records", [])
     bad_merge_calls = int(evidence.get("bad_merge_calls", 0))
     signals = evidence.get("shadow_signals", [])
     watchdog = evidence.get("watchdog", {}) or {}
 
+    watchdog_ok = (
+        bool(watchdog.get("enabled")) and watchdog.get("mode") == "monitor-only"
+    )
+    complete = all(_shadow_signal_complete(s) for s in signals) if signals else False
+
+    if agreement_metric == AGREEMENT_METRIC_V2:
+        gate = shadow_exit_met_v2(records, bad_merge_calls=bad_merge_calls)
+        checks = {
+            "min_prs_resolved": bool(gate["checks"]["min_prs"]),
+            "min_agreement": bool(gate["checks"]["min_agreement_v2"]),
+            "min_effective_sample": bool(gate["checks"]["min_effective_n"]),
+            "zero_bad_merge_calls": bool(gate["checks"]["zero_bad_merges"]),
+            "watchdog_armed_monitor_only": watchdog_ok,
+            "all_shadow_signals_complete": complete,
+        }
+        rate = gate["decayed_rate"]
+        trend = gate["trend_7d"]
+        detail = (
+            f"agreement_metric=v2 n_decided={gate['n_decided']} "
+            f"effective_n={gate['effective_n']:.2f} "
+            f"decayed_rate={'%.3f' % rate if rate is not None else 'n/a'} "
+            f"trend_7d={'%.3f' % trend if trend is not None else 'n/a'} "
+            f"d1={gate['n_d1']} d2={gate['n_d2']} d3={gate['n_d3']} "
+            f"pending={gate['n_pending']} legacy={gate['n_legacy']} "
+            f"bad_merge_calls={bad_merge_calls} "
+            f"watchdog={watchdog.get('enabled')}/{watchdog.get('mode')} "
+            f"shadow_signals={len(signals)} complete={complete}"
+        )
+        return ExitResult(met=all(checks.values()), checks=checks, detail=detail)
+
+    if agreement_metric != AGREEMENT_METRIC_V1:
+        return ExitResult(
+            met=False,
+            checks={"known_agreement_metric": False},
+            detail=(
+                f"unknown agreement_metric {agreement_metric!r}; refusing "
+                "(expected 'v1' or 'v2')"
+            ),
+        )
+
     gate = shadow_exit_met(records, bad_merge_calls=bad_merge_calls)
     stats = agreement_rate(records)
-    complete = all(_shadow_signal_complete(s) for s in signals) if signals else False
 
     checks = {
         "min_prs_resolved": bool(gate["checks"]["min_prs"]),
         "min_agreement": bool(gate["checks"]["min_agreement"]),
         "zero_bad_merge_calls": bool(gate["checks"]["zero_bad_merges"]),
-        "watchdog_armed_monitor_only": bool(watchdog.get("enabled"))
-        and watchdog.get("mode") == "monitor-only",
+        "watchdog_armed_monitor_only": watchdog_ok,
         "all_shadow_signals_complete": complete,
     }
     rate = stats["rate"]
@@ -412,6 +469,14 @@ def evaluate_exit_criteria(
             met=False,
             checks={"known_step": False},
             detail=f"no exit criteria defined for {from_phase} -> {to_phase}",
+        )
+    if (from_phase, to_phase) == (PHASE_0_SHADOW, PHASE_1_VERIFY):
+        # The agreement metric version rides in the evidence bundle; the
+        # heartbeat (main()) sets it from the active phase policy.
+        # Default "v1": callers that predate the flag get legacy behavior.
+        return check_phase0_exit(
+            evidence,
+            agreement_metric=str(evidence.get("agreement_metric", AGREEMENT_METRIC_V1)),
         )
     return checker(evidence)
 
@@ -843,7 +908,10 @@ class PhaseAdvancement:
         )
 
         # 4. Exit criteria re-evaluated at execution time on LIVE evidence.
-        #    An approval never waives evidence.
+        #    An approval never waives evidence. The agreement-metric flag
+        #    comes from the active policy unless the caller set it.
+        evidence = dict(evidence)
+        evidence.setdefault("agreement_metric", policy.agreement_metric)
         exit_result = evaluate_exit_criteria(
             request.from_phase, request.to_phase, evidence
         )
@@ -866,6 +934,7 @@ class PhaseAdvancement:
             advancements_enabled=policy.advancements_enabled,
             approver=policy.approver,
             chunks=dict(policy.chunks),
+            agreement_metric=policy.agreement_metric,
         )
         policy_file = self.spec_dir / f"phase_policy_v{next_version}.yaml"
         policy_file.write_text(render_policy_yaml(new_policy), encoding="utf-8")
@@ -1007,10 +1076,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         spec_dir=args.spec_dir, log_path=args.log, audit_sink=args.audit_sink
     )
     try:
-        from_phase = adv.current_phase()
+        policy = adv.current_policy()
     except PhaseAdvancementError as exc:
         print(json.dumps({"status": "error", "error": str(exc)}))
         return 1
+    from_phase = policy.phase
 
     if from_phase >= MAX_PHASE:
         print(json.dumps({"status": "at-max-phase", "phase": from_phase}))
@@ -1031,6 +1101,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     except (PhaseAdvancementError, OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "error", "error": f"cannot load evidence: {exc}"}))
         return 1
+
+    # The Phase 0 gate reads its agreement-metric version from the evidence
+    # bundle; the heartbeat stamps the active policy's flag in. Callers that
+    # build evidence by hand get the legacy default ("v1").
+    evidence["agreement_metric"] = policy.agreement_metric
 
     result = evaluate_exit_criteria(from_phase, to_phase, evidence)
     state: dict[str, Any] = {
