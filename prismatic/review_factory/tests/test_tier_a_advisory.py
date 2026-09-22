@@ -97,9 +97,7 @@ def test_tier_a_non_failure_conclusions_stay_reject():
 def test_tier_a_missing_or_unfinished_stays_reject():
     assert review_verdict([]) == "REJECT"  # no payload at all
     assert review_verdict([_run(RUFF)]) == "REJECT"  # check absent
-    assert (
-        review_verdict([_run(TIER_A, status="in_progress")]) == "REJECT"
-    )
+    assert review_verdict([_run(TIER_A, status="in_progress")]) == "REJECT"
 
 
 def test_tier_a_advisory_helper_is_narrow():
@@ -223,8 +221,7 @@ def test_observer_skips_advisory_under_v2():
     assert decision.advisory_flags == (RF_GATE_CHECK_NAME,)
     assert decision.policy_version == "shadow-v2"
     assert any(
-        g.gate == "verdict_not_reject" and not g.passed
-        for g in decision.gate_results
+        g.gate == "verdict_not_reject" and not g.passed for g in decision.gate_results
     )
 
 
