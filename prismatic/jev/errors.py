@@ -12,7 +12,7 @@ class DecisionError(Exception):
 
 
 class NoBackendError(DecisionError):
-    """Raised by the fallback backend when no deterministic defaults were given."""
+    """Raised by the fallback backend: no network access, no decision made."""
 
 
 class MissingCredentialError(DecisionError):
@@ -34,4 +34,55 @@ class SchemaViolationError(DecisionError):
 
     Raised instead of coercing — Jev's fixed schema makes a malformed answer
     a hard error, never a guess.
+    """
+
+
+class TransportError(DecisionError):
+    """An HTTP/transport failure talking to a network backend.
+
+    Carries machine-readable classification so the retry loop can decide
+    what to do:
+
+    - ``status``: HTTP status code, or None for connection-level failures.
+    - ``transient``: safe to retry (429/408/5xx, timeouts, connection errors).
+      Never true for 400/401/403/404 or credential/config errors.
+    - ``retry_after_s``: parsed ``Retry-After`` value (429s), or None.
+    - ``trip_breaker``: counts toward opening the circuit breaker. True for
+      5xx, timeouts, and connection errors; False for 429 (throttling is
+      handled by retry-with-backoff, not by treating the provider as down)
+      and for all 4xx.
+
+    Never carries credentials or state values.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        transient: bool = False,
+        retry_after_s: float | None = None,
+        trip_breaker: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.transient = transient
+        self.retry_after_s = retry_after_s
+        self.trip_breaker = trip_breaker
+
+
+class CircuitOpenError(DecisionError):
+    """The circuit breaker is open: fail fast to the deterministic path.
+
+    Raised instead of attempting a network call the breaker has already
+    judged futile. Callers handle it exactly like any backend failure
+    (``on_error`` decides: raise or deterministic defaults).
+    """
+
+
+class BudgetExceededError(DecisionError):
+    """A per-call cost or latency budget was exceeded.
+
+    Routed through the same ``on_error`` handling as any backend failure:
+    raise, or fall back to caller-supplied deterministic defaults.
     """
