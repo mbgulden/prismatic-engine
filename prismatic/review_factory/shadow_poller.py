@@ -17,9 +17,18 @@ gate, never invents a green):
 
 - ``ruff_clean``: the ``smoke (ruff lint)`` check-run concluded success.
 - ``review_verdict``: the ``review factory gate (tier A)`` check-run
-  concluded success → ``"CLEAN"``, anything else → ``"REJECT"`` (the
-  observer's fail-safe default; a deterministic non-CLEAN verdict can
-  never be cleared downstream).
+  concluded success → ``"CLEAN"``; a *completed* conclusion of
+  ``failure`` → ``"ADVISORY"`` (2026-09-22 recalibration: the gate's
+  circular-proof heuristic is a documented false-negative family and
+  the demonstrated merge practice treats the gate as advisory — the
+  failure is recorded in ``advisory_flags`` and stays visible, but it
+  does not block); anything else (cancelled, timed out, skipped,
+  never-triggered, missing/absent data) → ``"REJECT"`` (the observer's
+  fail-safe default; a deterministic non-CLEAN verdict can never be
+  cleared downstream). The advisory split is deliberately narrow: only
+  an explicit completed *failure* is advisory. Concurrency
+  cancellation, infra timeouts, and absent data carry no evidence
+  about the gate's verdict and stay fail-closed.
 - ``ci_green_self_hosted``: every self-hosted check that ran for the PR
   head completed with conclusion success; a check that never ran for the
   head (e.g. the path-conditional plugin-load workflow) is N/A and
@@ -177,17 +186,34 @@ def ruff_clean(check_runs: list[dict[str, Any]]) -> bool:
     return _conclusion(check_runs, RUFF_CHECK_NAME) == "success"
 
 
-def review_verdict(check_runs: list[dict[str, Any]]) -> str:
-    """RF gate check conclusion -> CLEAN, anything else -> REJECT.
+def _tier_a_advisory(check_runs: list[dict[str, Any]] | None) -> bool:
+    """True when the tier-A check completed with conclusion failure.
 
-    REJECT is the fail-safe default: a missing or failed deterministic
-    verdict can never clear the observer's verdict_not_reject gate.
+    This is the narrow advisory split from the 2026-09-22 recalibration:
+    only an *explicit completed failure* is advisory. Cancelled, timed
+    out, skipped, never-triggered, or missing tier-A data stays
+    fail-closed because it carries no evidence about the gate's verdict.
     """
-    return (
-        "CLEAN"
-        if _conclusion(check_runs, RF_GATE_CHECK_NAME) == "success"
-        else "REJECT"
-    )
+    return bool(check_runs) and _conclusion(check_runs, RF_GATE_CHECK_NAME) == "failure"
+
+
+def review_verdict(check_runs: list[dict[str, Any]]) -> str:
+    """RF gate check conclusion -> CLEAN / ADVISORY / REJECT.
+
+    - success -> CLEAN
+    - completed failure -> ADVISORY (recorded in advisory_flags, not
+      blocking; the failing check stays visible in the decision record)
+    - anything else (cancelled, timed out, skipped, never-triggered,
+      missing/absent data) -> REJECT, the fail-safe default. A missing
+      or non-advisory deterministic verdict can never clear the
+      observer's verdict_not_reject gate.
+    """
+    conclusion = _conclusion(check_runs, RF_GATE_CHECK_NAME)
+    if conclusion == "success":
+        return "CLEAN"
+    if conclusion == "failure":
+        return "ADVISORY"
+    return "REJECT"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -244,15 +270,25 @@ def ci_green_self_hosted(check_runs: list[dict[str, Any]] | None) -> bool:
 
     Checks that never ran for the PR head (absent from the check-runs,
     e.g. the path-conditional plugin-load workflow) are N/A and excluded
-    from the requirement. At least one check must be required (non-N/A)
-    and green; no payload at all fails closed.
+    from the requirement. A completed tier-A *failure* is advisory
+    (2026-09-22 recalibration): it is excluded here and recorded in
+    advisory_flags instead — the failing check stays visible but does
+    not block. At least one check must be required (non-N/A) and green;
+    no payload at all fails closed.
     """
     if not check_runs:
         return False  # no CI data at all: fail closed, never N/A
+    advisory = _tier_a_advisory(check_runs)
     states = [_check_state(check_runs, name) for name in SELF_HOSTED_CHECKS]
-    if any(state == _CHECK_FAIL for state in states):
-        return False
-    required = [state for state in states if state != _CHECK_NA]
+    for name, state in zip(SELF_HOSTED_CHECKS, states):
+        if state == _CHECK_FAIL and not (advisory and name == RF_GATE_CHECK_NAME):
+            return False
+    required = [
+        state
+        for name, state in zip(SELF_HOSTED_CHECKS, states)
+        if state != _CHECK_NA
+        and not (advisory and name == RF_GATE_CHECK_NAME and state == _CHECK_FAIL)
+    ]
     return bool(required) and all(state == _CHECK_PASS for state in required)
 
 
@@ -260,15 +296,27 @@ def branch_protection_satisfied(check_runs: list[dict[str, Any]]) -> bool:
     """Mechanical stand-in for branch protection (not enabled on the repo).
 
     True when at least one check ran and every completed check-run on the
-    head SHA succeeded. Revisit when real branch protection lands.
+    head SHA succeeded — except a completed tier-A *failure*, which is
+    advisory (2026-09-22 recalibration) and excluded from the success
+    requirement while staying visible in advisory_flags. Revisit when
+    real branch protection lands.
     """
     if not check_runs:
         return False
-    return all(
-        run.get("conclusion") == "success"
+    advisory = _tier_a_advisory(check_runs)
+    completed = [
+        run
         for run in check_runs
         if run.get("status") == "completed"
-    ) and any(run.get("status") == "completed" for run in check_runs)
+        and not (
+            advisory
+            and run.get("name") == RF_GATE_CHECK_NAME
+            and run.get("conclusion") == "failure"
+        )
+    ]
+    return bool(completed) and all(
+        run.get("conclusion") == "success" for run in completed
+    )
 
 
 def merge_conflicts(pr: dict[str, Any]) -> bool:
@@ -296,6 +344,9 @@ def build_input_dict(
         "ci_green_self_hosted": ci_green_self_hosted(check_runs),
         "ruff_clean": ruff_clean(check_runs),
         "review_verdict": review_verdict(check_runs),
+        "advisory_flags": (
+            [RF_GATE_CHECK_NAME] if _tier_a_advisory(check_runs) else []
+        ),
         "merge_conflicts": merge_conflicts(pr),
         "branch_protection_satisfied": branch_protection_satisfied(check_runs),
     }
