@@ -59,6 +59,19 @@ def apply_jev_advice(deterministic: str, jev_choice: str | None) -> str:
     return det
 
 
+def advice_choice(answer: object) -> str | None:
+    """Extract the advisory choice from an answer, or None.
+
+    Returns None when the answer abstained — an abstain is not advice and
+    must never be fed into :func:`apply_jev_advice` as if it were. Also
+    returns None for non-Choice answers (they carry no verdict choice).
+    """
+    if getattr(answer, "abstained", False):
+        return None
+    choice = getattr(answer, "choice", None)
+    return choice if isinstance(choice, str) else None
+
+
 _TRUTHY = {"1", "true", "yes", "on"}
 
 

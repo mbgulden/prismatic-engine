@@ -188,14 +188,53 @@ class DeployReceiverPipeline:
         deployer = str(payload.get("deployer", "github-action"))
         commits = payload.get("commits", [])
 
+        # Fail-closed dry-run gate: evaluate BEFORE any side effect. A dry run
+        # must produce zero deployment side effects (no release dir, no symlink
+        # move, no gateway redeploy, no Linear transitions, no mirror refresh).
+        # Any truthy dry_run value means "do not deploy" -- ambiguity resolves
+        # to no-deploy. (Repair 2026-09-22: the flag was previously read only
+        # AFTER deploy() had already run, so a signed dry-run payload deployed.)
+        is_dry_run = self.deploy_runner.dry_run or bool(payload.get("dry_run", False))
+        if is_dry_run:
+            duration_ms = int((time.time() - start_time) * 1000)
+            record = DeployRecord(
+                deploy_id=f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-dryrun",
+                pr_sha=pr_sha,
+                pr_number=pr_number,
+                pr_title=pr_title,
+                merged_at=payload.get("merged_at", now_iso),
+                deployed_at=now_iso,
+                deployer=deployer,
+                version_dir="",
+                release_symlink=str(self.deploy_runner.release_symlink),
+                health_check={
+                    "passed": True,
+                    "checks": {},
+                    "details": {
+                        "dry_run": "skipped: dry-run, zero deployment side effects"
+                    },
+                },
+                linear_transitions=[],
+                gateway_deploy={"skipped": True, "reason": "dry-run"},
+                mirror_refresh={"refreshed": False, "reason": "skipped: dry-run"},
+                duration_ms=duration_ms,
+                success=True,
+                failure_reason=None,
+                dry_run=True,
+            )
+            # The record is the audit trail for the dry-run decision (every
+            # decision emits a signal); dry_run=True marks it so it can never
+            # be mistaken for a real deployment.
+            self.store.record_deploy(record)
+            logger.info("DRY RUN: no deployment performed for %s", record.deploy_id)
+            return record
+
         # Step 1: Execute atomic deploy
         success, version_dir, err_msg = self.deploy_runner.deploy(
             source_repo=self.source_repo,
             pr_sha=pr_sha,
             branch=payload.get("ref", "main"),
         )
-
-        is_dry_run = self.deploy_runner.dry_run or bool(payload.get("dry_run", False))
 
         # Step 1b: Real atomic gateway redeploy -- close the merge->prod loop.
         # A merge to main must redeploy the RUNNING gateway, not just record it.
