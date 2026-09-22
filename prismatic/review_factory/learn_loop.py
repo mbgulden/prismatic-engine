@@ -314,13 +314,10 @@ def parse_decision_log(path: Path | str) -> tuple[list[DecisionRecord], int]:
     records: list[DecisionRecord] = []
     gaps = 0
     for row in rows:
-        if any(row.get(f) is None for f in REQUIRED_DECISION_FIELDS):
+        if not _valid_decision_row(row):
             gaps += 1
             continue
         ts = row.get("ts")
-        if not isinstance(ts, (int, float)) or isinstance(ts, bool):
-            gaps += 1
-            continue
         band_values = row.get("band_values")
         records.append(
             DecisionRecord(
@@ -340,6 +337,92 @@ def parse_decision_log(path: Path | str) -> tuple[list[DecisionRecord], int]:
             )
         )
     return records, gaps
+
+
+def _valid_decision_row(row: dict[str, Any]) -> bool:
+    """Row-validity rules for the decision log (shared by the full parser
+    and the event-path tail scanner): all required fields present and a
+    real numeric timestamp. Malformed rows are skipped, never fatal."""
+    if any(row.get(f) is None for f in REQUIRED_DECISION_FIELDS):
+        return False
+    ts = row.get("ts")
+    return isinstance(ts, (int, float)) and not isinstance(ts, bool)
+
+
+def _valid_outcome_row(row: dict[str, Any]) -> bool:
+    """Row-validity rules for the outcome log (shared by the full parser
+    and the event-path tail scanner)."""
+    job_id = row.get("job_id")
+    outcome = row.get("outcome")
+    ts = row.get("ts")
+    return (
+        isinstance(job_id, str)
+        and outcome in OUTCOMES
+        and isinstance(ts, (int, float))
+        and not isinstance(ts, bool)
+    )
+
+
+def _decision_has_job(path: Path | str, job_id: str) -> bool:
+    """Tail-first membership check: does a *valid* decision row for
+    ``job_id`` exist?
+
+    Event-path fast path for ``record_outcome``'s unknown-job refusal.
+    Scans newest-first and stops at the first valid row, so the common
+    case (the just-decided merge) never parses the whole log. The
+    ``json.dumps`` needle pre-filter is exact: a valid row for this
+    job_id must contain its JSON-encoded form, so skipped lines cannot
+    hide a decision. An unreadable log reads as "no decision row"
+    (fail-closed: the caller refuses the unknown job).
+    """
+    needle = json.dumps(job_id).encode("utf-8")
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return False
+    for line in reversed(data.splitlines()):
+        if needle not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue  # corrupt line: skip, never crash the event path
+        if (
+            isinstance(row, dict)
+            and _valid_decision_row(row)
+            and str(row["job_id"]) == job_id
+        ):
+            return True
+    return False
+
+
+def _outcome_recorded(path: Path | str, job_id: str) -> bool:
+    """Tail-first membership check: does a *valid* outcome row for
+    ``job_id`` exist?
+
+    Event-path fast path for ``record_outcome``'s duplicate refusal.
+    Same fail-closed contract as ``_decision_has_job``: validity rules
+    identical to the full parser, malformed rows never count.
+    """
+    needle = json.dumps(job_id).encode("utf-8")
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return False
+    for line in reversed(data.splitlines()):
+        if needle not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue  # corrupt line: skip, never crash the event path
+        if (
+            isinstance(row, dict)
+            and _valid_outcome_row(row)
+            and row["job_id"] == job_id
+        ):
+            return True
+    return False
 
 
 def _round2(value: float) -> float:
@@ -558,23 +641,14 @@ class LearnLoop:
 
     # -- outcome recording (event path) -------------------------------
 
-    def _known_job_ids(self) -> set[str]:
-        records, _ = parse_decision_log(self.decision_log)
-        return {r.job_id for r in records}
-
     def _recorded_outcomes(self) -> dict[str, OutcomeRecord]:
         outcomes: dict[str, OutcomeRecord] = {}
         for row in _read_jsonl(self.outcome_log):
+            if not _valid_outcome_row(row):
+                continue  # malformed outcome row: skip, never crash the read
             job_id = row.get("job_id")
             outcome = row.get("outcome")
             ts = row.get("ts")
-            if (
-                not isinstance(job_id, str)
-                or outcome not in OUTCOMES
-                or not isinstance(ts, (int, float))
-                or isinstance(ts, bool)
-            ):
-                continue  # malformed outcome row: skip, never crash the read
             outcomes[job_id] = OutcomeRecord(
                 job_id=job_id, ts=float(ts), outcome=str(outcome)
             )
@@ -598,7 +672,10 @@ class LearnLoop:
             raise LearnInputError(
                 f"unknown outcome {outcome!r}: must be one of {sorted(OUTCOMES)}"
             )
-        if job_id not in self._known_job_ids():
+        # Event path: tail-first membership checks. The just-decided merge
+        # is at (or near) the log tail, so the common case never parses
+        # the whole log. Validity rules match the full parsers exactly.
+        if not _decision_has_job(self.decision_log, job_id):
             reason = f"unknown_job: no decision row for job_id {job_id!r}"
             self._emit_audit(
                 "record_outcome",
@@ -610,7 +687,7 @@ class LearnLoop:
                 },
             )
             return {"status": "refused", "reason": reason}
-        if job_id in self._recorded_outcomes():
+        if _outcome_recorded(self.outcome_log, job_id):
             reason = (
                 f"outcome_already_recorded: job_id {job_id!r} has an outcome "
                 "row; the outcome log is append-only"
@@ -879,43 +956,45 @@ class LearnLoop:
         now: float,
     ) -> dict[str, Any]:
         cutoff = now - self.policy.review_window_days * _SECONDS_PER_DAY
-        windowed = [r for r in records if r.ts >= cutoff]
-        allowed = [r for r in windowed if r.decision == "allowed"]
-        refusals = [r for r in windowed if r.decision != "allowed"]
-        rollbacks = sum(
-            1
-            for r in allowed
-            if outcomes.get(r.job_id, OutcomeRecord(r.job_id, 0, "")).outcome
-            == OUTCOME_ROLLED_BACK
-        )
-        escalations = sum(
-            1
-            for r in allowed
-            if outcomes.get(r.job_id, OutcomeRecord(r.job_id, 0, "")).outcome
-            == OUTCOME_ESCALATED
-        )
-        cleans = sum(
-            1
-            for r in allowed
-            if outcomes.get(r.job_id, OutcomeRecord(r.job_id, 0, "")).outcome
-            == OUTCOME_CLEAN
-        )
+        # Single pass: accumulate the window counts and collect the
+        # in-window allowed records (in log order) for the trailing
+        # consecutive-clean run below. No eager default OutcomeRecord
+        # construction — a missing outcome row reads as "" (unknown).
+        n_allowed = 0
+        refusals = 0
+        rollbacks = 0
+        escalations = 0
+        cleans = 0
+        windowed_allowed: list[DecisionRecord] = []
+        for r in records:
+            if r.ts < cutoff:
+                continue
+            if r.decision != "allowed":
+                refusals += 1
+                continue
+            n_allowed += 1
+            windowed_allowed.append(r)
+            outcome = outcomes.get(r.job_id)
+            outcome_name = outcome.outcome if outcome is not None else ""
+            if outcome_name == OUTCOME_ROLLED_BACK:
+                rollbacks += 1
+            elif outcome_name == OUTCOME_ESCALATED:
+                escalations += 1
+            elif outcome_name == OUTCOME_CLEAN:
+                cleans += 1
         # Consecutive clean: newest-first trailing run of allowed decisions
         # with an explicit clean outcome. Stops at rollback, escalation, or
         # a merge with no outcome row yet (unknown = not clean).
         consecutive_clean = 0
-        for rec in sorted(allowed, key=lambda r: r.ts, reverse=True):
-            if (
-                outcomes.get(rec.job_id, OutcomeRecord(rec.job_id, 0, "")).outcome
-                == OUTCOME_CLEAN
-            ):
+        for rec in sorted(windowed_allowed, key=lambda r: r.ts, reverse=True):
+            outcome = outcomes.get(rec.job_id)
+            if outcome is not None and outcome.outcome == OUTCOME_CLEAN:
                 consecutive_clean += 1
             else:
                 break
-        n_allowed = len(allowed)
         return {
             "auto_merges": n_allowed,
-            "refusals": len(refusals),
+            "refusals": refusals,
             "rollbacks": rollbacks,
             "escalations": escalations,
             "cleans": cleans,
