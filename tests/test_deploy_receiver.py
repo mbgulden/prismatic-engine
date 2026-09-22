@@ -161,6 +161,10 @@ class TestDeployReceiverPipeline:
             health_checker=health,
             transitioner=transitioner,
             store=store,
+            # The gateway redeploy has its own coverage; a real redeploy
+            # refuses in a tmp non-repo, which would fail this pipeline test
+            # for an environmental reason. (Red on main, Sep 22, 2026.)
+            gateway_redeployer=_StubGatewayRedeployer(),
         )
 
         payload = {
