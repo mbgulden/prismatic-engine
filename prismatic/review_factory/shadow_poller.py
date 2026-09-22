@@ -138,7 +138,7 @@ class GhCliPRSource:
             "--json",
             "files",
             "--jq",
-            ".files[].path",
+            "[.files[].path]",
         )
         return [str(f) for f in (files or [])]
 
@@ -148,7 +148,7 @@ class GhCliPRSource:
             f"repos/{self.repo}/commits/{head_sha}/check-runs",
             "--paginate",
             "--jq",
-            ".check_runs[] | {name, status, conclusion}",
+            "[.check_runs[] | {name, status, conclusion}]",
         )
         return list(runs or [])
 
