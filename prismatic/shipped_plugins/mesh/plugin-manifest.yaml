@@ -1,0 +1,113 @@
+# prismatic-mesh — mesh capability plugin manifest
+#
+# Guest addressing + presence for the Prismatic Engine. Peers (guests)
+# announce themselves and heartbeat their presence; the plugin keeps the
+# peer table, persists it across disable/enable, and exposes it through
+# plugin-registered API routes. Disabled by default (auto_enable: false):
+# the operator must explicitly enable it after attaching.
+#
+# Boundary (docs/infrastructure-capabilities.md): addressing and presence
+# are infrastructure. The plugin NEVER routes workloads, decides
+# placement, or sequences agent steps — that is harness territory.
+
+schema_version: "1.0.0"
+
+name: "prismatic-mesh"
+
+version: "0.1.0"
+
+description: >-
+  Mesh capability plugin for the Prismatic Engine generic plugin lifecycle.
+  Guest addressing + presence: peers announce themselves via
+  POST /api/mesh/announce, the peer table (id, address, last-seen,
+  trust tier) is listed via GET /api/mesh/peers, and peers deregister via
+  DELETE /api/mesh/peers/{id}. The peer table persists across
+  disable/enable via on_suspend/on_resume; presence changes emit audit
+  events. Event-driven (heartbeats/announcements are the event source) —
+  no polling loop. Infrastructure only: no workload routing, no
+  placement decisions, no choreography.
+
+author: "Prismatic Engine Swarm"
+
+license: "MIT"
+
+# Fully qualified Python class path acting as the entry point.
+# Module path uses UNDERSCORES (dir name matches first module segment);
+# the plugin `name` (dashed) is what humans read.
+entry_point: "mesh.plugin:MeshPlugin"
+
+core_version_constraint: ">=0.2.0, <2.0.0"
+
+dependencies:
+  pip:
+    - "swarmmesh>=0.1.0"
+
+# Plugin registers but starts DISABLED. The operator enables it explicitly
+# after attach; on enable the loader calls on_init() with the validated config.
+auto_enable: false
+
+permissions:
+  - "network"
+  - "filesystem-write"
+
+risk_level: "low"
+
+policy_checks:
+  - "announce payload validated (peer_id, address, trust_tier) before any state change"
+  - "guest addresses normalized via swarmmesh.addressing.normalize_address"
+  - "peer table capacity enforced (max_peers); presence event log capped"
+  - "no secrets persisted: suspend snapshot holds peer ids, addresses, and timestamps only"
+
+audit_events:
+  - "peer_registered"
+  - "peer_heartbeat"
+  - "peer_deregistered"
+  - "suspend"
+  - "resume"
+
+endpoints:
+  - method: "GET"
+    path: "/api/mesh/peers"
+    description: "Peer table: id, address, last-seen, trust tier (+ stale flag)."
+  - method: "POST"
+    path: "/api/mesh/announce"
+    description: "Register or heartbeat a guest (peer_id, address, optional trust_tier)."
+  - method: "DELETE"
+    path: "/api/mesh/peers/{id}"
+    description: "Deregister a guest."
+
+tags:
+  - "infrastructure"
+  - "optional"
+
+# JSON Schema for the plugin config. Validated by the PluginLoader at attach
+# time; MeshPlugin.on_init() re-validates defensively and raises
+# PluginValidationError on any violation.
+config_schema:
+  type: "object"
+  additionalProperties: false
+  properties:
+    max_peers:
+      type: "integer"
+      minimum: 1
+      default: 1000
+      description: >-
+        Capacity of the peer table. Announcing a NEW peer when the table
+        is full is rejected; heartbeats for known peers are unaffected.
+    heartbeat_ttl_sec:
+      type: "integer"
+      minimum: 0
+      default: 0
+      description: >-
+        Seconds after last-seen before a peer is listed as stale.
+        0 disables staleness marking. Evaluated at read time — the plugin
+        runs no polling loop; heartbeats/announcements are the event source.
+    default_trust_tier:
+      type: "string"
+      enum: ["untrusted", "trusted"]
+      default: "untrusted"
+      description: >-
+        Trust tier assigned when an announce carries none. Stated plainly:
+        "untrusted" means no claims about the guest; "trusted" means the
+        operator has attested the guest out of band.
+  required: []
