@@ -1,0 +1,52 @@
+# Novelty policy — versioned config for the deterministic novelty detector
+# (chunk 3 of the post-shadow roadmap).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the detector at it. The shipped copy is inert.
+#
+# Status: HARD-DISABLED. `enabled: false` means the detector's evaluate()
+# returns "disabled" without reading any input: no trips, no quarantine,
+# no release surface. Enabling is a phase-advancement step on Michael's
+# explicit word, never a quiet config flip.
+#
+# Mode: "monitor-only". A trip returns "novel_monitor_only" — the novelty
+# decision is LOGGED (audit signal) and the candidate's pipeline is NOT
+# halted, the candidate is NOT quarantined. Phase 0 collects trip evidence
+# here so the Phase 0 -> 1 exit criteria can require the detector "armed".
+# A later versioned file may set mode "enforcing" (Phase 1+): a trip then
+# quarantines the candidate (in-memory registry), halts its pipeline, and
+# only the rearm principal below may release it. No timeout, no auto-clear,
+# no self release. The enforcing transition is a phase-advancement step.
+#
+# Novelty inputs (any ONE trips the detector):
+#   (a) Jev all-low-confidence: INACTIVE until Jev exists. The detector takes
+#       a data-in mapping of option -> confidence; it never imports or calls
+#       Jev. `jev_confidences: null` means "Jev not consulted" — the input is
+#       recorded as *unavailable*, never tripping, never counting as unknown.
+#   (b) no audit precedent: the caller supplies `precedent_matches`, the count
+#       of historically similar decisions from the audit trail. Zero matches
+#       with a present change shape trips. The actual similarity-search job is
+#       a later chunk; this module takes the *count* as pure data.
+#   (c) deterministic tripwires: unknown error classes, first-time-ever event
+#       types, unexpected input schema changes. Pure data comparisons.
+#
+# Fail-closed: an invalid input (malformed confidences, negative precedent
+# count, empty candidate id, non-string error classes) cannot evaluate. In
+# monitor-only it returns "invalid" (logged); in enforcing the candidate is
+# quarantined — novelty cannot be proven familiar, so code contains it.
+
+version: novelty-v1
+enabled: false
+mode: monitor-only  # monitor-only | enforcing
+
+# Release authority. The ONLY release path is
+# NoveltyDetector.release(principal, candidate_id) with
+# principal == rearm_principal. A quarantined candidate stays quarantined
+# across re-evaluations until this human releases it.
+rearm_principal: mbgulden
+
+# Thresholds. Jev-slot trip: Jev was consulted AND every option's confidence
+# is STRICTLY BELOW this value — the "never seen this" pattern, distinct from
+# confident-risky. Until Jev exists the slot is inactive (never tripping).
+thresholds:
+  jev_low_confidence: 0.35
