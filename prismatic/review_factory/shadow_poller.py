@@ -362,8 +362,6 @@ def _record_ci_results(check_runs):
     timed out, ...) maps to "fail", matching this module's fail-safe
     mapping. A feed failure is logged and never breaks the poll.
     """
-    from prismatic.review_factory.metrics_feed import record_ci_result
-
     for run in check_runs or []:
         if run.get("status") != "completed":
             continue
@@ -371,6 +369,10 @@ def _record_ci_results(check_runs):
         if not name:
             continue
         try:
+            # Lazy import: the metrics feed is append-only telemetry. If it
+            # cannot even be imported, the poll must still go through.
+            from prismatic.review_factory.metrics_feed import record_ci_result
+
             record_ci_result(
                 result="pass" if run.get("conclusion") == "success" else "fail",
                 runner=str(name),
