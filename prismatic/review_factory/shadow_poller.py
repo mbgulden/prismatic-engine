@@ -20,8 +20,10 @@ gate, never invents a green):
   concluded success → ``"CLEAN"``, anything else → ``"REJECT"`` (the
   observer's fail-safe default; a deterministic non-CLEAN verdict can
   never be cleared downstream).
-- ``ci_green_self_hosted``: every known self-hosted check completed with
-  conclusion success.
+- ``ci_green_self_hosted``: every self-hosted check that ran for the PR
+  head completed with conclusion success; a check that never ran for the
+  head (e.g. the path-conditional plugin-load workflow) is N/A and
+  excluded. No check-runs payload at all still fails closed.
 - ``branch_protection_satisfied``: branch protection is NOT enabled on
   the repo (GitHub refused it on the current plan, 2026-09-22), so this
   is defined mechanically as "every completed check-run on the head SHA
@@ -188,11 +190,70 @@ def review_verdict(check_runs: list[dict[str, Any]]) -> str:
     )
 
 
-def ci_green_self_hosted(check_runs: list[dict[str, Any]]) -> bool:
-    """All known self-hosted checks completed with conclusion success."""
-    return all(
-        _conclusion(check_runs, name) == "success" for name in SELF_HOSTED_CHECKS
-    )
+# ─────────────────────────────────────────────────────────────────────
+# Never-triggered checks are N/A (recalibration 2026-09-22)
+#
+# A check is "never triggered" only when it is absent from the check-runs
+# for the PR head — the workflow did not run for this PR at all (e.g. the
+# `paths:` filter in .github/workflows/plugin-load.yml excluded it). A
+# successful check-runs fetch is authoritative for the head SHA (a failed
+# fetch raises in the PR source before we ever get here), so absence means
+# "never scheduled", not "unknown".
+#
+# Everything else stays fail-closed: no check-runs payload at all, a check
+# that was scheduled but never completed, a failed/cancelled/timed-out
+# run, or an unrecognized conclusion all fail the evaluation.
+# ─────────────────────────────────────────────────────────────────────
+
+_CHECK_PASS = "pass"
+_CHECK_FAIL = "fail"
+_CHECK_NA = "na"  # never triggered: excluded from the green requirement
+
+
+def _check_state(check_runs: list[dict[str, Any]] | None, name: str) -> str:
+    """Classify one named check as pass / fail / na (never triggered)."""
+    runs = [r for r in (check_runs or []) if r.get("name") == name]
+    if not runs:
+        # The workflow never ran for this PR head (e.g. a paths: filter
+        # excluded it). N/A: excluded from the green requirement.
+        return _CHECK_NA
+    run = next((r for r in runs if r.get("status") == "completed"), None)
+    if run is None:
+        return _CHECK_FAIL  # scheduled but unfinished: fail closed
+    conclusion = run.get("conclusion")
+    if conclusion == "success":
+        return _CHECK_PASS
+    if conclusion == "skipped":
+        # Skip-conclusion rule: a "skipped" check is N/A (excluded). This is
+        # safe because a skip that follows a failure is already fail-closed:
+        # the failed sibling's own state fails the evaluation, so a cascade
+        # skip can never turn a red suite green. The only outcome-relevant
+        # case is skip-with-all-siblings-green, which is necessarily the
+        # workflow's own conditional logic (e.g. a job-level `if:`). From a
+        # check-runs payload we cannot read the job's `if:` expression, so
+        # this is the tightest mechanically-enforceable statement of the
+        # rule.
+        return _CHECK_NA
+    # failure, cancelled, timed_out, action_required, stale, None, or any
+    # unrecognized conclusion: fail.
+    return _CHECK_FAIL
+
+
+def ci_green_self_hosted(check_runs: list[dict[str, Any]] | None) -> bool:
+    """True when every triggered self-hosted check concluded success.
+
+    Checks that never ran for the PR head (absent from the check-runs,
+    e.g. the path-conditional plugin-load workflow) are N/A and excluded
+    from the requirement. At least one check must be required (non-N/A)
+    and green; no payload at all fails closed.
+    """
+    if not check_runs:
+        return False  # no CI data at all: fail closed, never N/A
+    states = [_check_state(check_runs, name) for name in SELF_HOSTED_CHECKS]
+    if any(state == _CHECK_FAIL for state in states):
+        return False
+    required = [state for state in states if state != _CHECK_NA]
+    return bool(required) and all(state == _CHECK_PASS for state in required)
 
 
 def branch_protection_satisfied(check_runs: list[dict[str, Any]]) -> bool:
