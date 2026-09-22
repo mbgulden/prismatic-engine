@@ -33,12 +33,24 @@ def dry_run_env(tmp_path):
     source_repo.mkdir()
     (source_repo / "prismatic").mkdir()
     (source_repo / "prismatic" / "__init__.py").write_text("# main", encoding="utf-8")
+    # Real git repo: deploys build a pristine worktree of an exact commit
+    # (fail-fast source validation, Sep 22 2026).
+    _git("init", "-q", "-b", "main", str(source_repo), cwd=str(tmp_path))
+    _git("config", "user.email", "test@example.com", cwd=str(source_repo))
+    _git("config", "user.name", "test", cwd=str(source_repo))
+    _git("add", ".", cwd=str(source_repo))
+    _git("commit", "-qm", "seed", cwd=str(source_repo))
+    head_sha = subprocess.run(
+        ["git", "-C", str(source_repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
     return {
         "versions_dir": versions_dir,
         "symlink_path": releases_dir / "prismatic-engine",
         "db_file": tmp_path / "deploy_records.json",
         "transitions_db": tmp_path / "linear_transitions.json",
         "source_repo": source_repo,
+        "head_sha": head_sha,
     }
 
 
@@ -121,9 +133,9 @@ def _make_git_mirror(tmp_path):
     return mirror, before
 
 
-def _base_payload(**overrides):
+def _base_payload(head_sha=None, **overrides):
     payload = {
-        "pr_sha": "d" * 40,
+        "pr_sha": head_sha or "d" * 40,
         "pr_number": 99,
         "pr_title": "dry-run enforcement probe",
         "deployer": "pytest",
@@ -182,7 +194,7 @@ class TestPayloadDryRunEnforcement:
         """Control: the harness CAN detect a real deploy (test is not vacuous)."""
         pipeline, health, gateway, store = _make_pipeline(dry_run_env)
 
-        record = pipeline.process_deploy(_base_payload())
+        record = pipeline.process_deploy(_base_payload(dry_run_env["head_sha"]))
 
         assert record.success is True
         assert record.dry_run is False
@@ -200,7 +212,7 @@ class TestPayloadDryRunEnforcement:
             dry_run_env, runner_dry_run=True
         )
 
-        record = pipeline.process_deploy(_base_payload())
+        record = pipeline.process_deploy(_base_payload(dry_run_env["head_sha"]))
 
         assert record.success is True
         assert record.dry_run is True
@@ -220,7 +232,7 @@ class TestPayloadDryRunEnforcement:
         pipeline, _, _, _ = _make_pipeline(dry_run_env)
 
         record = pipeline.process_deploy(
-            _base_payload(dry_run=dry_run_value)
+            _base_payload(dry_run_env["head_sha"], dry_run=dry_run_value)
         )
 
         assert record.dry_run is True
@@ -233,7 +245,7 @@ class TestPayloadDryRunEnforcement:
         pipeline, _, _, _ = _make_pipeline(dry_run_env)
 
         record = pipeline.process_deploy(
-            _base_payload(dry_run=dry_run_value)
+            _base_payload(dry_run_env["head_sha"], dry_run=dry_run_value)
         )
 
         assert record.dry_run is False
@@ -243,7 +255,9 @@ class TestPayloadDryRunEnforcement:
         # _base_payload() never sets "dry_run": the key is simply absent.
         pipeline, _, _, _ = _make_pipeline(dry_run_env)
 
-        record = pipeline.process_deploy(_base_payload())
+        record = pipeline.process_deploy(
+            _base_payload(dry_run_env["head_sha"])
+        )
 
         assert record.dry_run is False
         assert len(list(dry_run_env["versions_dir"].iterdir())) == 1

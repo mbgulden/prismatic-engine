@@ -6,6 +6,7 @@ Validates HMAC-SHA256 signature (DEPLOY_HMAC_SECRET), triggers deploy pipeline, 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -35,6 +36,12 @@ from pe.deploy.manifest import DeployManifestStore, DeployRecord
 logger = logging.getLogger(__name__)
 
 RECEIVER_PORT = 9460
+
+#: Overall timeout for one deploy request (seconds). The blocking deploy runs
+#: in a worker thread so /health stays responsive; a deploy that exceeds this
+#: fails loudly instead of hanging the workflow forever. (2026-09-22: an
+#: unbounded rsync hung the receiver for 37 minutes and starved /health.)
+DEPLOY_TIMEOUT_S = int(os.environ.get("PRISMATIC_DEPLOY_TIMEOUT_S", "1800"))
 
 #: Default location of the persistent private-repo mirror that the gateway's
 #: repo-dir activation checks read. Refreshed eagerly on each successful
@@ -126,13 +133,31 @@ class DeployReceiverPipeline:
         gateway_redeployer: GatewayRedeployer | None = None,
         mirror_repo: Path | None = None,
     ):
-        self.source_repo = source_repo or Path(".").resolve()
+        self.source_repo = source_repo or self._source_repo_from_env()
         self.deploy_runner = deploy_runner or AtomicDeployRunner()
         self.health_checker = health_checker or PostDeployHealthChecker()
         self.transitioner = transitioner or LinearDeployTransitioner()
         self.store = store or DeployManifestStore()
         self.gateway_redeployer = gateway_redeployer or GatewayRedeployer()
         self.mirror_repo = mirror_repo
+
+    @staticmethod
+    def _source_repo_from_env() -> Path:
+        """Resolve the deploy source from PRISMATIC_DEPLOY_SOURCE_REPO.
+
+        Fail-fast: the receiver never guesses a deploy source from its
+        working directory. (2026-09-22: a CWD-derived source silently turned
+        the entire ~/.prismatic home tree into a deploy source, rsynced 82G
+        into itself, and filled the disk.)
+        """
+        raw = os.environ.get("PRISMATIC_DEPLOY_SOURCE_REPO", "").strip()
+        if not raw:
+            raise RuntimeError(
+                "PRISMATIC_DEPLOY_SOURCE_REPO is not set: the deploy receiver "
+                "refuses to start without an explicit deploy source repo. "
+                "Set it to a git checkout of prismatic-engine."
+            )
+        return Path(raw).expanduser()
 
     def refresh_repo_mirror(self) -> dict[str, Any]:
         """Best-effort ``git fetch origin --prune`` of the persistent repo mirror.
@@ -260,7 +285,10 @@ class DeployReceiverPipeline:
         elif is_dry_run:
             gateway_info = {"skipped": True, "reason": "dry-run"}
 
-        # Step 2: Post-deploy health check
+        # Step 2: Post-deploy health check. A failing health check must NOT
+        # overwrite the underlying deploy-step error (2026-09-22: the real
+        # rsync ENOSPC error was masked by "version dir missing or invalid").
+        # Both are recorded in failure_reason.
         health_res = self.health_checker.check(
             version_dir=version_dir,
             release_symlink=self.deploy_runner.release_symlink,
@@ -268,8 +296,9 @@ class DeployReceiverPipeline:
         )
 
         if not health_res["passed"]:
+            health_err = f"Post-deploy health check failed: {health_res['details']}"
+            err_msg = f"{err_msg} | {health_err}" if err_msg else health_err
             success = False
-            err_msg = f"Post-deploy health check failed: {health_res['details']}"
 
         # Step 3: Transition Linear issues if deploy and health check passed
         transitions: list[dict[str, Any]] = []
@@ -531,7 +560,27 @@ def create_deploy_receiver_app() -> Any:
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-        record = pipeline.process_deploy(payload)
+        # The deploy is blocking; run it in a worker thread so /health stays
+        # responsive during deploys, and fail loudly on an overall timeout
+        # instead of hanging the workflow forever.
+        try:
+            record = await asyncio.wait_for(
+                asyncio.to_thread(pipeline.process_deploy, payload),
+                timeout=DEPLOY_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "deploy for pr_sha %s timed out after %ss",
+                payload.get("pr_sha"),
+                DEPLOY_TIMEOUT_S,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "failed",
+                    "error": f"deploy timed out after {DEPLOY_TIMEOUT_S}s",
+                },
+            )
 
         body = {
             "status": "success" if record.success else "failed",
