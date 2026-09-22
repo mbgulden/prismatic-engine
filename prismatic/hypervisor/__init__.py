@@ -9,6 +9,17 @@ from prismatic.hypervisor.ledger import (
     LedgerEntry,
     get_hypervisor_ledger,
 )
+from prismatic.hypervisor.guest import (
+    TrustTier,
+    GuestSpec,
+    GuestSpecError,
+    GuestResult,
+    GuestHandle,
+    GuestManager,
+    scrub_environment,
+    build_guest_env,
+    redact_secrets,
+)
 
 __all__ = [
     "PrismaticHypervisor",
@@ -16,4 +27,13 @@ __all__ = [
     "HypervisorLedger",
     "LedgerEntry",
     "get_hypervisor_ledger",
+    "TrustTier",
+    "GuestSpec",
+    "GuestSpecError",
+    "GuestResult",
+    "GuestHandle",
+    "GuestManager",
+    "scrub_environment",
+    "build_guest_env",
+    "redact_secrets",
 ]
