@@ -233,6 +233,65 @@ def test_poll_default_off_emits_nothing(tmp_path):
     assert not (tmp_path / "s.jsonl").exists()
 
 
+def test_poll_disabled_short_circuits_source(tmp_path):
+    """Default-off: zero per-PR source calls (gh API calls in production).
+
+    With the policy disabled, observe() would return None for every PR, so
+    the poll must not fetch check-runs or file lists at all — and must not
+    even create the seen-state file.
+    """
+    pr = _pr(sha="a" * 40)
+    src = FakeSource([pr], checks={"a" * 40: ALL_GREEN})
+    calls = {"checks": 0, "files": 0}
+    orig_checks, orig_files = src.get_check_runs, src.get_pr_files
+
+    def counting_checks(sha):
+        calls["checks"] += 1
+        return orig_checks(sha)
+
+    def counting_files(n):
+        calls["files"] += 1
+        return orig_files(n)
+
+    src.get_check_runs = counting_checks
+    src.get_pr_files = counting_files
+    policy = load_policy(SPEC_DIR / "shadow_merge_policy_v1.yaml")
+    assert policy.enabled is False
+    out = poll_once(src, policy, _bands(), _tier_engine(), tmp_path / "seen.json")
+    assert out == []
+    assert calls == {"checks": 0, "files": 0}
+    assert not (tmp_path / "seen.json").exists()
+
+
+def test_poll_skips_seen_rewrite_when_nothing_emitted(tmp_path, monkeypatch):
+    """Steady-state polls must not rewrite the seen-state file.
+
+    The seen set only changes when a decision is emitted, so a poll that
+    emits nothing must leave the file untouched (no mtime churn).
+    """
+    pr = _pr(sha="a" * 40)
+    src = FakeSource([pr], checks={"a" * 40: ALL_GREEN})
+    state = tmp_path / "seen.json"
+    policy = _enabled(_policy(tmp_path))
+    first = poll_once(
+        src, policy, _bands(), _tier_engine(), state, tmp_path / "s.jsonl"
+    )
+    assert len(first) == 1
+    before = state.read_text(encoding="utf-8")
+
+    saves: list = []
+    monkeypatch.setattr(
+        "prismatic.review_factory.shadow_poller.save_seen",
+        lambda seen, path=state: saves.append((set(seen), path)),
+    )
+    second = poll_once(
+        src, policy, _bands(), _tier_engine(), state, tmp_path / "s.jsonl"
+    )
+    assert second == []
+    assert saves == []
+    assert state.read_text(encoding="utf-8") == before
+
+
 def test_poll_failing_gate_produces_skip_call(tmp_path):
     bad = [_run("smoke (ruff lint)", conclusion="failure")] + ALL_GREEN[1:]
     pr = _pr(sha="a" * 40)

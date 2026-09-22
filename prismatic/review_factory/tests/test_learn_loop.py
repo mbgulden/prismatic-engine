@@ -318,6 +318,36 @@ def test_record_outcome_unknown_job_refused(tmp_path):
     assert not loop.outcome_log.exists()
 
 
+def test_record_outcome_skips_corrupt_tail_rows(tmp_path):
+    """Corrupt/blank trailing rows must not break the tail-first scan.
+
+    A valid decision row buried under garbage is still found (not an
+    unknown job); a malformed outcome row never counts as a duplicate;
+    and a job_id that only appears inside another field's value is not
+    a false membership hit for the needle pre-filter.
+    """
+    loop = _loop(tmp_path, enabled=True)
+    _write_decisions(loop.decision_log, ["job-1", "job-3"])
+    with open(loop.decision_log, "a", encoding="utf-8") as fh:
+        fh.write("\n")  # blank line
+        fh.write("{not valid json}\n")  # corrupt line
+        fh.write('{"job_id": null, "ts": "bad", "decision": "allowed"}\n')
+        # job-2 appears, but only inside an unrelated field's value.
+        fh.write('{"note": "job-2 was here", "ts": 1}\n')
+    with open(loop.outcome_log, "w", encoding="utf-8") as fh:
+        fh.write("{corrupt\n")
+        # malformed outcome row for job-3 (bad ts): must not count.
+        fh.write('{"job_id": "job-3", "ts": "bad", "outcome": "clean"}\n')
+    # job-1's decision row is still found through the garbage.
+    assert loop.record_outcome("job-1", "clean")["status"] == "ok"
+    # job-3's only outcome row is malformed -> not a duplicate; records fine.
+    assert loop.record_outcome("job-3", "rolled_back")["status"] == "ok"
+    # job-2 (no valid decision row) is still an unknown job.
+    result = loop.record_outcome("job-2", "clean")
+    assert result["status"] == "refused"
+    assert "unknown_job" in result["reason"]
+
+
 def test_record_outcome_bad_value_raises(tmp_path):
     loop = _loop(tmp_path, enabled=True)
     _write_decisions(loop.decision_log, ["job-1"])
