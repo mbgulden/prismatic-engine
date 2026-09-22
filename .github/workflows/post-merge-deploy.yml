@@ -31,7 +31,7 @@ jobs:
       - name: Calculate Payload & HMAC Signature
         id: payload
         env:
-HMAC_SECRET: <redacted>
+          HMAC_SECRET: ${{ secrets.DEPLOY_HMAC_SECRET }}
         run: |
           if [ -z "$HMAC_SECRET" ]; then
             echo "::error::DEPLOY_HMAC_SECRET repository secret is missing!"
