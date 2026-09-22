@@ -278,7 +278,17 @@ class ReviewQueue:
         # local git checkout for the candidate-in-main zombie checks. When
         # None, only literal local paths in ``repository`` are checked;
         # unresolvable jobs fail open (queued/dispatched as today).
-        self._repo_dir = Path(repo_dir) if repo_dir is not None else None
+        # Falls back to the PRISMATIC_REVIEW_REPO_DIR environment variable,
+        # mirroring the PRISMATIC_REPO_PATH convention in verification_daemon.
+        self._repo_dir = (
+            Path(repo_dir)
+            if repo_dir is not None
+            else (
+                Path(os.environ["PRISMATIC_REVIEW_REPO_DIR"])
+                if os.environ.get("PRISMATIC_REVIEW_REPO_DIR")
+                else None
+            )
+        )
 
     def close(self) -> None:
         self.db.close()
