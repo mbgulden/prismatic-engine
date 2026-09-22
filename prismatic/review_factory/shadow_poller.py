@@ -353,6 +353,38 @@ def build_input_dict(
 
 
 # ─────────────────────────────────────────────────────────────────────
+def _record_ci_results(check_runs):
+    """Append one ci_result event per settled check run (Phase 0 observe-only).
+
+    Called exactly once per (pr_number, head_sha) -- tied to the poll's
+    seen-set, so a re-poll never double-records. Conclusion "success" maps
+    to "pass"; any other completed conclusion (failure, cancelled,
+    timed out, ...) maps to "fail", matching this module's fail-safe
+    mapping. A feed failure is logged and never breaks the poll.
+    """
+    for run in check_runs or []:
+        if run.get("status") != "completed":
+            continue
+        name = run.get("name")
+        if not name:
+            continue
+        try:
+            # Lazy import: the metrics feed is append-only telemetry. If it
+            # cannot even be imported, the poll must still go through.
+            from prismatic.review_factory.metrics_feed import record_ci_result
+
+            record_ci_result(
+                result="pass" if run.get("conclusion") == "success" else "fail",
+                runner=str(name),
+            )
+        except Exception:
+            logger.warning(
+                "watchdog feed record_ci_result failed for check %r",
+                name,
+                exc_info=True,
+            )
+
+
 # Dedup state + the poll
 # ─────────────────────────────────────────────────────────────────────
 
@@ -457,6 +489,10 @@ def poll_once(
             continue
         if decision is not None:
             seen.add(key)
+            # Watchdog metrics feed (Phase 0 observe-only): this PR head's
+            # CI suite has settled -- record each check run's outcome.
+            # Append-only; a feed failure must never break the poll.
+            _record_ci_results(check_runs)
             emitted.append(decision)
             logger.info(
                 "shadow call for PR #%d (%s): %s",

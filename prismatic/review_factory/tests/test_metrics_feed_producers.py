@@ -653,3 +653,156 @@ class TestFeedRowsValidate:
             "jev_call",
             "jev_call",
         ]
+
+
+# ── shadow poller: CI result recording ─────────────────────────────────
+
+
+from prismatic.review_factory.shadow_observer import (  # noqa: E402
+    RiskBands,
+    ShadowPolicy,
+    load_policy,
+)
+from prismatic.review_factory.shadow_poller import poll_once  # noqa: E402
+
+
+class _FakePRSource:
+    """Minimal in-memory PRSource for CI-recording tests."""
+
+    def __init__(self, prs, checks):
+        self._prs = prs
+        self._checks = checks
+
+    def list_open_prs(self):
+        return self._prs
+
+    def get_pr_files(self, pr_number):
+        return ["docs/note.md"]
+
+    def get_check_runs(self, head_sha):
+        return self._checks.get(head_sha, [])
+
+
+def _ci_run(name, conclusion="success", status="completed"):
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+def _ci_pr(number=101, sha="a" * 40):
+    return {
+        "number": number,
+        "title": "CI test PR",
+        "headRefOid": sha,
+        "baseRefOid": "b" * 40,
+        "mergeable": "MERGEABLE",
+    }
+
+
+def _enabled_shadow_policy():
+    policy = load_policy()
+    return ShadowPolicy(
+        version=policy.version,
+        enabled=True,
+        gates=policy.gates,
+        verdicts_mergeable=policy.verdicts_mergeable,
+        tier_policy_file=policy.tier_policy_file,
+        shadow_merge_max_tier=policy.shadow_merge_max_tier,
+        jev_enabled=policy.jev_enabled,
+        bands_file=policy.bands_file,
+    )
+
+
+def _ci_components():
+    bands = RiskBands(version="test", auto_below=0.2, human_above=0.6)
+    engine = PolicyEngine.from_yaml(
+        Path(__file__).resolve().parent.parent / "spec" / "policy_file_v1.yaml"
+    )
+    return bands, engine
+
+
+class TestShadowPollerCIRecording:
+    """poll_once records one ci_result per settled check run (Phase 0)."""
+
+    def _poll(self, tmp_path, monkeypatch, checks, pr=None):
+        spy = _Spy()
+        monkeypatch.setattr(metrics_feed, "record_ci_result", spy)
+        pr = pr or _ci_pr()
+        src = _FakePRSource([pr], checks={pr["headRefOid"]: checks})
+        state = tmp_path / "seen.json"
+        sink = tmp_path / "signals.jsonl"
+        bands, engine = _ci_components()
+        emitted = poll_once(src, _enabled_shadow_policy(), bands, engine, state, sink)
+        return emitted, spy, state, sink
+
+    def test_settled_pr_records_one_event_per_run(self, tmp_path, monkeypatch):
+        checks = [
+            _ci_run("smoke (ruff lint)", "success"),
+            _ci_run("review factory gate (tier A)", "failure"),
+            # Fail-safe: a completed non-green run counts as a failure.
+            _ci_run("Verify shipped plugins load", "cancelled"),
+        ]
+        emitted, spy, _, _ = self._poll(tmp_path, monkeypatch, checks)
+        assert len(emitted) == 1
+        assert len(spy.calls) == 3
+        by_runner = {c["runner"]: c["result"] for c in spy.calls}
+        assert by_runner == {
+            "smoke (ruff lint)": "pass",
+            "review factory gate (tier A)": "fail",
+            "Verify shipped plugins load": "fail",
+        }
+
+    def test_unsettled_pr_records_nothing(self, tmp_path, monkeypatch):
+        checks = [
+            _ci_run("smoke (ruff lint)", "success"),
+            _ci_run("review factory gate (tier A)", None, status="in_progress"),
+        ]
+        emitted, spy, _, _ = self._poll(tmp_path, monkeypatch, checks)
+        assert emitted == []  # CI still running: deferred
+        assert spy.calls == []
+
+    def test_feed_failure_never_breaks_poll(self, tmp_path, monkeypatch):
+        def boom(**kwargs):
+            raise RuntimeError("feed exploded")
+
+        monkeypatch.setattr(metrics_feed, "record_ci_result", boom)
+        pr = _ci_pr()
+        src = _FakePRSource([pr], checks={pr["headRefOid"]: [_ci_run("smoke")]})
+        bands, engine = _ci_components()
+        emitted = poll_once(
+            src,
+            _enabled_shadow_policy(),
+            bands,
+            engine,
+            tmp_path / "seen.json",
+            tmp_path / "signals.jsonl",
+        )
+        assert len(emitted) == 1  # the poll still completes
+
+    def test_no_duplicate_events_on_repoll(self, tmp_path, monkeypatch):
+        checks = [_ci_run("smoke (ruff lint)", "success")]
+        emitted, spy, state, sink = self._poll(tmp_path, monkeypatch, checks)
+        assert len(emitted) == 1
+        first_calls = len(spy.calls)
+        assert first_calls == 1
+        pr = _ci_pr()
+        src = _FakePRSource([pr], checks={pr["headRefOid"]: checks})
+        bands, engine = _ci_components()
+        emitted2 = poll_once(src, _enabled_shadow_policy(), bands, engine, state, sink)
+        assert emitted2 == []  # seen-set dedup
+        assert len(spy.calls) == first_calls
+
+    def test_recorded_rows_validate(self, tmp_path):
+        """The real recorder accepts exactly what the poller emits."""
+        log = tmp_path / "events.jsonl"
+        metrics_feed.record_ci_result(
+            result="pass", runner="smoke (ruff lint)", event_log=log
+        )
+        metrics_feed.record_ci_result(
+            result="fail", runner="review factory gate (tier A)", event_log=log
+        )
+        rows = [
+            json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert [r["event"] for r in rows] == ["ci_result", "ci_result"]
+        assert rows[0]["result"] == "pass"
+        assert rows[0]["fault_injection"] is False
+        assert rows[1]["result"] == "fail"

@@ -25,11 +25,14 @@ What this module is:
   proposal is still generated but marked ``requires_michael: true`` — the
   learn loop blesses nothing it cannot mechanically justify.
 
-What this module NEVER does: apply a band change. Proposals are data plus
-``proposed_spec_text`` — the complete YAML of the would-be new versioned band
-file — ready to file through the normal review pipeline. No writer here
-mutates ``spec/``. There are no timers, no network calls, no Jev (``jev_score``
-parses through as data only, null today).
+Band changes are applied only through ``LearnLoop.apply_band_change``
+(or the ``apply`` CLI subcommand): the proposal is re-validated, the
+watchdog metrics-feed event is recorded FIRST (fail-closed -- a record
+failure aborts before anything is written), then the new versioned spec
+file is filed next to the loaded one. The live bands file is never
+overwritten -- activation stays an explicit separate step. There are no
+timers, no network calls, no Jev (``jev_score`` parses through as data
+only, null today).
 
 Event-based first: ``record_outcome()`` is called on events (the rollback
 watcher firing, the 7-day clean-verification backstop confirming). The
@@ -505,6 +508,23 @@ def _next_band_version(version: str) -> str:
     return f"{version}-next"
 
 
+def _next_spec_path(bands_path: Path, new_version: str) -> Path:
+    """Sibling path for the next versioned bands spec file.
+
+    ``auto_merge_bands_v1.yaml`` + ``auto-bands-v2`` ->
+    ``auto_merge_bands_v2.yaml``. Never overwrites: callers refuse when
+    the target already exists.
+    """
+    stem = bands_path.stem
+    version_num = new_version.rsplit("-v", 1)[-1] if "-v" in new_version else None
+    m = re.match(r"^(.*[-_]v)\d+$", stem)
+    if m and version_num:
+        new_stem = f"{m.group(1)}{version_num}"
+    else:
+        new_stem = f"{stem}-{new_version}"
+    return bands_path.with_name(new_stem + bands_path.suffix)
+
+
 def _build_proposed_spec_text(
     bands: LearnBands,
     band_key: str,
@@ -613,6 +633,9 @@ class LearnLoop:
                 }
             )
             self._bands_error = str(exc)
+        self.bands_path = (
+            Path(bands_path) if bands_path is not None else DEFAULT_BANDS_FILE
+        )
         self.decision_log = (
             Path(decision_log) if decision_log is not None else DEFAULT_DECISION_LOG
         )
@@ -964,6 +987,137 @@ class LearnLoop:
         )
         return {"status": "ok", "proposal": proposal}
 
+    # -- the application path ------------------------------------------
+
+    def apply_band_change(
+        self,
+        band_key: str,
+        new_value: float,
+        *,
+        reason: str = "",
+        by: str = "mbgulden",
+        event_log: Optional[Path | str] = None,
+    ) -> dict[str, Any]:
+        """Validate, record, and file one band change.
+
+        This is the learn loop's application path: ``propose_band_change``
+        only ever proposes. Apply re-runs the full proposal validation,
+        enforces the Michael gate (over-budget loosenings apply only when
+        ``by == "mbgulden"``), then records FIRST and writes second --
+        fail-closed: if the watchdog metrics-feed event cannot be
+        recorded, nothing is written.
+
+        On success a new versioned bands spec file is filed next to the
+        loaded one (never overwrites the live file or an existing
+        version), one row is appended to the band-change log (the format
+        ``_recent_loosening`` reads), and one audit row is emitted.
+        Returns ``{"status": "ok", ...}`` or
+        ``{"status": "refused", "reason": ...}``.
+        """
+        outcome = self.propose_band_change(band_key, new_value)
+        if outcome.get("status") != "ok":
+            refusal = outcome.get("reason", "proposal refused")
+            self._emit_audit(
+                "apply_band_change",
+                {
+                    "status": "refused",
+                    "reason": refusal,
+                    "band_key": band_key,
+                    "new_value": new_value,
+                    "by": by,
+                },
+            )
+            return {"status": "refused", "reason": refusal}
+        proposal: BandProposal = outcome["proposal"]
+        if proposal.requires_michael and by != "mbgulden":
+            refusal = (
+                "apply_band_change refused: this loosening exceeds the "
+                "weekly budget -- Michael's word is required"
+            )
+            self._emit_audit(
+                "apply_band_change",
+                {
+                    "status": "refused",
+                    "reason": refusal,
+                    "band_key": band_key,
+                    "new_value": new_value,
+                    "by": by,
+                },
+            )
+            return {"status": "refused", "reason": refusal}
+
+        new_version = _next_band_version(proposal.band_version)
+        spec_path = _next_spec_path(self.bands_path, new_version)
+        if spec_path.exists():
+            refusal = f"apply_band_change refused: {spec_path} already exists"
+            self._emit_audit(
+                "apply_band_change",
+                {
+                    "status": "refused",
+                    "reason": refusal,
+                    "band_key": band_key,
+                    "new_value": new_value,
+                    "by": by,
+                },
+            )
+            return {"status": "refused", "reason": refusal}
+
+        # Record FIRST: the metrics-feed row is the audit signal for this
+        # change ("no signal, no action"). A failed write raises here,
+        # before any file is written.
+        from prismatic.review_factory.metrics_feed import record_band_change
+
+        change_reason = (
+            reason
+            or proposal.reason
+            or (
+                f"learn-loop {proposal.direction}: {band_key} "
+                f"{proposal.old_value} -> {proposal.new_value}"
+            )
+        )
+        record_band_change(
+            band=band_key,
+            old_value=proposal.old_value,
+            new_value=proposal.new_value,
+            reason=change_reason,
+            event_log=event_log,
+        )
+
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(proposal.proposed_spec_text, encoding="utf-8")
+
+        log_row = {
+            "ts": self._now(),
+            "band_key": band_key,
+            "direction": proposal.direction,
+            "old_value": proposal.old_value,
+            "new_value": proposal.new_value,
+        }
+        self.band_change_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.band_change_log, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(log_row) + "\n")
+
+        self._emit_audit(
+            "apply_band_change",
+            {
+                "status": "ok",
+                "band_key": band_key,
+                "old_value": proposal.old_value,
+                "new_value": proposal.new_value,
+                "direction": proposal.direction,
+                "spec_file": str(spec_path),
+                "by": by,
+            },
+        )
+        return {
+            "status": "ok",
+            "band_key": band_key,
+            "old_value": proposal.old_value,
+            "new_value": proposal.new_value,
+            "direction": proposal.direction,
+            "spec_file": str(spec_path),
+        }
+
     # -- the batch rollup ---------------------------------------------
 
     def _window_stats(
@@ -1257,6 +1411,26 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=str(DEFAULT_CORRECTIONS_LOG),
         help="append-only corrections log",
     )
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help=(
+            "validate, record, and file one band change "
+            "(writes a new versioned bands spec; never overwrites live)"
+        ),
+    )
+    apply_parser.add_argument("--band-key", required=True, help="band key to move")
+    apply_parser.add_argument(
+        "--value", type=float, required=True, help="new band value"
+    )
+    apply_parser.add_argument("--reason", default="", help="why the band is moving")
+    apply_parser.add_argument(
+        "--by",
+        default="mbgulden",
+        help="who is applying (over-budget loosenings require mbgulden)",
+    )
+    apply_parser.add_argument(
+        "--event-log", default=None, help="metrics-feed event log override"
+    )
     parser.add_argument("--policy", default=str(DEFAULT_LEARN_POLICY_FILE))
     parser.add_argument("--bands", default=str(DEFAULT_BANDS_FILE))
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG))
@@ -1267,6 +1441,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.command == "correct":
         return _correct_command(args)
+    if args.command == "apply":
+        return _apply_command(args)
 
     try:
         loop = LearnLoop(
@@ -1445,6 +1621,41 @@ def _correct_command(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps({"status": "recorded", **entry}, indent=2))
     return 0
+
+
+def _apply_command(args: argparse.Namespace) -> int:
+    """Implement ``learn_loop apply``.
+
+    Validates, records, and files one band change through
+    ``LearnLoop.apply_band_change``. Exit 0 = applied; exit 1 =
+    refused, misconfigured, or a feed/write error (fail-closed: on a
+    metrics-feed write failure nothing is filed).
+    """
+    try:
+        loop = LearnLoop(
+            policy_path=args.policy,
+            bands_path=args.bands,
+            decision_log=args.decision_log,
+            outcome_log=args.outcome_log,
+            band_change_log=args.band_change_log,
+            audit_log=args.audit_log,
+        )
+    except LearnConfigError as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}))
+        return 1
+    try:
+        result = loop.apply_band_change(
+            args.band_key,
+            args.value,
+            reason=args.reason,
+            by=args.by,
+            event_log=args.event_log,
+        )
+    except Exception as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}))
+        return 1
+    print(json.dumps(result, indent=2))
+    return 0 if result.get("status") == "ok" else 1
 
 
 if __name__ == "__main__":
