@@ -121,7 +121,7 @@ class GhCliPRSource:
                 "--state",
                 "open",
                 "--json",
-                "number,title,headRefOid,baseRefOid,mergeable",
+                "number,title,headRefOid,mergeable",
                 "--limit",
                 "50",
             )
