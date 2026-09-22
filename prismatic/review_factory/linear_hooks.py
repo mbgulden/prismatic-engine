@@ -4,9 +4,9 @@ Reuses the existing Linear integration instead of rebuilding it:
 
 - ``prismatic.providers.tasks.linear.LinearTaskProvider`` (GraphQL) for
   comments and issue creation.
-- ``linear_helpers.update_issue_state`` — the deploy pipeline's established
-  transition path (``pe/deploy/linear_transition.py``) — for moving merged
-  work to Done, when importable.
+- ``LinearTaskProvider.update_issue_state`` for moving merged work to Done
+  (the state name is resolved within the issue's team, exactly like the
+  Linear skill CLI's ``update-status`` command).
 
 Contract:
 
@@ -177,7 +177,7 @@ class LinearReviewHooks:
                 ok=False, action="unconfigured", detail="LINEAR_API_KEY not set"
             )
         try:
-            transitioned, transition_detail = self._transition_to_done(ref)
+            transitioned, transition_detail = self._transition_to_done(provider, ref)
             body = (
                 f"Review Factory merged this issue's candidate "
                 f"(`{(merge_sha or '')[:12] or 'n/a'}`) via job `{job_id}`.\n\n"
@@ -363,21 +363,29 @@ class LinearReviewHooks:
             pass
         return None
 
-    @staticmethod
-    def _transition_to_done(issue_ref: str) -> tuple[bool, str]:
-        """Transition an issue to Done via the deploy pipeline's path.
+    def _transition_to_done(self, provider: Any, issue_ref: str) -> tuple[bool, str]:
+        """Transition an issue to Done through the Linear task provider.
 
-        Reuses ``linear_helpers.update_issue_state`` exactly the way
-        ``pe/deploy/linear_transition.py`` does. Returns (ok, detail).
+        Uses ``LinearTaskProvider.update_issue_state`` — the same GraphQL
+        path the deploy pipeline's ``LinearDeployTransitioner`` uses.
+        Returns ``(ok, detail)``. Failures are returned, never raised, so
+        the hook can audit them loudly while the pipeline degrades to
+        comment-only.
         """
         try:
-            from linear_helpers import update_issue_state  # type: ignore
-        except Exception as exc:
-            return False, f"linear_helpers unavailable: {exc}"
-        try:
-            resp = update_issue_state(issue_ref, state_name="Done")
-            if isinstance(resp, dict) and resp.get("error"):
+            update = getattr(provider, "update_issue_state", None)
+            if not callable(update):
+                return (
+                    False,
+                    "provider has no update_issue_state; "
+                    "LinearTaskProvider.update_issue_state required",
+                )
+            resp = update(issue_ref, state_name="Done")
+            if not isinstance(resp, dict):
+                return False, f"unexpected transition response: {resp!r}"[:200]
+            if resp.get("error"):
                 return False, str(resp["error"])[:200]
-            return True, str(resp)[:200]
+            state = resp.get("state") or resp.get("issue") or "Done"
+            return True, f"transitioned to {state}"[:200]
         except Exception as exc:
             return False, str(exc)[:200]

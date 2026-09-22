@@ -51,7 +51,9 @@ class LinearTransitionsStore:
                 self._seen = set(data.get("seen_transitions", []))
                 self._queued = data.get("queued_transitions", [])
         except Exception as exc:
-            logger.warning("Failed to load Linear transitions DB from %s: %s", self.db_path, exc)
+            logger.warning(
+                "Failed to load Linear transitions DB from %s: %s", self.db_path, exc
+            )
 
     def _save(self) -> None:
         try:
@@ -67,7 +69,9 @@ class LinearTransitionsStore:
                     indent=2,
                 )
         except Exception as exc:
-            logger.warning("Failed to save Linear transitions DB to %s: %s", self.db_path, exc)
+            logger.warning(
+                "Failed to save Linear transitions DB to %s: %s", self.db_path, exc
+            )
 
     def is_seen(self, idempotency_key: str) -> bool:
         return idempotency_key in self._seen
@@ -105,7 +109,9 @@ class LinearTransitionReceipt:
 class LinearDeployTransitioner:
     """Extracts issue IDs from commit messages and transitions them to Done."""
 
-    def __init__(self, dry_run: bool = False, store: LinearTransitionsStore | None = None):
+    def __init__(
+        self, dry_run: bool = False, store: LinearTransitionsStore | None = None
+    ):
         self.dry_run = dry_run
         self.store = store or LinearTransitionsStore()
 
@@ -157,10 +163,16 @@ class LinearDeployTransitioner:
 
         # Queue remaining issues in durable store for next deploy (Mitigation R4)
         if remainder:
-            new_queue = [{"issue_id": issue_id, "deploy_id": deploy_id, "pr_sha": pr_sha} for issue_id in remainder]
+            new_queue = [
+                {"issue_id": issue_id, "deploy_id": deploy_id, "pr_sha": pr_sha}
+                for issue_id in remainder
+            ]
             self.store.set_queued(new_queue)
             for issue_id in remainder:
-                logger.info("Queued transition for %s to next deploy (rate limit cap 10/min)", issue_id)
+                logger.info(
+                    "Queued transition for %s to next deploy (rate limit cap 10/min)",
+                    issue_id,
+                )
 
         for issue_id in batch:
             receipt = self._transition_single_issue(issue_id, deploy_id, pr_sha)
@@ -175,13 +187,19 @@ class LinearDeployTransitioner:
         pr_sha: str,
     ) -> LinearTransitionReceipt:
         """Transition a single issue to Done with durable idempotency check."""
-        now_iso = datetime.now(timezone.utc).isoformat()[:10]  # Date component for canonical idempotency
+        now_iso = datetime.now(timezone.utc).isoformat()[
+            :10
+        ]  # Date component for canonical idempotency
         raw_key = f"{issue_id}:{pr_sha}:{now_iso}"
         idempotency_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
         # Idempotency check: dedupe repeated transitions for same issue + pr_sha using durable store
         if self.store.is_seen(idempotency_key):
-            logger.info("Idempotent skip: %s already transitioned for %s (durable key check)", issue_id, pr_sha)
+            logger.info(
+                "Idempotent skip: %s already transitioned for %s (durable key check)",
+                issue_id,
+                pr_sha,
+            )
             return LinearTransitionReceipt(
                 issue_id=issue_id,
                 from_state="Done",
@@ -208,11 +226,23 @@ class LinearDeployTransitioner:
                 success=True,
             )
 
-        # Real Linear transition via linear_helpers if available
+        # Real Linear transition via LinearTaskProvider (GraphQL). The
+        # provider never raises for API/transport/unconfigured failures —
+        # it returns {"error": ...} — so the receipt keeps the outcome
+        # loud in the DeployRecord instead of silently dropping it.
         try:
-            from linear_helpers import update_issue_state  # type: ignore
-            resp = update_issue_state(issue_id, state_name="Done")
-            success = True
+            from prismatic.providers.tasks.linear import LinearTaskProvider
+
+            resp = LinearTaskProvider().update_issue_state(issue_id, state_name="Done")
+            if resp.get("error"):
+                logger.warning(
+                    "Linear transition %s → Done failed: %s",
+                    issue_id,
+                    resp["error"],
+                )
+                success = False
+            else:
+                success = True
         except Exception as exc:
             resp = {"error": str(exc)}
             success = False
