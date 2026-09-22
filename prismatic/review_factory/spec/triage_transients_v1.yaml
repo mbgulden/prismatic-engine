@@ -1,0 +1,88 @@
+# Failure-triage known-transient list — versioned config (roadmap chunk 5).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file (triage_transients_v2.yaml) and point the triager at it.
+#
+# Semantics: a failure whose error text or error classes match ANY rule
+# below gets the deterministic verdict "retry" (rerun once). The match
+# short-circuits Jev entirely — the Jev backend is never called for these.
+#
+# Fail-closed: a missing file means "no known transients" (match nothing,
+# never invent a match). A malformed file raises TriageConfigError at load
+# and the triager returns state "invalid" instead of evaluating.
+#
+# Each rule: name (unique), description, patterns (regexes, matched
+# case-insensitively against the failure's error text), error_classes
+# (exact-match labels the caller may supply; either signal matches).
+#
+# Seed scope (v1): infrastructure flakes seen on the self-hosted runner and
+# GitHub Actions — runner loss, network blips, upstream 5xx. Deliberately
+# narrow: over-matching here would retry real failures instead of
+# repairing them.
+
+version: triage-transients-v1
+
+transients:
+  - name: runner-lost
+    description: >-
+      The self-hosted runner lost contact mid-job. The code under test did
+      not fail; the machine running it went away.
+    patterns:
+      - "lost communication with the server"
+      - "the runner has lost contact"
+      - "runner .* (lost|disconnected)"
+      - "A task was canceled|task cancelled"
+      - "The job was canceled because.*runner"
+    error_classes: []
+
+  - name: network-timeout
+    description: >-
+      Transient network failure during dependency fetch or API calls:
+      timeouts, resets, refused connections that succeed on retry.
+    patterns:
+      - "connection (timed out|reset|refused)"
+      - "operation timed out"
+      - "timeout.*exceeded.*while"
+      - "temporary failure in name resolution"
+      - "could not resolve host"
+      - "read timed out"
+      - "ECONNRESET|ETIMEDOUT|ENOTFOUND"
+    error_classes: []
+
+  - name: github-api-transient
+    description: >-
+      GitHub API returned a transient 5xx or secondary rate limit. The
+      workflow logic did not fail; the platform hiccuped.
+    patterns:
+      - "API rate limit exceeded.*secondary|secondary rate limit"
+      - "server error (502|503|504)"
+      - "\\b(502|503|504)\\b.*github\\.com"
+      - "Something went wrong with the GitHub API"
+    error_classes:
+      - github-api-5xx
+      - github-secondary-rate-limit
+
+  - name: registry-transient
+    description: >-
+      Package registry (PyPI/npm/apt) returned a transient error during
+      install. Retrying the install step usually succeeds.
+    patterns:
+      - "HTTP (502|503|504).*pypi\\.org"
+      - "Bad Gateway.*registry"
+      - "npm ERR!.*(502|503|504|ECONNRESET|ETIMEDOUT)"
+      - "Failed to fetch.*(502|503|504|Connection failed)"
+      - "pip.*(ReadTimeoutError|ConnectTimeoutError)"
+    error_classes:
+      - registry-5xx
+
+  - name: connection-reset-midstream
+    description: >-
+      An established connection dropped mid-transfer (TLS, SSH, long
+      poll). Distinct from a clean timeout: the remote end went away.
+    patterns:
+      - "Connection reset by peer"
+      - "Broken pipe"
+      - "TLS.*(aborted|closed|reset)"
+      - "ssh.*connection.*(closed|reset)"
+      - "unexpected EOF|EOF occurred"
+    error_classes: []
