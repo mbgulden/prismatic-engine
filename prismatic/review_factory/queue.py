@@ -43,7 +43,9 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from prismatic.review_factory.db import ReviewFactoryDB
@@ -137,6 +139,120 @@ def _lease_expiry(tier: int) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Zombie-job safeguards: candidate-in-main detection (best-effort)
+# ─────────────────────────────────────────────────────────────────────
+
+# States that may still transition (everything with outgoing edges).
+_NON_TERMINAL_STATES = [
+    s for s in ReviewJobState if ReviewJobState.valid_transitions()[s.value]
+]
+
+# Local refs tried, in order, as "main" for the merge-base check.
+_MAIN_REF_CANDIDATES = ("origin/main", "main")
+
+
+def _git_available() -> bool:
+    """True when a git binary can be executed. Never raises."""
+    try:
+        proc = subprocess.run(["git", "--version"], capture_output=True, timeout=10)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _resolve_repo_path(
+    repository: str, repo_dir: Optional[Path] = None
+) -> Optional[Path]:
+    """Resolve a job's ``repository`` to a local git checkout.
+
+    Tries the repository value as a literal local path first, then
+    ``repo_dir / repository``. Returns None when nothing resolves to a
+    git repository. Never raises.
+    """
+    candidates: list[Path] = []
+    if repository:
+        candidates.append(Path(repository))
+    if repo_dir is not None and repository:
+        candidates.append(Path(repo_dir) / repository)
+    for candidate in candidates:
+        try:
+            if not candidate.is_dir():
+                continue
+            proc = subprocess.run(
+                ["git", "-C", str(candidate), "rev-parse", "--git-dir"],
+                capture_output=True,
+                timeout=15,
+            )
+            if proc.returncode == 0:
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def candidate_merged_in_main(
+    repository: str,
+    candidate_commit: str,
+    repo_dir: Optional[Path] = None,
+) -> Optional[bool]:
+    """Best-effort check: is ``candidate_commit`` already merged into main?
+
+    Runs ``git merge-base --is-ancestor <candidate> <main>`` against the
+    local checkout resolved from the job's repository.
+
+    Returns True (merged), False (not merged), or None (indeterminate:
+    git unavailable, no local checkout, or the main ref is unresolvable).
+    Never raises -- callers fail open on None.
+    """
+    if not candidate_commit:
+        return None
+    repo_path = _resolve_repo_path(repository, repo_dir)
+    if repo_path is None:
+        return None
+    try:
+        main_ref: Optional[str] = None
+        for ref in _MAIN_REF_CANDIDATES:
+            proc = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo_path),
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    ref,
+                ],
+                capture_output=True,
+                timeout=15,
+            )
+            if proc.returncode == 0:
+                main_ref = ref
+                break
+        if main_ref is None:
+            return None
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_path),
+                "merge-base",
+                "--is-ancestor",
+                candidate_commit,
+                main_ref,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return True
+        if proc.returncode == 1:
+            return False
+        return None
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Queue
 # ─────────────────────────────────────────────────────────────────────
 
@@ -153,13 +269,61 @@ class ReviewQueue:
         self,
         db: Optional[ReviewFactoryDB] = None,
         policy: Optional[PolicyEngine] = None,
+        repo_dir: Optional[Path | str] = None,
     ):
         self.db = db or ReviewFactoryDB()
         self.db.ensure_tables()
         self.policy = policy or PolicyEngine.builtin_default()
+        # Base directory used to resolve a job's ``repository`` value to a
+        # local git checkout for the candidate-in-main zombie checks. When
+        # None, only literal local paths in ``repository`` are checked;
+        # unresolvable jobs fail open (queued/dispatched as today).
+        self._repo_dir = Path(repo_dir) if repo_dir is not None else None
 
     def close(self) -> None:
         self.db.close()
+
+    def _supersede_job(
+        self,
+        review_job_id: str,
+        *,
+        actor: str,
+        action: str,
+        details: Optional[dict] = None,
+    ) -> bool:
+        """Transition a job to SUPERSEDED with an audit entry and event.
+
+        Shared by every zombie-job safeguard path. Returns True when the
+        transition landed; False when the job is missing or already
+        terminal. Never raises for a missing job.
+        """
+        job = self.db.get_review_job(review_job_id)
+        if job is None:
+            return False
+        transitioned = self.db.update_review_job_state(
+            review_job_id, ReviewJobState.SUPERSEDED
+        )
+        self.db.insert_audit_entry(
+            actor=actor,
+            action=action,
+            review_job_id=review_job_id,
+            details={
+                "task_id": job.task_id,
+                "candidate_commit": (job.candidate_commit or "")[:12],
+                "previous_state": job.state,
+                "transitioned": transitioned,
+                **(details or {}),
+            },
+        )
+        emit_rf_event(
+            "review_factory.job_superseded",
+            {
+                "review_job_id": review_job_id,
+                "task_id": job.task_id,
+                "reason": action,
+            },
+        )
+        return transitioned
 
     # ── Intake ───────────────────────────────────────────────────────
 
@@ -183,11 +347,73 @@ class ReviewQueue:
 
         Idempotent: if a job already exists for this
         ``completed_work_id``, returns the existing job ID.
+
+        Zombie-job safeguards:
+        - Gap 1: a second submit with the same ``(task_id,
+          candidate_commit)`` links to the surviving job instead of
+          creating a duplicate.
+        - Gap 2: a candidate already merged into main lands directly in
+          ``superseded`` -- history preserved, never queued. The
+          merge-base check is best-effort: when it cannot run, the job is
+          queued normally (fail open) with a ``merge_check_unavailable``
+          audit entry.
         """
         # Idempotency check via SQL index query
         existing = self.db.get_job_by_completed_work_id(completed_work_id)
         if existing:
             return existing.review_job_id
+
+        # Gap 1 -- submit-time uniqueness on (task_id, candidate_commit).
+        # consume_repair swaps the candidate in place on the same job row,
+        # so legitimate repair cycles (new commit) are unaffected.
+        if task_id and candidate_commit:
+            duplicate = self.db.get_job_by_task_and_candidate(task_id, candidate_commit)
+            if duplicate is not None:
+                self.db.insert_audit_entry(
+                    actor="review-factory:intake",
+                    action="duplicate_submit_linked",
+                    review_job_id=duplicate.review_job_id,
+                    details={
+                        "completed_work_id": completed_work_id,
+                        "task_id": task_id,
+                        "candidate_commit": (candidate_commit or "")[:12],
+                        "note": (
+                            "duplicate submit linked to surviving job; "
+                            "no new review job created"
+                        ),
+                    },
+                )
+                return duplicate.review_job_id
+
+        # Gap 2 -- candidate already in main: supersede at birth.
+        initial_state = ReviewJobState.QUEUED
+        if candidate_commit:
+            merged = candidate_merged_in_main(
+                repository, candidate_commit, self._repo_dir
+            )
+            if merged is True:
+                initial_state = ReviewJobState.SUPERSEDED
+            elif (
+                merged is None
+                and _git_available()
+                and _resolve_repo_path(repository, self._repo_dir) is not None
+            ):
+                # The check was attempted against a real checkout but came
+                # back indeterminate: fail open (queue normally) and leave
+                # a loud audit trail so the blind spot is visible.
+                self.db.insert_audit_entry(
+                    actor="review-factory:intake",
+                    action="merge_check_unavailable",
+                    details={
+                        "completed_work_id": completed_work_id,
+                        "task_id": task_id,
+                        "repository": repository,
+                        "candidate_commit": (candidate_commit or "")[:12],
+                        "note": (
+                            "candidate-in-main check indeterminate; queued normally"
+                        ),
+                    },
+                )
 
         # Classify risk tier
         paths = changed_paths or []
@@ -212,10 +438,34 @@ class ReviewQueue:
             risk_tier=classification.risk_tier,
             policy_version=classification.policy_version,
             required_witnesses=classification.required_witnesses,
-            state=ReviewJobState.QUEUED.value,
+            state=initial_state.value,
         )
 
         job_id = self.db.insert_review_job(job)
+        if initial_state == ReviewJobState.SUPERSEDED:
+            self.db.insert_audit_entry(
+                actor="review-factory:intake",
+                action="candidate_already_merged",
+                review_job_id=job_id,
+                details={
+                    "completed_work_id": completed_work_id,
+                    "task_id": task_id,
+                    "repository": repository,
+                    "candidate_commit": (candidate_commit or "")[:12],
+                    "note": (
+                        "candidate already in main at submit; job "
+                        "superseded, never queued"
+                    ),
+                },
+            )
+            emit_rf_event(
+                "review_factory.job_superseded",
+                {
+                    "review_job_id": job_id,
+                    "task_id": task_id,
+                    "reason": "candidate_already_merged",
+                },
+            )
         emit_rf_event(
             "review_factory.job_enqueued",
             {
@@ -777,6 +1027,23 @@ class ReviewQueue:
         if not job:
             return None
 
+        # Gap 3 -- never dispatch repair for a candidate already in main.
+        # The check is best-effort: only positive proof of "merged"
+        # supersedes; indeterminate results dispatch as before (fail open).
+        if (
+            candidate_merged_in_main(
+                job.repository, job.candidate_commit, self._repo_dir
+            )
+            is True
+        ):
+            self._supersede_job(
+                review_job_id,
+                actor="review-factory:repair-dispatch",
+                action="repair_dispatch_skipped_merged",
+                details={"note": "repair dispatch skipped: candidate already in main"},
+            )
+            return None
+
         existing = self.db.find_audit_entry(review_job_id, "repair_dispatched")
         if existing and not force:
             try:
@@ -1073,7 +1340,12 @@ class ReviewQueue:
     ) -> dict[str, int]:
         """Run the lease janitor to reset stale leases.
 
-        Returns a dict of counts: {'verifying_reset': N, 'reviewing_reset': M, 'stale_leases_reset': N+M}
+        Also sweeps non-terminal jobs whose candidate has since merged into
+        main, transitioning them to ``superseded`` (zombie-job safeguard,
+        Gap 2). Per-job check failures are logged, never raised.
+
+        Returns a dict of counts: {'verifying_reset': N, 'reviewing_reset': M,
+        'stale_leases_reset': N+M, 'superseded_merged': K}
         """
         total = self.db.reset_stale_leases()
         if total > 0:
@@ -1083,12 +1355,55 @@ class ReviewQueue:
                 client_ip=client_ip,
                 details={"reset_count": total},
             )
+        superseded = self._sweep_merged_candidates(actor=actor)
         return {
             "verifying_reset": total,
             "reviewing_reset": 0,
             "total_reset": total,
             "stale_leases_reset": total,
+            "superseded_merged": superseded,
         }
+
+    def _sweep_merged_candidates(self, actor: str = "janitor") -> int:
+        """Supersede non-terminal jobs whose candidate merged into main.
+
+        Best-effort: a job is only superseded on positive proof of
+        "merged"; indeterminate checks and per-job errors are skipped
+        (logged, never raised). Returns the number of jobs superseded.
+        """
+        count = 0
+        for state in _NON_TERMINAL_STATES:
+            try:
+                jobs = self.db.list_review_jobs(state=state, limit=1000)
+            except Exception as exc:
+                logger.warning("zombie sweep list failed for %s: %s", state.value, exc)
+                continue
+            for job in jobs:
+                try:
+                    merged = candidate_merged_in_main(
+                        job.repository, job.candidate_commit, self._repo_dir
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "zombie sweep check failed for %s: %s",
+                        job.review_job_id,
+                        exc,
+                    )
+                    continue
+                if merged is not True:
+                    continue
+                if self._supersede_job(
+                    job.review_job_id,
+                    actor=f"review-factory:janitor:{actor}",
+                    action="candidate_superseded_by_merge",
+                    details={
+                        "note": (
+                            "janitor sweep: candidate merged into main after submit"
+                        )
+                    },
+                ):
+                    count += 1
+        return count
 
     # ── Query helpers ────────────────────────────────────────────────
 
@@ -1223,6 +1538,26 @@ class ReviewQueue:
         summary: dict,
     ) -> None:
         job_id = job.review_job_id
+
+        # Gap 3 -- a stalled repair whose candidate has since merged into
+        # main is superseded, never redispatched. Recorded under "skipped"
+        # (not redispatched, not failed). Best-effort: only positive proof
+        # of "merged" supersedes; indeterminate results continue as before.
+        if (
+            candidate_merged_in_main(
+                job.repository, job.candidate_commit, self._repo_dir
+            )
+            is True
+        ):
+            self._supersede_job(
+                job_id,
+                actor="review-factory:repair-redispatch",
+                action="repair_dispatch_skipped_merged",
+                details={"note": "stalled repair skipped: candidate already in main"},
+            )
+            summary["skipped"] += 1
+            return
+
         attempts = int(getattr(job, "repair_attempts", 0) or 0)
         last_at = (getattr(job, "repair_last_dispatch_at", "") or "").strip()
 
