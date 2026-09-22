@@ -446,6 +446,10 @@ class NoveltyDetector:
         # In-memory quarantine registry: candidate_id -> quarantine ts.
         # Durable store is a later chunk's job; no timers, no auto-clear.
         self._quarantine: dict[str, float] = {}
+        # The audit dir is created once and the flag cached: mkdir on every
+        # emit dominated evaluate()'s cost. On OSError the flag resets and
+        # mkdir is retried once (self-healing if the dir is removed mid-run).
+        self._audit_dir_ready = False
 
     @property
     def quarantined_ids(self) -> tuple[str, ...]:
@@ -453,6 +457,33 @@ class NoveltyDetector:
         return tuple(self._quarantine)
 
     # -- audit --------------------------------------------------------
+
+    def _write_audit_row(self, row: dict[str, Any]) -> None:
+        """Append one audit row, creating the audit dir on first use.
+
+        Fail-closed: an OSError never changes the evaluation outcome — and
+        must never turn a quarantine into a familiar. The result stands.
+        The dir creation is retried once after a failure so a dir removed
+        mid-run self-heals instead of silently dropping every later signal.
+        """
+        try:
+            if not self._audit_dir_ready:
+                self.audit_log.parent.mkdir(parents=True, exist_ok=True)
+                self._audit_dir_ready = True
+            with open(self.audit_log, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row) + "\n")
+        except OSError:
+            self._audit_dir_ready = False
+            try:
+                self.audit_log.parent.mkdir(parents=True, exist_ok=True)
+                self._audit_dir_ready = True
+                with open(self.audit_log, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row) + "\n")
+            except OSError:
+                # Audit write failure must not change the evaluation
+                # outcome — and must never turn a quarantine into a
+                # familiar. The verdict stands.
+                pass
 
     def _emit_audit(
         self,
@@ -479,15 +510,7 @@ class NoveltyDetector:
             "precedent_matches": candidate.precedent_matches,
             "note": note,
         }
-        try:
-            self.audit_log.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.audit_log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
-        except OSError:
-            # Audit write failure must not change the evaluation outcome —
-            # and must never turn a quarantine into a familiar. The verdict
-            # stands.
-            pass
+        self._write_audit_row(row)
 
     # -- page input ----------------------------------------------------
 
@@ -692,9 +715,4 @@ class NoveltyDetector:
             "candidate_id": candidate_id,
             "quarantined_ids": list(self._quarantine),
         }
-        try:
-            self.audit_log.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.audit_log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
-        except OSError:
-            pass
+        self._write_audit_row(row)
