@@ -107,9 +107,7 @@ def test_review_verdict_fail_safe():
     )
     assert review_verdict([]) == "REJECT"  # missing gate -> REJECT, never cleared
     assert (
-        review_verdict(
-            [_run("review factory gate (tier A)", conclusion="cancelled")]
-        )
+        review_verdict([_run("review factory gate (tier A)", conclusion="cancelled")])
         == "REJECT"
     )
 
