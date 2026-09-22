@@ -1,0 +1,109 @@
+# prismatic-router — router capability plugin manifest
+#
+# Policy-based ingress classification: "request class → capability".
+# The plugin classifies; it never dispatches, executes, or enforces.
+# Disabled by default (auto_enable: false): the operator must explicitly
+# enable it after attaching. Classification is infrastructure, not a tool.
+
+schema_version: "1.0.0"
+
+name: "prismatic-router"
+
+version: "0.1.0"
+
+description: >-
+  Router capability plugin for the Prismatic Engine generic plugin
+  lifecycle. Classifies ingress requests into operator-configured request
+  classes and maps each class to the capability that should handle it,
+  with advisory policy notes. Classification is a pure function of
+  (rules, input): advisory dry-run only — the plugin never dispatches,
+  executes, or enforces routing decisions. Enforcement stays with the
+  kernel gate / the harness.
+
+author: "Prismatic Engine Swarm"
+
+license: "MIT"
+
+# Fully qualified Python class path acting as the entry point.
+# Module path uses UNDERSCORES (dir name matches first module segment);
+# the plugin `name` (dashed) is what humans read.
+entry_point: "router.plugin:RouterPlugin"
+
+core_version_constraint: ">=0.2.0, <2.0.0"
+
+dependencies:
+  pip:
+    - "swarmrouter>=0.1.0"
+
+# Plugin registers but starts DISABLED. The operator enables it explicitly
+# after attach; on enable the loader calls on_init() with the validated config.
+auto_enable: false
+
+permissions: []
+
+risk_level: "low"
+
+policy_checks:
+  - "classify is advisory-only: no dispatch, execute, or enqueue path exists"
+  - "classification is a pure function of (rules, input): zero side effects"
+  - "rules are operator config validated against config_schema at attach"
+
+audit_events:
+  - "rules_loaded"
+  - "classified"
+  - "suspend"
+  - "resume"
+
+endpoints:
+  - method: "GET"
+    path: "/api/router/rules"
+    description: "Current rule table: request class → capability (+ policy notes, priority)."
+  - method: "POST"
+    path: "/api/router/classify"
+    description: "Advisory dry-run classification: input → matched rule + capability. No side effects."
+
+tags:
+  - "infrastructure"
+  - "optional"
+
+# JSON Schema for the plugin config. Validated by the PluginLoader at attach
+# time; RouterPlugin.on_init() re-validates defensively and raises
+# PluginValidationError on any violation.
+#
+# A rule maps one request class onto the capability that should handle it.
+# Matching is exact on request_class; when several rules name the same
+# class the highest priority wins (ties broken by config order). When no
+# rule matches, default_capability (when set) is returned with
+# decision="default"; otherwise decision="no-match" with capability null.
+config_schema:
+  type: "object"
+  additionalProperties: false
+  properties:
+    rules:
+      type: "array"
+      items:
+        type: "object"
+        additionalProperties: false
+        required: ["request_class", "capability"]
+        properties:
+          request_class:
+            type: "string"
+            minLength: 1
+            description: "Ingress request class this rule matches (exact match)."
+          capability:
+            type: "string"
+            minLength: 1
+            description: "Capability that should handle this request class (advisory)."
+          policy_notes:
+            type: "string"
+            description: "Operator policy notes attached to the advisory classification."
+          priority:
+            type: "integer"
+            minimum: 0
+            default: 0
+            description: "Higher priority wins when several rules match the same class."
+    default_capability:
+      type: "string"
+      minLength: 1
+      description: "Capability returned (advisory) when no rule matches."
+  required: []
