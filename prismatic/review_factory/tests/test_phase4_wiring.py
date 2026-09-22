@@ -189,7 +189,15 @@ class TestMergeStageConfig:
 # ── MergeStage decisions ───────────────────────────────────────────
 
 
-def _merge_ready_job(queue, tier=0, task_id="GRO-1234"):
+def _merge_ready_job(queue, tier=0, task_id=None):
+    # NOTE: the default task_id is unique per call. The zombie-job
+    # safeguard (Gap 1) links a resubmit of the same (task_id,
+    # candidate_commit) to the surviving job, so repeated helper calls
+    # must not share one.
+    if task_id is None:
+        import uuid
+
+        task_id = f"GRO-1234-t{tier}-{uuid.uuid4().hex[:8]}"
     paths = {
         0: ["docs/readme.md"],
         1: ["prismatic/core/x.py"],
