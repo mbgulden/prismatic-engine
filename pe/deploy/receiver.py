@@ -11,13 +11,14 @@ import hmac
 import json
 import logging
 import os
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
 try:
-    from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
+    from fastapi import FastAPI, Header, HTTPException, Request
     from fastapi.responses import JSONResponse
 
     _HAS_FASTAPI = True
@@ -33,6 +34,13 @@ from pe.deploy.manifest import DeployManifestStore, DeployRecord
 logger = logging.getLogger(__name__)
 
 RECEIVER_PORT = 9460
+
+#: Default location of the persistent private-repo mirror that the gateway's
+#: repo-dir activation checks read. Refreshed eagerly on each successful
+#: deploy (piggyback) so the mirror tracks origin/main without waiting for
+#: the 15-minute systemd timer, which stays as the drift backstop.
+MIRROR_REPO_RELATIVE = Path(".prismatic/repos/mbgulden/prismatic-engine")
+MIRROR_FETCH_TIMEOUT_S = 120
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -115,6 +123,7 @@ class DeployReceiverPipeline:
         transitioner: LinearDeployTransitioner | None = None,
         store: DeployManifestStore | None = None,
         gateway_redeployer: GatewayRedeployer | None = None,
+        mirror_repo: Path | None = None,
     ):
         self.source_repo = source_repo or Path(".").resolve()
         self.deploy_runner = deploy_runner or AtomicDeployRunner()
@@ -122,6 +131,48 @@ class DeployReceiverPipeline:
         self.transitioner = transitioner or LinearDeployTransitioner()
         self.store = store or DeployManifestStore()
         self.gateway_redeployer = gateway_redeployer or GatewayRedeployer()
+        self.mirror_repo = mirror_repo
+
+    def refresh_repo_mirror(self) -> dict[str, Any]:
+        """Best-effort ``git fetch origin --prune`` of the persistent repo mirror.
+
+        Event-based freshness: a successful deploy means origin/main moved, so
+        pull the mirror in now instead of waiting for the 15-minute systemd
+        timer (which remains the authoritative drift backstop).
+
+        Fail-closed: this never raises. Every failure is logged and returned
+        in the result dict; the deploy itself is unaffected.
+        """
+        mirror = self.mirror_repo
+        if mirror is None:
+            mirror = Path.home() / MIRROR_REPO_RELATIVE
+        if not mirror.is_dir():
+            logger.warning(
+                "Repo mirror %s not present; skipping refresh (timer owns creation)",
+                mirror,
+            )
+            return {"refreshed": False, "reason": "mirror-not-present"}
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(mirror), "fetch", "origin", "--prune"],
+                capture_output=True,
+                text=True,
+                timeout=MIRROR_FETCH_TIMEOUT_S,
+            )
+        except Exception as exc:  # fail-closed: never break the deploy
+            logger.warning("Repo mirror refresh failed (fail-closed): %s", exc)
+            return {"refreshed": False, "reason": f"fetch-error: {exc}"}
+        if proc.returncode != 0:
+            stderr_lines = proc.stderr.strip().splitlines()
+            last_line = stderr_lines[-1] if stderr_lines else ""
+            logger.warning(
+                "Repo mirror refresh failed (fail-closed): rc=%s: %s",
+                proc.returncode,
+                last_line,
+            )
+            return {"refreshed": False, "reason": f"git-rc-{proc.returncode}"}
+        logger.info("Repo mirror refreshed after successful deploy: %s", mirror)
+        return {"refreshed": True, "reason": "fetch-ok"}
 
     def process_deploy(
         self,
@@ -213,7 +264,22 @@ class DeployReceiverPipeline:
             failure_reason=err_msg if not success else None,
         )
 
-        # Step 4: Persist deploy record
+        # Step 4: Piggyback the persistent mirror refresh on the deploy event.
+        # A successful deploy means origin/main moved: pull the mirror in now
+        # instead of waiting for the 15-minute timer. Fail-closed: a refresh
+        # failure is logged in the record but never fails the deploy itself;
+        # the timer stays as the backstop.
+        if success and not is_dry_run:
+            record.mirror_refresh = self.refresh_repo_mirror()
+        elif is_dry_run:
+            record.mirror_refresh = {"refreshed": False, "reason": "skipped: dry-run"}
+        else:
+            record.mirror_refresh = {
+                "refreshed": False,
+                "reason": "skipped: deploy failed",
+            }
+
+        # Step 5: Persist deploy record
         self.store.record_deploy(record)
 
         return record
