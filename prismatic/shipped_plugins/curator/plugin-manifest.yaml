@@ -1,0 +1,85 @@
+# prismatic-curator — curator capability plugin manifest
+#
+# Advisory-only capability recommendations: ranked suggestions with reasons,
+# read from the plugin catalog (the loader's registered capability contracts).
+# Disabled by default (auto_enable: false): the operator must explicitly
+# enable it after attaching. Recommendations are infrastructure, not agent
+# tools — and never actions: the plugin has no write routes and no code path
+# that selects, attaches, enables, or rewires a capability.
+
+schema_version: "1.0.0"
+
+name: "prismatic-curator"
+
+version: "0.1.0"
+
+description: >-
+  Curator capability plugin for the Prismatic Engine generic plugin lifecycle.
+  Advisory-only recommendations: GET /api/curator/suggest returns ranked
+  capability suggestions with reasons for a query, read from a read-only
+  snapshot of the loader's registered capability contracts
+  (GET /api/curator/catalog shows the snapshot). Pure read path — catalog in,
+  ranked suggestions out. Infrastructure only — registers no agent tools and
+  never auto-attaches, auto-selects, auto-enables, or rewires anything.
+
+author: "Prismatic Engine Swarm"
+
+license: "MIT"
+
+# Fully qualified Python class path acting as the entry point.
+# Module path uses UNDERSCORES (dir name matches first module segment);
+# the plugin `name` (dashed) is what humans read.
+entry_point: "curator.plugin:CuratorPlugin"
+
+core_version_constraint: ">=0.2.0, <2.0.0"
+
+dependencies:
+  pip:
+    - "swarmcurator>=0.1.0"
+
+# Plugin registers but starts DISABLED. The operator enables it explicitly
+# after attach; on enable the loader calls on_init() with the validated config.
+auto_enable: false
+
+# Pure read path: no subprocess, no filesystem writes, no network.
+permissions: []
+
+risk_level: "low"
+
+policy_checks:
+  - "route table is GET-only: no write route may select or attach a capability"
+  - "suggest() never mutates plugin or loader state (stateless per call)"
+  - "on_suspend() returns config echo only; no secrets, no catalog payload"
+
+audit_events:
+  - "catalog_refreshed"
+  - "suggest_served"
+  - "suspend"
+  - "resume"
+
+endpoints:
+  - method: "GET"
+    path: "/api/curator/suggest"
+    description: "Ranked advisory capability suggestions for ?q=<query>, each with score, reasons, and a stable fingerprint. Read-only."
+  - method: "GET"
+    path: "/api/curator/catalog"
+    description: "The capability catalog snapshot the suggester reads from."
+
+tags:
+  - "infrastructure"
+  - "optional"
+
+# JSON Schema for the plugin config. Validated by the PluginLoader at attach
+# time; CuratorPlugin.on_init() re-validates defensively and raises
+# PluginValidationError on any violation.
+config_schema:
+  type: "object"
+  additionalProperties: false
+  properties:
+    max_suggestions:
+      type: "integer"
+      minimum: 1
+      maximum: 25
+      default: 5
+      description: "Maximum suggestions returned by GET /api/curator/suggest."
+  required: []

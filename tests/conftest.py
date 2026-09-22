@@ -108,3 +108,22 @@ def authenticated_gateway_test_client(request, tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(TestClient, "request", authenticated_request)
+
+
+@pytest.fixture(autouse=True)
+def _tmp_alert_log_for_all_tests(tmp_path, monkeypatch):
+    """Scope the deploy alert log to tmp for every test.
+
+    Regression guard (Sep 22, 2026): ``test_process_deploy_pipeline`` drove
+    the real ``emit_deploy_alert`` with no log override and wrote 14
+    synthetic entries into ``~/.prismatic/alerts.log`` on the box. No test
+    may write to the production alert log.
+
+    ``default_alert_log_path()`` reads ``PRISMATIC_ALERT_LOG`` at call time,
+    so pointing it at a per-test tmp file covers every emit path --
+    including end-to-end pipeline tests that never pass ``log_path=``.
+    Tests that assert on entries use their own tmp path or an explicit
+    ``log_path=``; both compose with this fixture because their later
+    ``monkeypatch.setenv`` wins and is undone independently.
+    """
+    monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(tmp_path / "alerts.log"))
