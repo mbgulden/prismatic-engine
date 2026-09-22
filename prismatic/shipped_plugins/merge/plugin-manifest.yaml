@@ -1,0 +1,115 @@
+# prismatic-merge — merge-strategy registry capability plugin manifest
+#
+# A guest-callable registry of merge strategies. Guests (harnesses, agents,
+# operators) invoke strategies through the plugin's API routes; the plugin
+# never auto-merges anything, never holds kernel state, and is never driven
+# by the kernel.
+#
+# Scope guard (docs/infrastructure-capabilities.md, non-negotiable):
+# "merge stays a guest-callable registry. Merge strategies are functions
+# guests invoke; merge is never driven by the kernel and never holds
+# kernel state."
+#
+# Disabled by default (auto_enable: false): the operator enables it
+# explicitly after attach. Merging is infrastructure, not an agent tool.
+
+schema_version: "1.0.0"
+
+name: "prismatic-merge"
+
+version: "0.1.0"
+
+description: >-
+  Merge capability plugin for the Prismatic Engine generic plugin lifecycle.
+  Maintains a registry of named merge strategies (implemented by the
+  swarmmerge primitive) that guests invoke on demand: GET /api/merge/strategies
+  lists them, POST /api/merge/apply runs one as a pure function of the
+  guest-supplied inputs. Stateless — every apply call emits an audit event
+  but keeps no kernel state. Infrastructure only — registers no agent tools.
+
+author: "Prismatic Engine Swarm"
+
+license: "MIT"
+
+# Fully qualified Python class path acting as the entry point.
+# Module path uses UNDERSCORES (dir name matches first module segment);
+# the plugin `name` (dashed) is what humans read.
+entry_point: "merge.plugin:MergePlugin"
+
+core_version_constraint: ">=0.2.0, <2.0.0"
+
+# Aspirational PyPI name (same convention as prismatic-cron): swarmmerge is
+# not on PyPI yet, so the loader treats this as metadata and the plugin
+# imports the primitive lazily, raising a clear RuntimeError at use time.
+dependencies:
+  pip:
+    - "swarmmerge>=0.1.0"
+
+# Plugin registers but starts DISABLED. The operator enables it explicitly
+# after attach; on enable the loader calls on_init() with the validated config.
+auto_enable: false
+
+permissions:
+  - "filesystem-write"
+
+risk_level: "low"
+
+policy_checks:
+  - "strategy handler paths resolve only inside the swarmmerge package namespace"
+  - "merge inputs and strategy results must be JSON-serializable"
+  - "no kernel transaction/lock/ledger paths are imported or touched"
+
+audit_events:
+  - "merge_applied"
+  - "merge_failed"
+  - "suspend"
+  - "resume"
+
+endpoints:
+  - method: "GET"
+    path: "/api/merge/strategies"
+    description: "List registered merge strategies with names and descriptions."
+  - method: "POST"
+    path: "/api/merge/apply"
+    description: "Apply a named merge strategy to guest-supplied inputs; returns the merged result."
+
+tags:
+  - "infrastructure"
+  - "optional"
+
+# JSON Schema for the plugin config. Validated by the PluginLoader at attach
+# time; MergePlugin.on_init() re-validates defensively and raises
+# PluginValidationError on any violation.
+#
+# Each strategy names a merge function implemented by the swarmmerge
+# primitive. `handler` is a dotted path INSIDE the swarmmerge package
+# namespace (e.g. "strategies.last_writer_wins"); it is resolved lazily at
+# apply time, so the primitive does not need to be installed at attach or
+# at loader scan time.
+config_schema:
+  type: "object"
+  additionalProperties: false
+  properties:
+    strategies:
+      type: "array"
+      items:
+        type: "object"
+        additionalProperties: false
+        required: ["name", "description", "handler"]
+        properties:
+          name:
+            type: "string"
+            minLength: 1
+            pattern: "^[a-z0-9][a-z0-9_-]*$"
+            description: "Unique strategy name (lowercase slug)."
+          description:
+            type: "string"
+            minLength: 1
+            description: "Human-readable description shown in the strategy list."
+          handler:
+            type: "string"
+            minLength: 1
+            description: >-
+              Dotted path to the strategy function inside the swarmmerge
+              package, e.g. "strategies.last_writer_wins".
+  required: []
