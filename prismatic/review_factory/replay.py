@@ -292,6 +292,7 @@ def replay_pr(
             for g in decision.gate_results
         ],
         "reasons": list(decision.reasons),
+        "advisory_flags": list(decision.advisory_flags),
         "replay": {
             "pipeline": "shadow_observer.evaluate",
             "policy_version": decision.policy_version,
