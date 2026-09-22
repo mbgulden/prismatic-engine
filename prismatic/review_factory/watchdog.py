@@ -296,12 +296,43 @@ class Watchdog:
         self.audit_log = Path(audit_log) if audit_log is not None else DEFAULT_AUDIT_LOG
         self._now = now_fn or time.time
         self._halted = False
+        # The audit dir is created once and the flag cached: mkdir on every
+        # emit dominated evaluate()'s cost. On OSError the flag resets and
+        # mkdir is retried once (self-healing if the dir is removed mid-run).
+        self._audit_dir_ready = False
 
     @property
     def halted(self) -> bool:
         return self._halted
 
     # -- audit -------------------------------------------------------
+
+    def _write_audit_row(self, row: dict[str, Any]) -> None:
+        """Append one audit row, creating the audit dir on first use.
+
+        Fail-closed: an OSError never changes the evaluation outcome — and
+        must never turn a halt into a clear. The result stands. The dir
+        creation is retried once after a failure so a dir removed mid-run
+        self-heals instead of silently dropping every later signal.
+        """
+        try:
+            if not self._audit_dir_ready:
+                self.audit_log.parent.mkdir(parents=True, exist_ok=True)
+                self._audit_dir_ready = True
+            with open(self.audit_log, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row) + "\n")
+        except OSError:
+            self._audit_dir_ready = False
+            try:
+                self.audit_log.parent.mkdir(parents=True, exist_ok=True)
+                self._audit_dir_ready = True
+                with open(self.audit_log, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row) + "\n")
+            except OSError:
+                # Audit write failure must not change the evaluation
+                # outcome — and must never turn a halt into a clear. The
+                # result stands.
+                pass
 
     def _emit_audit(
         self, result: WatchdogResult, snapshot: MetricSnapshot, note: str = ""
@@ -327,14 +358,7 @@ class Watchdog:
             "unknown": list(result.unknown),
             "note": note,
         }
-        try:
-            self.audit_log.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.audit_log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
-        except OSError:
-            # Audit write failure must not change the evaluation outcome —
-            # and must never turn a halt into a clear. The result stands.
-            pass
+        self._write_audit_row(row)
 
     # -- page input --------------------------------------------------
 
@@ -529,9 +553,4 @@ class Watchdog:
             "principal": principal,
             "halted": self._halted,
         }
-        try:
-            self.audit_log.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.audit_log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
-        except OSError:
-            pass
+        self._write_audit_row(row)

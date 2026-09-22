@@ -272,7 +272,18 @@ def poll_once(
     acts on them. A decision is recorded in the seen-state only when
     ``observe()`` actually emitted it (returns non-None) — with the
     policy default-off, polls are harmless no-ops.
+
+    Performance: when the policy is disabled the poll short-circuits
+    immediately — ``observe()`` would return None for every PR, so no
+    per-PR work (check-run/file fetches, mapping) is performed. The
+    seen-state file is only rewritten when a decision was actually
+    emitted (the only case the seen set can change).
     """
+    if not policy.enabled:
+        # Default-off: observe() returns None for every PR, so there is
+        # nothing to fetch, map, or record. Skip the per-PR source calls
+        # (gh API in production) and the seen-file rewrite entirely.
+        return []
     seen = load_seen(state_path)
     emitted: list[ShadowDecision] = []
 
@@ -325,7 +336,11 @@ def poll_once(
                 decision.call.upper(),
             )
 
-    save_seen(seen, state_path)
+    # The seen set only changes when a decision is emitted (keys are
+    # added only for emitted decisions), so skip the rewrite when there
+    # is nothing new to record.
+    if emitted:
+        save_seen(seen, state_path)
     return emitted
 
 
