@@ -360,6 +360,10 @@ class DeployReceiverPipeline:
         # raised: the deploy already happened.
         self._feed_learn_loop(record)
 
+        # Watchdog metrics feed (Phase 0 observe-only): record a
+        # production rollback of an auto-merge. Append-only, never raises.
+        self._feed_watchdog_rollback(record)
+
         return record
 
     def _feed_learn_loop(self, record: DeployRecord) -> None:
@@ -417,6 +421,48 @@ class DeployReceiverPipeline:
             logger.warning("learn-loop feed failed for job %s: %s", job_id, exc)
             return
         logger.info("learn-loop feed outcome: %s", result)
+
+    def _feed_watchdog_rollback(self, record: DeployRecord) -> None:
+        """Record a gateway rollback in the watchdog metrics feed.
+
+        Phase 0 observe-only: appends one rollback event row when the
+        gateway redeploy rolled back to the previous release. The merge
+        authority job id is joined from the deploys pr_sha, exactly like
+        the learn-loop feed; when the join finds nothing the event is
+        skipped rather than invented. Never raises and never alters the
+        deploy outcome.
+        """
+        if getattr(record, "dry_run", False):
+            return
+        gateway = record.gateway_deploy or {}
+        if not gateway.get("rolled_back"):
+            return
+        job_id = self._learn_loop_job_id(record.pr_sha)
+        if job_id is None:
+            logger.info(
+                "watchdog feed: no merge-authority decision row for pr_sha %s; "
+                "rollback not recorded",
+                record.pr_sha,
+            )
+            return
+        failure_note = record.failure_reason or "health check failed"
+        try:
+            from prismatic.review_factory.metrics_feed import record_rollback
+
+            record_rollback(
+                job_id=job_id,
+                merge_sha=record.pr_sha,
+                reason=(
+                    f"gateway redeploy rolled back deploy {record.deploy_id} "
+                    f"to previous release: {failure_note}"
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "watchdog feed record_rollback failed for deploy %s",
+                record.deploy_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _learn_loop_job_id(pr_sha: str) -> str | None:
