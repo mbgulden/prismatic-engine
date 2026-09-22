@@ -1,0 +1,57 @@
+# Failure diagnosis (shadow mode) — Jev #28, Chunk 6.
+#
+# Fires on completion of the "test" and "Post-Merge Production Deploy Hook
+# (WB-1)" workflows, and diagnoses FAILED runs as infra vs. code vs. flake.
+#
+# SHADOW ONLY: observe + log. This workflow never dispatches response
+# actions, never gates anything, and never blocks a PR. Its own name is not
+# in the workflow_run filter list, so it cannot self-trigger.
+
+name: Failure diagnosis (shadow)
+
+on:
+  workflow_run:
+    workflows: ["test", "Post-Merge Production Deploy Hook (WB-1)"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      failure_kind:
+        description: "watchdog-trip | deploy-failure | ci-failure"
+        required: true
+        default: "ci-failure"
+      error_text:
+        description: "Error text to classify (optional)"
+        required: false
+        default: ""
+      commit_sha:
+        description: "Commit SHA (optional)"
+        required: false
+        default: ""
+
+permissions: {}
+
+jobs:
+  diagnose:
+    name: Diagnose failure (shadow, advisory only)
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Diagnose failure (shadow)
+        env:
+          FAILURE_DIAGNOSIS_ERROR_TEXT: ${{ inputs.error_text }}
+        run: python3 scripts/failure_diagnosis_shadow.py
+
+      - name: Upload shadow diagnosis log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnosis-shadow-${{ github.run_id }}
+          path: ${{ env.HOME }}/.prismatic/audit/failure-diagnosis-shadow.jsonl
+          if-no-files-found: warn

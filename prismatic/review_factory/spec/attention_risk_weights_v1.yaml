@@ -1,0 +1,61 @@
+# Attention routing — versioned feature weights + band thresholds (Jev #29).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the router at it.
+#
+# Deterministic scoring: score = sum(weight_per_unit * units, capped at cap)
+#   + sum(weight_flat for set flags), clamped to 0–100.
+# Bands: low (< low_max), medium (low_max – medium_max), high (>= medium_max).
+#
+# Jev refines upward only: it is consulted only for deterministic low/medium
+# bands, and the combined band is max(deterministic, jev). Advisory only —
+# nothing gates on the score.
+#
+# Status: SHADOW ONLY.
+
+version: attention-risk-weights-v1
+status: frozen
+
+thresholds:
+  low_max: 30
+  medium_max: 70
+
+features:
+  lines_added:
+    weight_per_unit: 0.02
+    cap: 20.0
+  lines_removed:
+    weight_per_unit: 0.02
+    cap: 10.0
+  files_changed:
+    weight_per_unit: 1.5
+    cap: 15.0
+  risky_path_hit:
+    weight_per_unit: 30.0
+    cap: 60.0
+  first_time_contributor:
+    weight_flat: 10.0
+    cap: 10.0
+  prior_failed_run:
+    weight_per_unit: 5.0
+    cap: 15.0
+  policy_file_touch:
+    weight_flat: 20.0
+    cap: 20.0
+
+# Path patterns (Python fnmatch) matched against changed file paths.
+# Contents are never inspected — paths only.
+risky_path_patterns:
+  - ".github/workflows/*"
+  - "prismatic/deploy/*"
+  - "Dockerfile*"
+  - "*/Dockerfile*"
+  - "Dockerfile.sandbox"
+  - "*/Dockerfile.sandbox"
+  - "requirements*.txt"
+  - "*/requirements*.txt"
+  - "pyproject.toml"
+  - "*/pyproject.toml"
+  - "*secret*"
+  - "*credential*"
+  - "*token*"

@@ -1,0 +1,67 @@
+# Typed failure diagnosis — versioned infra-signature rules (Jev #28).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the diagnoser at it.
+#
+# Pipeline order (see prismatic/review_factory/failure_diagnosis.py):
+#   1. Infra-signature rules in this file run FIRST. A match short-circuits:
+#      Jev is NEVER consulted for that failure.
+#   2. Flake evidence comes from the test_history data-in slot, not this file
+#      (same commit SHA with both a pass and a fail -> deterministic flake).
+#   3. Jev classifies only what the rules can't (individually gated,
+#      default-off, fail-closed).
+#   4. A deterministic verdict is final — Jev advice is recorded in the
+#      audit signal but never overrides it.
+#
+# Status: SHADOW ONLY. The verdict routes a *recommended* response channel;
+# nothing in the engine acts on it.
+
+version: failure-diagnosis-rules-v1
+status: frozen
+
+# Each rule: unique name, description, error_text_regex (Python `re`,
+# matched with .search() against the failure's error text), and optional
+# error_classes (lower-cased tokens matched against the failure's
+# error_classes list). Either signal matching is enough for a verdict.
+infra_signatures:
+  - name: runner-lost
+    description: Self-hosted runner lost communication mid-job.
+    error_text_regex: "(?i)(runner\\s+(was\\s+)?lost|lost\\s+communication\\s+with\\s+the\\s+runner|the\\s+runner\\s+did\\s+not\\s+respond|runner\\s+disappeared)"
+    error_classes:
+      - runner_lost
+      - runner_communication_lost
+
+  - name: runner-oom
+    description: Job killed by out-of-memory on the runner.
+    error_text_regex: "(?i)(out\\s+of\\s+memory|oom[-_\\s]?killed|killed\\s+process.*out\\s+of\\s+memory|memory\\s+exhausted|exit\\s+code\\s+137)"
+    error_classes:
+      - oom_killed
+      - out_of_memory
+
+  - name: runner-disk-full
+    description: Runner disk exhausted during the job.
+    error_text_regex: "(?i)(no\\s+space\\s+left\\s+on\\s+device|disk\\s+(quota\\s+)?exceeded|enospc)"
+    error_classes:
+      - disk_full
+      - no_space_left
+
+  - name: github-api-transient
+    description: Transient GitHub API failure (rate limit, 5xx, aborted).
+    error_text_regex: "(?i)(api\\s+rate\\s+limit\\s+exceeded|secondary\\s+rate\\s+limit|github.*(50[023]|bad\\s+gateway|service\\s+unavailable)|request\\s+was\\s+aborted)"
+    error_classes:
+      - github_api_transient
+      - rate_limited
+
+  - name: registry-timeout
+    description: Container registry pull/push timeout.
+    error_text_regex: "(?i)(registry.*(timed?\\s*out|timeout)|failed\\s+to\\s+(pull|push).*(timed?\\s*out|timeout)|unauthorized.*registry)"
+    error_classes:
+      - registry_timeout
+      - image_pull_timeout
+
+  - name: dns-failure
+    description: DNS resolution failure on the runner.
+    error_text_regex: "(?i)(temporary\\s+failure\\s+in\\s+name\\s+resolution|could\\s+not\\s+resolve|name\\s+resolution.*(fail|error)|nxdomain|dns.*(fail|error|timeout))"
+    error_classes:
+      - dns_failure
+      - name_resolution_failed
