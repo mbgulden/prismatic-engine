@@ -59,6 +59,20 @@ DEFAULT_ADVANCEMENT_AUDIT = Path(
     os.path.expanduser("~/.prismatic/audit/phase-advancement.jsonl")
 )
 
+# Watchdog-policy evidence pointer. The phase tick must evaluate the policy
+# the watchdog actually runs — on the VM that is the release-following
+# symlink installed at ~/.prismatic/audit/watchdog-policy.yaml, not the
+# shipped default. Precedence for the tick:
+#   --watchdog-policy flag > PRISMATIC_WATCHDOG_POLICY env >
+#   ~/.prismatic/audit/watchdog-policy.yaml > shipped spec default (v1,
+#   hard-disabled — the truthful answer on a fresh install with no
+#   deployed watchdog).
+AUDIT_WATCHDOG_POLICY = Path(
+    os.path.expanduser("~/.prismatic/audit/watchdog-policy.yaml")
+)
+WATCHDOG_POLICY_ENV_VAR = "PRISMATIC_WATCHDOG_POLICY"
+SHIPPED_WATCHDOG_POLICY = "watchdog_policy_v1.yaml"
+
 # ─────────────────────────────────────────────────────────────────────
 # Ladder and schemas
 # ─────────────────────────────────────────────────────────────────────
@@ -130,6 +144,17 @@ class PhaseAdvancementError(Exception):
 
     Fail-closed: every error path ends in refusal, never in advancement.
     """
+
+
+# Errors that mean "this candidate is not a usable policy file": skip it and
+# try the next candidate. YAML parse errors join the missing-file errors so a
+# corrupt policy degrades to absent evidence (check reports not armed).
+_RESOLVE_SKIP_ERRORS: tuple[type[BaseException], ...] = (
+    PhaseAdvancementError,
+    OSError,
+)
+if _HAS_YAML:
+    _RESOLVE_SKIP_ERRORS = _RESOLVE_SKIP_ERRORS + (yaml.YAMLError,)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -538,6 +563,36 @@ def load_evidence(pointers: dict[str, Any]) -> dict[str, Any]:
         # default: JSONL log
         evidence[key] = _read_jsonl(str(pointer))
     return evidence
+
+
+def resolve_watchdog_policy_path(explicit: str | None = None) -> Path | None:
+    """Resolve the watchdog-policy evidence pointer to the policy actually
+    running on this host.
+
+    Returns the first candidate that exists and parses as a YAML mapping,
+    in precedence order: explicit flag path, ``PRISMATIC_WATCHDOG_POLICY``
+    env var, the VM's release-following audit symlink, then the shipped
+    spec default. Returns ``None`` when nothing resolves — the tick then
+    evaluates with absent watchdog evidence, so ``watchdog_armed_monitor_only``
+    reports false (fail-closed), exactly as it did before this pointer
+    existed. An explicitly provided ``--evidence-pointers`` file always
+    wins: callers inject only when it has no ``watchdog_policy`` key.
+    """
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit))
+    env = os.environ.get(WATCHDOG_POLICY_ENV_VAR)
+    if env:
+        candidates.append(Path(env))
+    candidates.append(AUDIT_WATCHDOG_POLICY)
+    candidates.append(SPEC_DIR / SHIPPED_WATCHDOG_POLICY)
+    for cand in candidates:
+        try:
+            _load_yaml_file(cand)
+        except _RESOLVE_SKIP_ERRORS:
+            continue
+        return cand
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1069,6 +1124,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             "(see load_evidence); omitted = empty evidence"
         ),
     )
+    parser.add_argument(
+        "--watchdog-policy",
+        default=None,
+        help=(
+            "path to the watchdog policy YAML actually running on this "
+            "host; overrides PRISMATIC_WATCHDOG_POLICY and the default "
+            "~/.prismatic/audit/watchdog-policy.yaml symlink"
+        ),
+    )
     parser.add_argument("--requester", default="phase-advancement-tick")
     args = parser.parse_args(argv)
 
@@ -1097,6 +1161,15 @@ def main(argv: Optional[list[str]] = None) -> int:
                 )
         else:
             pointers = {}
+        # The tick must evaluate the watchdog policy actually running on
+        # this host (the deployed v2, via the audit symlink), not absent
+        # evidence. An explicit --evidence-pointers entry always wins; the
+        # default is injected only when missing, and only when it resolves
+        # to a readable policy — otherwise the check stays fail-closed.
+        if "watchdog_policy" not in pointers:
+            resolved = resolve_watchdog_policy_path(args.watchdog_policy)
+            if resolved is not None:
+                pointers["watchdog_policy"] = str(resolved)
         evidence = load_evidence(pointers)
     except (PhaseAdvancementError, OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "error", "error": f"cannot load evidence: {exc}"}))
