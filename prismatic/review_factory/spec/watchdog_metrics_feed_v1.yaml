@@ -1,0 +1,43 @@
+# Watchdog metrics feed config — versioned config for metrics_feed.py.
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the feed at it.
+#
+# Status: HARD-DISABLED. `enabled: false` means run_feed() returns
+# "disabled" without building a snapshot, constructing the watchdog, or
+# emitting any signal: no trips, no audit rows, no behavior change. The
+# feed supplies numbers to the watchdog; it never changes what the
+# watchdog does. Enabling is Michael's word, like the watchdog itself.
+#
+# The event log is the feed's own append-only event store in the audit
+# sink: record_*() rows land here the moment things happen. The
+# auto_merge_log is the merge authority's existing decision log — the
+# feed reads its "allowed"/"refused" rows for merge volume and rate
+# denominators; it never writes there.
+
+version: metrics-feed-v1
+enabled: false
+
+event_log: ~/.prismatic/audit/watchdog-metrics-events.jsonl
+auto_merge_log: ~/.prismatic/audit/auto-merge-decisions.jsonl
+
+# Trailing windows (hours) for each metric's rollup. Rates are computed
+# over these windows; a rate with no observations in its window is
+# reported as unknown (None), never zero.
+windows:
+  # Fraction of auto-merges rolled back: rollbacks vs. allowed merges
+  # over the trailing 7 days.
+  rollback_rate_hours: 168
+  # Fraction of auto-merge attempts escalated: escalations vs. all
+  # authority decisions (allowed + refused) over the trailing day.
+  escalation_rate_hours: 24
+  # Fraction of CI runs failing (deliberate fault-injection runs
+  # excluded) over the trailing day.
+  ci_failure_rate_hours: 24
+  # Fraction of Jev backend calls erroring over the trailing day.
+  # (Jev is not built yet; with no calls this rate is unknown.)
+  jev_error_rate_hours: 24
+  # Band changes counted over the trailing day.
+  band_change_velocity_hours: 24
+  # Allowed merges counted over the trailing hour.
+  merge_volume_per_hour_hours: 1

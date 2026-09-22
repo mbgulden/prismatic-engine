@@ -3,9 +3,7 @@
 
 import hashlib
 import hmac
-import json
-import tempfile
-from pathlib import Path
+import subprocess
 
 import os
 import pytest
@@ -13,7 +11,8 @@ os.environ["PRISMATIC_ALLOW_DEFAULT_HMAC"] = "1"
 
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
-from pe.deploy.linear_transition import LinearDeployTransitioner, LinearTransitionReceipt
+from pe.deploy.linear_transition import LinearDeployTransitioner
+from pe.deploy.gateway_redeploy import GatewayDeployResult
 from pe.deploy.manifest import DeployManifestStore, DeployRecord
 from pe.deploy.receiver import DeployReceiverPipeline, verify_hmac_signature
 
@@ -176,3 +175,166 @@ class TestDeployReceiverPipeline:
         assert record.pr_sha == "c" * 40
         assert len(record.linear_transitions) == 1
         assert record.linear_transitions[0]["issue_id"] == "GRO-5000"
+
+
+class _StubGatewayRedeployer:
+    """Test double: gateway redeploy that never touches git or the network."""
+
+    def __init__(self, success=True, skipped=True, reason="test-stub"):
+        self._res = GatewayDeployResult(
+            success=success, skipped=skipped, reason=reason, pr_sha="t" * 40
+        )
+
+    def redeploy(self, pr_sha="", repo=None, dry_run=False):
+        return self._res
+
+
+def _git(*args, cwd):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def _make_git_mirror(tmp_path):
+    """Bare 'remote' repo + a clone acting as the mirror, both on origin/testbranch."""
+    remote = tmp_path / "remote.git"
+    _git("init", "--bare", "-q", str(remote), cwd=str(tmp_path))
+    seed = tmp_path / "seed"
+    _git("init", "-q", "-b", "testbranch", str(seed), cwd=str(tmp_path))
+    _git("config", "user.email", "test@example.com", cwd=str(seed))
+    _git("config", "user.name", "test", cwd=str(seed))
+    (seed / "file.txt").write_text("v1", encoding="utf-8")
+    _git("add", ".", cwd=str(seed))
+    _git("commit", "-qm", "seed", cwd=str(seed))
+    _git("remote", "add", "origin", str(remote), cwd=str(seed))
+    _git("push", "-q", "origin", "testbranch", cwd=str(seed))
+    mirror = tmp_path / "mirror"
+    _git("clone", "-q", str(remote), str(mirror), cwd=str(tmp_path))
+    return remote, seed, mirror
+
+
+def _mirror_origin_sha(mirror):
+    out = subprocess.run(
+        ["git", "-C", str(mirror), "rev-parse", "origin/testbranch"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip()
+
+
+def _make_mirror_pipeline(mirror_env, mirror_repo, gateway_redeployer=None):
+    return DeployReceiverPipeline(
+        source_repo=mirror_env["source_repo"],
+        deploy_runner=AtomicDeployRunner(
+            versions_dir=mirror_env["versions_dir"],
+            release_symlink=mirror_env["symlink_path"],
+        ),
+        health_checker=PostDeployHealthChecker(),
+        transitioner=LinearDeployTransitioner(dry_run=True),
+        store=DeployManifestStore(db_path=mirror_env["db_file"]),
+        gateway_redeployer=gateway_redeployer or _StubGatewayRedeployer(),
+        mirror_repo=mirror_repo,
+    )
+
+
+class TestMirrorFetchPiggyback:
+    def test_successful_deploy_refreshes_mirror(self, tmp_path, tmp_deploy_env):
+        remote, seed, mirror = _make_git_mirror(tmp_path)
+        # Advance origin/testbranch AFTER the mirror was cloned: the mirror is stale.
+        (seed / "file.txt").write_text("v2", encoding="utf-8")
+        _git("commit", "-qam", "v2", cwd=str(seed))
+        _git("push", "-q", "origin", "testbranch", cwd=str(seed))
+        before = _mirror_origin_sha(mirror)
+
+        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
+        record = pipeline.process_deploy(
+            {"pr_sha": "d" * 40, "pr_number": 7, "pr_title": "mirror test"}
+        )
+
+        assert record.success is True
+        assert record.mirror_refresh == {"refreshed": True, "reason": "fetch-ok"}
+        assert _mirror_origin_sha(mirror) != before
+
+    def test_mirror_refresh_failure_is_fail_closed(self, tmp_path, tmp_deploy_env):
+        # Git repo whose origin points at a nonexistent local path: fetch
+        # exits non-zero. The deploy must still succeed.
+        broken = tmp_path / "broken"
+        _git("init", "-q", "-b", "testbranch", str(broken), cwd=str(tmp_path))
+        _git(
+            "remote",
+            "add",
+            "origin",
+            str(tmp_path / "does-not-exist.git"),
+            cwd=str(broken),
+        )
+
+        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=broken)
+        record = pipeline.process_deploy({"pr_sha": "e" * 40})
+
+        assert record.success is True
+        assert record.mirror_refresh["refreshed"] is False
+        assert record.mirror_refresh["reason"].startswith("git-rc-")
+
+    def test_mirror_missing_dir_is_fail_closed(self, tmp_path, tmp_deploy_env):
+        pipeline = _make_mirror_pipeline(
+            tmp_deploy_env, mirror_repo=tmp_path / "no-such-dir"
+        )
+        record = pipeline.process_deploy({"pr_sha": "f" * 40})
+
+        assert record.success is True
+        assert record.mirror_refresh == {
+            "refreshed": False,
+            "reason": "mirror-not-present",
+        }
+
+    def test_mirror_refresh_git_missing_is_fail_closed(
+        self, tmp_path, tmp_deploy_env, monkeypatch
+    ):
+        # No git on PATH: subprocess raises FileNotFoundError, caught.
+        _, _, mirror = _make_git_mirror(tmp_path)
+        monkeypatch.setenv("PATH", "")
+
+        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
+        record = pipeline.process_deploy({"pr_sha": "g" * 40})
+
+        assert record.success is True
+        assert record.mirror_refresh["refreshed"] is False
+        assert record.mirror_refresh["reason"].startswith("fetch-error:")
+
+    def test_dry_run_skips_mirror_refresh(self, tmp_path, tmp_deploy_env):
+        _, _, mirror = _make_git_mirror(tmp_path)
+        before = _mirror_origin_sha(mirror)
+
+        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
+        record = pipeline.process_deploy({"pr_sha": "h" * 40, "dry_run": True})
+
+        assert record.success is True
+        assert record.mirror_refresh == {
+            "refreshed": False,
+            "reason": "skipped: dry-run",
+        }
+        assert _mirror_origin_sha(mirror) == before
+
+    def test_failed_deploy_skips_mirror_refresh(self, tmp_path, tmp_deploy_env):
+        _, _, mirror = _make_git_mirror(tmp_path)
+        before = _mirror_origin_sha(mirror)
+
+        pipeline = _make_mirror_pipeline(
+            tmp_deploy_env,
+            mirror_repo=mirror,
+            gateway_redeployer=_StubGatewayRedeployer(
+                success=False, skipped=False, reason="boom"
+            ),
+        )
+        record = pipeline.process_deploy({"pr_sha": "i" * 40})
+
+        assert record.success is False
+        assert record.mirror_refresh == {
+            "refreshed": False,
+            "reason": "skipped: deploy failed",
+        }
+        assert _mirror_origin_sha(mirror) == before
+
+    def test_from_dict_backward_compat(self):
+        rec = DeployRecord.from_dict({"pr_sha": "j" * 40})
+        assert rec.mirror_refresh == {}
+        assert rec.to_dict()["mirror_refresh"] == {}
