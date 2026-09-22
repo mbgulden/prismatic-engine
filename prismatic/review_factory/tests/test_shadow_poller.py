@@ -98,11 +98,20 @@ def test_ruff_clean_requires_smoke_success():
 
 def test_review_verdict_fail_safe():
     assert review_verdict(ALL_GREEN) == "CLEAN"
+    # Recalibration 2026-09-22: a *completed* tier-A failure is ADVISORY
+    # (recorded in advisory_flags, not blocking) — the full split lives in
+    # test_tier_a_advisory.py. Everything else stays fail-closed.
     assert (
         review_verdict([_run("review factory gate (tier A)", conclusion="failure")])
-        == "REJECT"
+        == "ADVISORY"
     )
     assert review_verdict([]) == "REJECT"  # missing gate -> REJECT, never cleared
+    assert (
+        review_verdict(
+            [_run("review factory gate (tier A)", conclusion="cancelled")]
+        )
+        == "REJECT"
+    )
 
 
 def test_ci_green_requires_all_self_hosted():
