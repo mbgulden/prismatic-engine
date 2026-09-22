@@ -51,6 +51,7 @@ Also verify related job/artifact/policy/dashboard tests when those surfaces chan
 - Prefer PE Core generic job/artifact/policy/governance APIs over plugin-specific hacks.
 - Do not make destructive, costly, publish/export, production, or credentialed actions bypass approval gates.
 - Do not delete artifacts on plugin disconnect.
+- Keep the containment boundary: "dumb pipes, smart policy" — capability plugins provide infrastructure only, never agent choreography, tool-call decisions, or conversation state (see docs/infrastructure-capabilities.md).
 
 ## Pull requests
 
