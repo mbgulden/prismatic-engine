@@ -321,7 +321,111 @@ class DeployReceiverPipeline:
         # Step 5: Persist deploy record
         self.store.record_deploy(record)
 
+        # Step 6: Feed the review factory's learn loop. Deploy success and
+        # gateway rollback are the mechanical ground truth for merge
+        # outcomes. record_outcome() refuses while the learn loop is
+        # disabled, so this wiring is inert until the rollout ladder
+        # advances it — safe to land now. A feed failure is logged, never
+        # raised: the deploy already happened.
+        self._feed_learn_loop(record)
+
         return record
+
+    def _feed_learn_loop(self, record: DeployRecord) -> None:
+        """Report one deploy's mechanical outcome to the learn loop.
+
+        Outcome mapping — the only ground truth the loop may consume:
+          - gateway redeploy rolled back -> "rolled_back"
+          - deploy succeeded              -> "clean"
+          - failed without gateway rollback -> nothing recorded: prod is in
+            an unknown state and an invented outcome would poison the loop.
+
+        The loop joins outcomes to its decision log by job_id; the join
+        here maps the deploy's pr_sha to the merge-authority decision row's
+        merge_sha (falling back to head_sha). record_outcome() itself
+        refuses unknown jobs, duplicates, and every call while the loop is
+        disabled.
+        """
+        if getattr(record, "dry_run", False):
+            return
+        try:
+            from prismatic.review_factory.learn_loop import (
+                OUTCOME_CLEAN,
+                OUTCOME_ROLLED_BACK,
+                LearnLoop,
+            )
+        except Exception as exc:  # pragma: no cover - import-time failure
+            logger.warning("learn-loop feed skipped (import failed): %s", exc)
+            return
+
+        gateway = record.gateway_deploy or {}
+        if gateway.get("rolled_back"):
+            outcome = OUTCOME_ROLLED_BACK
+        elif record.success:
+            outcome = OUTCOME_CLEAN
+        else:
+            logger.info(
+                "learn-loop feed: deploy %s failed without a gateway rollback; "
+                "no outcome recorded (unknown production state)",
+                record.deploy_id,
+            )
+            return
+
+        job_id = self._learn_loop_job_id(record.pr_sha)
+        if job_id is None:
+            logger.info(
+                "learn-loop feed: no merge-authority decision row for pr_sha %s; "
+                "outcome %r not recorded",
+                record.pr_sha,
+                outcome,
+            )
+            return
+        try:
+            result = LearnLoop().record_outcome(job_id, outcome)
+        except Exception as exc:
+            logger.warning("learn-loop feed failed for job %s: %s", job_id, exc)
+            return
+        logger.info("learn-loop feed outcome: %s", result)
+
+    @staticmethod
+    def _learn_loop_job_id(pr_sha: str) -> str | None:
+        """Newest merge-authority decision row for the deployed pr_sha.
+
+        Joins on ``merge_sha`` == pr_sha, falling back to ``head_sha``;
+        only "allowed" decisions count (a refused decision never merged).
+        Returns the row's job_id — the learn loop's join key — or None.
+        """
+        if not pr_sha:
+            return None
+        try:
+            from prismatic.review_factory.learn_loop import DEFAULT_DECISION_LOG
+            from prismatic.review_factory.merge_authority import DECISION_ALLOWED
+
+            path = Path(DEFAULT_DECISION_LOG)
+            if not path.exists():
+                return None
+            rows: list[dict[str, Any]] = []
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue  # corrupt line: skip, never crash the feed
+                    if isinstance(row, dict):
+                        rows.append(row)
+        except OSError:
+            return None
+        for row in reversed(rows):
+            if row.get("decision") != DECISION_ALLOWED:
+                continue
+            if row.get("merge_sha") == pr_sha or row.get("head_sha") == pr_sha:
+                job_id = row.get("job_id")
+                if isinstance(job_id, str) and job_id:
+                    return job_id
+        return None
 
 
 def create_deploy_receiver_app() -> Any:
