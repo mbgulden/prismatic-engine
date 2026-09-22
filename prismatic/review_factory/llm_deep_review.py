@@ -52,6 +52,7 @@ _ENV_MODEL_BOUNDED = (
 )
 _ENV_TIMEOUT = "PRISMATIC_REVIEW_LLM_TIMEOUT"
 _ENV_MAX_DIFF = "PRISMATIC_REVIEW_LLM_MAX_DIFF"
+_ENV_MAX_DIFF_FULL = "PRISMATIC_REVIEW_LLM_MAX_DIFF_FULL"  # Ned-class, 262k ctx
 _ENV_PROTOCOL = "PRISMATIC_REVIEW_LLM_PROTOCOL"  # "vllm" | "ollama" (default)
 _ENV_VLLM_KEY = "VLLM_API_KEY"  # fallback VLLM_NED_API_KEY, read by the client
 
@@ -91,6 +92,17 @@ def _toggle_file_enabled() -> bool:
         return False
 
 
+def _parse_int_or(raw: str, default: int) -> int:
+    """Parse an int env value; fall back to default on garbage."""
+    raw = (raw or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 @dataclass
 class LLMReviewConfig:
     """Configuration for the optional LLM deep-review stage.
@@ -106,6 +118,7 @@ class LLMReviewConfig:
     model_bounded: str = ""  # George-class bounded-review model (64k ctx)
     timeout_seconds: float = 180.0
     max_diff_chars: int = 100_000  # above this -> bounded model + truncated diff
+    max_diff_full_chars: int = 600_000  # truncation limit for the full (Ned) model
     max_rereviews: int = 2
     temperature: float = 0.1
 
@@ -116,6 +129,7 @@ class LLMReviewConfig:
             enabled = _toggle_file_enabled()
         timeout = os.environ.get(_ENV_TIMEOUT, "").strip()
         max_diff = os.environ.get(_ENV_MAX_DIFF, "").strip()
+        max_diff_full = os.environ.get(_ENV_MAX_DIFF_FULL, "").strip()
         protocol = os.environ.get(_ENV_PROTOCOL, "").strip().lower()
         if protocol not in ("ollama", "vllm"):
             protocol = "ollama"
@@ -128,6 +142,7 @@ class LLMReviewConfig:
             model_bounded=os.environ.get(_ENV_MODEL_BOUNDED, "").strip(),
             timeout_seconds=float(timeout) if timeout else 180.0,
             max_diff_chars=int(max_diff) if max_diff else 100_000,
+            max_diff_full_chars=_parse_int_or(max_diff_full, 600_000),
             max_rereviews=2,
             temperature=0.1,
         )
@@ -679,6 +694,16 @@ def rereview_budget_remaining(db: Any, job_id: str, max_rereviews: int) -> int:
     return max(0, int(max_rereviews) - int(done or 0))
 
 
+# ── Provider registry ────────────────────────────────────────────────────
+
+PROVIDER_REGISTRY: dict[str, tuple[str, str]] = {
+    "vllm": ("prismatic.providers.vllm", "VLLMClient"),
+    "ollama": ("prismatic.providers.ollama", "OllamaClient"),
+}
+
+DEFAULT_PROTOCOL = "ollama"
+
+
 # ── The adapter ────────────────────────────────────────────────────────
 
 
@@ -698,22 +723,20 @@ class LLMDeepReviewAdapter:
     @property
     def client(self) -> Any:
         if self._client is None:
-            if (self.config.protocol or "ollama").lower() == "vllm":
-                from prismatic.providers.vllm import VLLMClient
+            proto = (self.config.protocol or DEFAULT_PROTOCOL).lower()
+            module_name, class_name = PROVIDER_REGISTRY.get(
+                proto, PROVIDER_REGISTRY[DEFAULT_PROTOCOL]
+            )
+            import importlib
 
-                # API key comes from VLLM_API_KEY / VLLM_NED_API_KEY in the
-                # environment (read inside the client); never hardcoded.
-                self._client = VLLMClient(
-                    base_url=self.config.endpoint,
-                    timeout=10.0,
-                )
-            else:
-                from prismatic.providers.ollama import OllamaClient
-
-                self._client = OllamaClient(
-                    base_url=self.config.endpoint,
-                    timeout=10.0,
-                )
+            module = importlib.import_module(module_name)
+            client_cls = getattr(module, class_name)
+            # API key comes from VLLM_API_KEY / VLLM_NED_API_KEY in the
+            # environment (read inside the client); never hardcoded.
+            self._client = client_cls(
+                base_url=self.config.endpoint,
+                timeout=10.0,
+            )
         return self._client
 
     # -- gates ----------------------------------------------------------
@@ -758,18 +781,29 @@ class LLMDeepReviewAdapter:
         except Exception:
             return False
 
-    def _select_model(self, diff_chars: int) -> Optional[str]:
-        """Pick full (Ned) vs bounded (George) model by diff size, with fallback."""
+    def _select_model(self, diff_chars: int) -> tuple[Optional[str], int]:
+        """Pick full (Ned) vs bounded (George) model by diff size, with fallback.
+
+        Returns (model_name | None, truncation_limit_chars). The full model
+        gets the large max_diff_full_chars limit; the bounded model keeps the
+        smaller max_diff_chars limit.
+        """
         prefer_bounded = diff_chars > self.config.max_diff_chars
         ordered = (
-            [self.config.model_bounded, self.config.model_full]
+            [
+                (self.config.model_bounded, self.config.max_diff_chars),
+                (self.config.model_full, self.config.max_diff_full_chars),
+            ]
             if prefer_bounded
-            else [self.config.model_full, self.config.model_bounded]
+            else [
+                (self.config.model_full, self.config.max_diff_full_chars),
+                (self.config.model_bounded, self.config.max_diff_chars),
+            ]
         )
-        for name in ordered:
+        for name, limit in ordered:
             if name and self._model_ok(name):
-                return name
-        return None
+                return name, limit
+        return None, 0
 
     # -- review ---------------------------------------------------------
 
@@ -785,10 +819,10 @@ class LLMDeepReviewAdapter:
         ok, _reason = self.gates_pass()
         if not ok:
             return None
-        model = self._select_model(len(diff_text))
+        model, max_chars = self._select_model(len(diff_text))
         if not model:
             return None
-        diff_text, truncated = _truncate_diff(diff_text, self.config.max_diff_chars)
+        diff_text, truncated = _truncate_diff(diff_text, max_chars)
         det_findings_text = self._format_det_findings(deterministic_findings)
         user_prompt = (
             f"Repository: {getattr(job, 'repository', '') or 'n/a'}\n"
@@ -820,12 +854,10 @@ class LLMDeepReviewAdapter:
         ok, _reason = self.gates_pass()
         if not ok:
             return None
-        model = self._select_model(len(new_diff_text))
+        model, max_chars = self._select_model(len(new_diff_text))
         if not model:
             return None
-        new_diff_text, truncated = _truncate_diff(
-            new_diff_text, self.config.max_diff_chars
-        )
+        new_diff_text, truncated = _truncate_diff(new_diff_text, max_chars)
         orig_lines = []
         for i, f in enumerate(original_findings[:_MAX_FINDINGS]):
             if isinstance(f, dict):
