@@ -1,0 +1,69 @@
+# Auto-merge policy — versioned config for the RF-4 merge authority gate.
+#
+# This file is the complete deterministic policy the MergeAuthority evaluates.
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and point the authority at it.
+#
+# Status: HARD-DISABLED (human-only). `enabled: false` means request_merge()
+# refuses every request before any gate runs: no lock is acquired, no executor
+# is called. Enabling requires Michael's explicit word (Phase 1, per the
+# rollout ladder in full-autonomy-code-delivery-plan.md §10).
+#
+# When enabled, the authority is the merge path's pause button — it never
+# overrides the existing MergeExecutor's own authorization checks, and Jev
+# (not yet built) may only pause an allowed merge, never clear a refused one.
+
+version: auto-v1
+enabled: false
+
+# Deterministic gates, evaluated in order. A merge is authorized only if
+# EVERY gate passes AND the tier and rate-limit checks pass.
+# Gate ids map to fields on the authority's input — no network calls.
+gates:
+  - id: ci_green_self_hosted
+    description: CI green on the self-hosted webtop-hermes runner
+  - id: ruff_clean
+    description: ruff check and ruff format clean (CI-pinned ruff)
+  - id: verdict_not_reject
+    description: deterministic review verdict is mergeable (see verdicts_mergeable)
+  - id: no_merge_conflicts
+    description: PR is mergeable with no conflicts
+  - id: branch_protection_satisfied
+    description: branch protection required checks are satisfied
+
+# Verdicts that keep the verdict_not_reject gate green. A deterministic
+# REPAIR or REJECT verdict fails the gate — Jev (when wired) may escalate
+# but can never clear a deterministic REJECT.
+verdicts_mergeable:
+  - CLEAN
+
+# Tier policy. Conservative initial value: tier 0 only (docs/chore/dependency
+# patches — the Phase-1-eligible set). Tier 1+ always refused until a later
+# policy version raises this on Michael's word.
+max_tier: 0
+
+# Rate limits on AUTHORIZED merges (rolling windows, counted from the
+# authority's own decision log). The merge mutex makes merges serial; these
+# caps bound blast radius and correlated failures (one bad dependency update
+# cannot sweep many PRs).
+rate_limits:
+  max_per_hour: 1
+  max_per_day: 3
+
+# Merge mutex. One merge at a time across all authority instances.
+# swarmlock backend "file" uses a lock dir under the prismatic state home
+# (cross-process; survives the release rotation). Backend "in_process" is
+# for tests only.
+lock:
+  resource: prismatic/merge-mutex
+  holder_prefix: merge-authority
+  ttl_seconds: 300
+  backend: file
+  lock_dir: ~/.prismatic/locks
+
+# Jev is not built yet. The authority records jev_score: null and does not
+# consult it. When Jev lands, an enabled Jev here is a PAUSE BUTTON only:
+# it may flip an allowed merge to refused (fail-closed on Jev error), and
+# it can never turn a refused merge into an allowed one.
+jev:
+  enabled: false
