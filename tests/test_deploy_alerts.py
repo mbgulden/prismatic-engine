@@ -369,3 +369,35 @@ def test_dry_run_emits_nothing(tmp_path, alert_log):
     record = pipeline.process_deploy({"pr_sha": "f" * 40, "dry_run": True})
     assert record.success is True
     assert event_names(alert_log) == [], "dry-run must keep zero side effects"
+
+
+def test_default_emit_never_touches_production_log():
+    """Regression (Sep 22, 2026): a bare ``emit_deploy_alert`` (no ``log_path=``)
+    must land in the tmp-scoped log, never ``~/.prismatic/alerts.log``.
+
+    This is what the B1 verification violated: ``test_process_deploy_pipeline``
+    reached the real emit path with no override and polluted the production
+    alert log with 14 synthetic entries on the box.
+    """
+    scoped = os.environ.get("PRISMATIC_ALERT_LOG")
+    assert scoped, "autouse fixture must scope PRISMATIC_ALERT_LOG to tmp"
+    assert "pytest" in scoped, f"expected a pytest tmp path, got {scoped!r}"
+
+    production = Path.home() / ".prismatic" / "alerts.log"
+    before = production.read_bytes() if production.exists() else None
+
+    assert emit_deploy_alert("PytestGuard", "info", "guard", "d") is True
+
+    # The default path resolves to the tmp-scoped log, not production.
+    assert default_alert_log_path() == Path(scoped)
+    assert default_alert_log_path() != production
+
+    # Production log is byte-identical (or still absent).
+    if before is None:
+        assert not production.exists()
+    else:
+        assert production.read_bytes() == before
+
+    # The entry actually landed in the tmp log.
+    entries = read_entries(scoped)
+    assert any(e["name"] == "PytestGuard" for e in entries)
