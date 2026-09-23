@@ -111,6 +111,15 @@ Each repo that wants post-merge deploys needs **all four**:
 Also generate a fresh secret per repo (or per account — see §5), store it as
 the repo's Actions secret, and put the matching value in the receiver env.
 
+Guided onboarding does the machine half for you (validate, register, mirror,
+secret) and prints the exact GitHub-side steps:
+
+```bash
+prismatic deploy add-repo OWNER/REPO [--dry-run]   # onboard, nothing deploys
+prismatic deploy list-repos                       # registry readiness
+prismatic deploy validate-repo OWNER/REPO         # dry-run proof, no side effects
+```
+
 ## 5. Secrets: per-repo vs shared
 
 - **Sender side is already per-repo:** GitHub Actions repository secrets are
