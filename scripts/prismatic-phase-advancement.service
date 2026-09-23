@@ -1,0 +1,13 @@
+[Unit]
+Description=Prismatic phase-advancement tick — daily exit-criteria heartbeat (wiring only, master switch off)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/.prismatic/runtime/prismatic-engine
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 /home/ubuntu/.prismatic/runtime/prismatic-engine/scripts/phase_advancement_evidence_tick.py
+Environment=PRISMATIC_HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/.prismatic/venv_stable/bin:/usr/local/bin:/usr/bin:/bin
+StandardOutput=append:/home/ubuntu/.prismatic/logs/phase-advancement.log
+StandardError=append:/home/ubuntu/.prismatic/logs/phase-advancement.log

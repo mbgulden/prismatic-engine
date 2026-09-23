@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily phase-advancement tick timer
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target

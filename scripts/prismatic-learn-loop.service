@@ -1,0 +1,11 @@
+[Unit]
+Description=Prismatic learn-loop self-review — weekly batch rollup (policy disabled, emits one audit row per run)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/.prismatic/runtime/prismatic-engine
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 -m prismatic.review_factory.learn_loop
+Environment=PRISMATIC_HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/.prismatic/venv_stable/bin:/usr/local/bin:/usr/bin:/bin
+StandardOutput=append:/home/ubuntu/.prismatic/logs/learn-loop.log
+StandardError=append:/home/ubuntu/.prismatic/logs/learn-loop.log
