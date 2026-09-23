@@ -1018,7 +1018,8 @@ def _probe_deploy() -> DeployReport:
                 f"set {repo.hmac_secret_env} (or the shared "
                 f"{DEPLOY_HMAC_SECRET_VAR}) where the receiver can read it: "
                 "environment, ~/.prismatic/.env, or the receiver unit's "
-                "EnvironmentFile"
+                "EnvironmentFile; `prismatic deploy add-repo "
+                f"{repo.full_name}` generates and stores one for you"
             )
         report.repos.append(check)
 
