@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 from pe.deploy.deploy_alerts import emit_deploy_alert
+from pe.deploy.deploy_events import emit_deploy_event
 from pe.deploy.process_manager import ProcessManager, ProcessManagerError
 from pe.deploy.process_manager_systemd import SystemdProcessManager
 from pe.deploy.config import (
@@ -422,6 +423,22 @@ class GatewayRedeployer:
                 f"pr_sha={res.pr_sha} attempted_release={res.version_dir} "
                 f"reason={str(exc)[:300]}",
             )
+            # Portal Phase 1 (P0 #3): push the gateway-step failure to the
+            # event bus (mirrors GatewayDeployFailed). The pipeline-level
+            # deploy.failed follows at the terminal state; the rollback
+            # phases are emitted from _rollback below.
+            emit_deploy_event(
+                "deploy.failed",
+                {
+                    "pr_sha": res.pr_sha,
+                    "release_prefix": self.release_prefix,
+                    "step": "gateway-redeploy",
+                    "failure_reason": str(exc)[:300],
+                    "attempted_release": (
+                        Path(res.version_dir).name if res.version_dir else ""
+                    ),
+                },
+            )
             res.rolled_back = self._rollback(
                 res, flipped_venv=flipped_venv, flipped_current=flipped_current
             )
@@ -639,6 +656,18 @@ class GatewayRedeployer:
             f"pr_sha={res.pr_sha} failed_release={failed_release} "
             f"previous_release={prev_release}",
         )
+        # Portal Phase 1 (P0 #3): push the rollback-started phase.
+        emit_deploy_event(
+            "deploy.rolled_back",
+            {
+                "pr_sha": res.pr_sha,
+                "release_prefix": self.release_prefix,
+                "step": "gateway-redeploy",
+                "phase": "started",
+                "failed_release": failed_release,
+                "previous_release": prev_release,
+            },
+        )
         try:
             if flipped_venv and res.previous_venv_dir:
                 self._atomic_symlink_swap(Path(res.previous_venv_dir), self.venv_link)
@@ -653,6 +682,18 @@ class GatewayRedeployer:
                 f"gateway rollback failed for {res.pr_sha[:12]}: symlink restore",
                 f"pr_sha={res.pr_sha} failure_point=symlink_restore reason={exc}",
             )
+            # Portal Phase 1 (P0 #3): push the failed rollback phase.
+            emit_deploy_event(
+                "deploy.rolled_back",
+                {
+                    "pr_sha": res.pr_sha,
+                    "release_prefix": self.release_prefix,
+                    "step": "gateway-redeploy",
+                    "phase": "failed",
+                    "failure_point": "symlink_restore",
+                    "failure_reason": str(exc)[:300],
+                },
+            )
             return False
         try:
             self._systemctl("restart", timeout=180)
@@ -664,6 +705,18 @@ class GatewayRedeployer:
                 f"gateway rollback failed for {res.pr_sha[:12]}: service restart",
                 f"pr_sha={res.pr_sha} failure_point=service_restart reason={exc}",
             )
+            # Portal Phase 1 (P0 #3): push the failed rollback phase.
+            emit_deploy_event(
+                "deploy.rolled_back",
+                {
+                    "pr_sha": res.pr_sha,
+                    "release_prefix": self.release_prefix,
+                    "step": "gateway-redeploy",
+                    "phase": "failed",
+                    "failure_point": "service_restart",
+                    "failure_reason": str(exc)[:300],
+                },
+            )
             return False
         if not self._service_active(timeout_s=90):
             logger.error("rollback: service did not recover to active state")
@@ -673,6 +726,18 @@ class GatewayRedeployer:
                 f"gateway rollback failed for {res.pr_sha[:12]}: service not active",
                 f"pr_sha={res.pr_sha} failure_point=service_active "
                 "reason=recovery verification timed out",
+            )
+            # Portal Phase 1 (P0 #3): push the failed rollback phase.
+            emit_deploy_event(
+                "deploy.rolled_back",
+                {
+                    "pr_sha": res.pr_sha,
+                    "release_prefix": self.release_prefix,
+                    "step": "gateway-redeploy",
+                    "phase": "failed",
+                    "failure_point": "service_active",
+                    "failure_reason": "recovery verification timed out",
+                },
             )
             return False
         logger.warning(
@@ -688,5 +753,16 @@ class GatewayRedeployer:
             f"{prev_release[-12:] or 'previous release'}",
             f"pr_sha={res.pr_sha} restored_release={prev_release} "
             "service_active=true",
+        )
+        # Portal Phase 1 (P0 #3): push the rollback-completed phase.
+        emit_deploy_event(
+            "deploy.rolled_back",
+            {
+                "pr_sha": res.pr_sha,
+                "release_prefix": self.release_prefix,
+                "step": "gateway-redeploy",
+                "phase": "completed",
+                "restored_release": prev_release,
+            },
         )
         return True
