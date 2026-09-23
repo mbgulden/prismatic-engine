@@ -171,6 +171,18 @@ def test_enable_issues_exact_argv():
     assert run.argvs() == [["sudo", "-n", "/usr/bin/systemctl", "enable", "svc"]]
 
 
+def test_enable_user_scope_issues_user_argv():
+    run = ScriptedRun()
+    SystemdProcessManager(run=run).enable("svc", scope="user")
+    assert run.argvs() == [["/usr/bin/systemctl", "--user", "enable", "svc"]]
+
+
+def test_enable_unknown_scope_raises():
+    run = ScriptedRun()
+    with pytest.raises(ProcessManagerError, match="unknown unit scope"):
+        SystemdProcessManager(run=run).enable("svc", scope="bogus")
+
+
 def test_install_unit_user_scope_writes_file_and_reloads(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     run = ScriptedRun()

@@ -113,10 +113,14 @@ class SystemdProcessManager(ProcessManager):
             time.sleep(_POLL_INTERVAL_S)
         return False
 
-    def enable(self, service: str) -> None:
-        self._run_checked(
-            ["sudo", "-n", self.systemctl_bin, "enable", service], timeout=120
-        )
+    def enable(self, service: str, *, scope: str = "system") -> None:
+        if scope == "user":
+            argv = [self.systemctl_bin, "--user", "enable", service]
+        elif scope == "system":
+            argv = ["sudo", "-n", self.systemctl_bin, "enable", service]
+        else:
+            raise ProcessManagerError(f"unknown unit scope: {scope!r}")
+        self._run_checked(argv, timeout=120)
 
     def install_unit(self, name: str, content: str, *, scope: str = "system") -> str:
         if scope == "user":

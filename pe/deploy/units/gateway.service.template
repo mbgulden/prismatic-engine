@@ -1,0 +1,30 @@
+# Prismatic Engine Gateway — systemd unit template (WS3).
+#
+# Rendered by pe.deploy.install.render_template(): UPPER_SNAKE tokens in
+# double braces are substituted; lines that render empty are dropped.
+#
+# The gateway's first release is built by the first real deploy, so this
+# unit stays down until then (by design). WorkingDirectory is the state dir
+# -- not the `current` symlink -- because `current` does not exist until
+# the first deploy flips it.
+[Unit]
+Description=Prismatic Engine Gateway
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+{{USER_DIRECTIVE}}
+WorkingDirectory={{STATE_DIR}}
+ExecStart={{GATEWAY_VENV}}/bin/python -m prismatic.gateway.server --host 0.0.0.0 --port {{GATEWAY_PORT}} --log-level info
+EnvironmentFile={{ENV_FILE}}
+Environment=PRISMATIC_HOME={{HOME_DIR}}
+Environment=PRISMATIC_PORT={{GATEWAY_PORT}}
+Environment=PATH={{GATEWAY_VENV}}/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{{STATE_DIR}}/logs/gateway.log
+StandardError=append:{{STATE_DIR}}/logs/gateway.log
+
+[Install]
+WantedBy={{WANTED_BY}}
