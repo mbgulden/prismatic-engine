@@ -223,4 +223,40 @@
             </form>
         </div>
     </div>
+        <!-- Portal API Tokens (Phase 1) -->
+        <div class="glass-panel p-5 rounded-xl space-y-4">
+            <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                        Portal API Tokens
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-1">Revocable tokens for API access. Viewer = read-only, Operator = control APIs. The secret is shown <span class="text-amber-300 font-semibold">once</span> at creation — copy it then.</p>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                    <input id="api-token-name" type="text" maxlength="100" placeholder="Token name (e.g. ci-runner)" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-500 w-48" />
+                    <select id="api-token-role" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500">
+                        <option value="viewer">Viewer</option>
+                        <option value="operator">Operator</option>
+                    </select>
+                    <button type="button" onclick="mintApiToken()" class="px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 hover:text-white hover:border-amber-400 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        <span>Mint Token</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Shown once, right after minting -->
+            <div id="api-token-once" class="hidden bg-amber-950/40 border border-amber-800/60 rounded-xl p-4 space-y-2">
+                <p class="text-xs font-bold text-amber-300 uppercase tracking-wider">Copy now — this secret will never be shown again</p>
+                <div class="flex items-center gap-2">
+                    <code id="api-token-once-value" class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 font-mono text-xs text-amber-200 break-all select-all"></code>
+                    <button type="button" onclick="copyApiTokenOnce()" class="px-3 py-2 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white text-xs font-semibold">Copy</button>
+                    <button type="button" onclick="dismissApiTokenOnce()" class="px-3 py-2 rounded-lg border border-slate-700 bg-slate-900 text-slate-400 hover:text-slate-200 text-xs font-semibold">Done</button>
+                </div>
+            </div>
+
+            <div id="api-token-list" class="space-y-2"></div>
+            <p id="api-token-status" class="text-xs text-slate-500">Token management needs the admin portal role.</p>
+        </div>
 </section>
