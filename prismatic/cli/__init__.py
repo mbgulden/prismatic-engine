@@ -13,6 +13,7 @@ import sys
 from typing import Sequence
 
 from prismatic.cli.doctor import run as doctor_cli_run
+from prismatic.cli.deploy import register_deploy_commands, run_deploy
 from prismatic.local_tasks import LocalTaskQueue
 
 
@@ -32,6 +33,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "doctor", help="Alias for status with the same diagnostics"
     )
     doctor.add_argument("--provider", default=None, help="Check a specific provider")
+
+    deploy = subparsers.add_parser(
+        "deploy", help="Onboard and validate repos on the post-merge deploy registry"
+    )
+    deploy_subparsers = deploy.add_subparsers(dest="deploy_command")
+    register_deploy_commands(deploy_subparsers)
 
     init = subparsers.add_parser(
         "init", help="Initialize default Prismatic configuration"
@@ -419,6 +426,9 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     if args.command in {"status", "doctor"}:
         return doctor_cli_run(args)
+
+    if args.command == "deploy":
+        return run_deploy(args)
 
     if args.command == "init":
         from prismatic.dispatcher import init_config
