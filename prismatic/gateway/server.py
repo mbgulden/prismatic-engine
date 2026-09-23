@@ -6648,6 +6648,12 @@ app.include_router(pwp_router)
 from prismatic.gateway.routes.worker import worker_router  # noqa: E402
 app.include_router(worker_router)
 
+# Portal Phase 1 (P0 #5): revocable API tokens.  Admin-only; enforced by the
+# control-auth middleware's /api/tokens classification plus an in-handler
+# re-check (fail closed).
+from prismatic.gateway.token_routes import router as portal_token_router  # noqa: E402
+app.include_router(portal_token_router)
+
 
 
 @app.get("/api/workspace/tree")
