@@ -315,3 +315,79 @@ class TestChecklist:
         assert "mbgulden/prismatic-engine" in text
         assert "DEPLOY_HMAC_SECRET" in text
         assert "9460" in text
+
+
+class TestAuthStep:
+    def test_auth_step_writes_instance_json(self, fake_home, hermetic_ports):
+        result, _, _ = _run_install(
+            auth_provider="tailnet-only",
+            admin_identities=("michael@example.com",),
+        )
+        assert result.ok is True
+        names = [step.name for step in result.steps]
+        assert "auth" in names
+        instance_path = _state_dir(fake_home) / "instance.json"
+        document = json.loads(instance_path.read_text())
+        assert document["version"] == 1
+        assert document["auth_provider"] == "tailnet-only"
+        assert document["identity_roles"] == {"michael@example.com": "admin"}
+        assert len(document["instance_id"]) == 32
+        assert stat.S_IMODE(os.stat(instance_path).st_mode) == 0o600
+
+    def test_auth_step_defaults_to_cloudflare_access(self, fake_home, hermetic_ports):
+        result, _, _ = _run_install()
+        assert result.ok is True
+        document = json.loads((_state_dir(fake_home) / "instance.json").read_text())
+        assert document["auth_provider"] == "cloudflare-access"
+        assert document["identity_roles"] == {}
+
+    def test_unknown_auth_provider_refused(self, fake_home, hermetic_ports):
+        with pytest.raises(installer.InstallRefused):
+            _run_install(auth_provider="okta")
+
+    def test_basic_auth_without_users_refused(self, fake_home, hermetic_ports):
+        with pytest.raises(installer.InstallRefused):
+            _run_install(auth_provider="basic-auth")
+
+    def test_basic_auth_writes_users_file(self, fake_home, hermetic_ports, monkeypatch):
+        monkeypatch.setenv("PRISMATIC_BASIC_AUTH_PASSWORD", "s3cret")
+        result, _, _ = _run_install(
+            auth_provider="basic-auth",
+            basic_auth_users=("ops",),
+            admin_identities=("ops",),
+        )
+        assert result.ok is True
+        users_path = _state_dir(fake_home) / "auth" / "basic-auth-users.json"
+        document = json.loads(users_path.read_text())
+        assert document["version"] == 1
+        assert [u["username"] for u in document["users"]] == ["ops"]
+        assert "s3cret" not in users_path.read_text()
+        assert stat.S_IMODE(os.stat(users_path).st_mode) == 0o600
+        instance_doc = json.loads((_state_dir(fake_home) / "instance.json").read_text())
+        assert instance_doc["identity_roles"] == {"ops": "admin"}
+
+    def test_auth_step_dry_run_writes_nothing(self, fake_home, hermetic_ports):
+        result, _, _ = _run_install(
+            dry_run=True,
+            auth_provider="basic-auth",
+            basic_auth_users=("ops",),
+            admin_identities=("michael@example.com",),
+        )
+        assert result.ok is True
+        auth_steps = [s for s in result.steps if s.name == "auth"]
+        assert len(auth_steps) == 1
+        assert auth_steps[0].status == "would-do"
+        assert not (_state_dir(fake_home) / "instance.json").exists()
+
+    def test_auth_step_skippable(self, fake_home, hermetic_ports):
+        result, _, _ = _run_install(skip_steps=("mirror", "venvs", "auth"))
+        assert result.ok is True
+        auth_steps = [s for s in result.steps if s.name == "auth"]
+        assert auth_steps[0].status == "skipped"
+        assert not (_state_dir(fake_home) / "instance.json").exists()
+
+    def test_second_install_still_refused(self, fake_home, hermetic_ports):
+        result, _, _ = _run_install()
+        assert result.ok is True
+        with pytest.raises(installer.InstallRefused):
+            _run_install()

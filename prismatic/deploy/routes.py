@@ -72,14 +72,17 @@ def create_deploy_router() -> Any:
 
     @router.get("/status")
     async def get_deploy_status() -> dict[str, Any]:
-        """Get deployment system status and latest summary."""
-        latest = store.get_latest()
-        return {
-            "status": "active",
-            "has_deploys": bool(latest),
-            "latest_deploy_id": latest.deploy_id if latest else "",
-            "timestamp": time.time(),
-        }
+        """Real deploy status (Portal Phase 1, P0 #4).
+
+        Read-only assembly of receiver health (port 9460 probe), active
+        release per repo (release symlinks), and last deploy per repo
+        (alerts.log). Response schema v1 is documented in
+        prismatic/gateway/deploy_status.py and is consumed by the Phase 2
+        Deploys UI.
+        """
+        from prismatic.gateway.deploy_status import build_deploy_status
+
+        return build_deploy_status()
 
     @router.get("/{deploy_id}")
     async def get_deploy_detail(deploy_id: str) -> dict[str, Any]:

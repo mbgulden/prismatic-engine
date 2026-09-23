@@ -187,7 +187,11 @@ from prismatic.completed_work_gate import (
 from prismatic.dispatcher import get_dispatcher_polling_budget_snapshot
 from prismatic.gateway.control_auth import control_authorization_middleware
 from prismatic.gateway.event_bus import get_event_bus
-from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
+from prismatic.gateway.ipc_bridge import (
+    UnixSocketListener,
+    create_event_ingest_route,
+    deploy_event_ws_forwarder,
+)
 from prismatic.gateway.workspace_tree import (
     RegistryError,
     WorkspaceTreeError,
@@ -411,6 +415,12 @@ async def lifespan(app: FastAPI):
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
     await _ipc_listener.start()
+
+    # Portal Phase 1 (P0 #3): bridge the EventBus to /ws. Deploy lifecycle
+    # events pushed by the receiver over the IPC bridge publish to the bus;
+    # this forwards deploy.* on to the /ws subscribers so the portal
+    # updates live instead of polling the alert log.
+    await get_event_bus().subscribe(deploy_event_ws_forwarder(broadcast_ws_json))
 
     # Start Gateway HTTP Unix socket proxy
     port = int(os.environ.get("PRISMATIC_PORT", "9000"))
@@ -6642,11 +6652,25 @@ _dep_router = create_deploy_router()
 if _dep_router:
     app.include_router(_dep_router, prefix="/api")
 
+from prismatic.gateway.deploy_control import (  # noqa: E402
+    create_deploy_control_router,
+)
+
+_deploy_control_router = create_deploy_control_router()
+if _deploy_control_router:
+    app.include_router(_deploy_control_router, prefix="/api")
+
 from prismatic.gateway.routes.pwp import pwp_router  # noqa: E402
 app.include_router(pwp_router)
 
 from prismatic.gateway.routes.worker import worker_router  # noqa: E402
 app.include_router(worker_router)
+
+# Portal Phase 1 (P0 #5): revocable API tokens.  Admin-only; enforced by the
+# control-auth middleware's /api/tokens classification plus an in-handler
+# re-check (fail closed).
+from prismatic.gateway.token_routes import router as portal_token_router  # noqa: E402
+app.include_router(portal_token_router)
 
 
 
@@ -6690,14 +6714,11 @@ async def gateway_workspace_tree(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.get("/api/deploy/status")
-async def gateway_deploy_status() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "deploy_receiver": "active",
-        "mode": "standalone",
-        "timestamp": time.time(),
-    }
+# NOTE: the canonical GET /api/deploy/status handler lives in
+# prismatic/deploy/routes.py (mounted above, so it takes precedence).
+# The duplicate stub that used to sit here returned static data and was
+# unreachable; it was removed in Portal Phase 1 (P0 #4) in favor of the
+# real implementation built by prismatic/gateway/deploy_status.py.
 
 
 # ── SwarmProof Truth Oracle & Verification API ───────────────────────────

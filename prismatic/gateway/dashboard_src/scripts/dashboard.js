@@ -612,6 +612,10 @@
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>';
             }
         }
+        // No-preference theme default: light (Portal Phase 1, P0 #6; was dark).
+        // The manual toggle and the ?theme=light|dark query override keep working;
+        // only the first-visit default changed. An explicit saved "dark" is honored.
+        const DEFAULT_THEME = "light";
         function applyTheme() {
             const urlParams = new URLSearchParams(window.location.search);
             const queryTheme = urlParams.get("theme");
@@ -619,13 +623,10 @@
                 localStorage.setItem("theme", queryTheme);
             }
             const saved = localStorage.getItem("theme");
-            if (saved === "light") {
-                document.body.classList.add("light-mode");
-                updateThemeIcon(true);
-            } else {
-                document.body.classList.remove("light-mode");
-                updateThemeIcon(false);
-            }
+            const theme = saved === "dark" || saved === "light" ? saved : DEFAULT_THEME;
+            const isLight = theme === "light";
+            document.body.classList.toggle("light-mode", isLight);
+            updateThemeIcon(isLight);
         }
 
         // Tab Switching
@@ -665,6 +666,7 @@
                 loadNativeCrons();
             } else if (tab === 'settings') {
                 fetchSettingsData();
+                loadApiTokens();
             } else if (tab === 'review-factory') {
                 loadReviewFactory();
             } else if (tab === 'skills') {
@@ -962,6 +964,139 @@
         function closeRFModal() {
             const modal = document.getElementById("rf-job-modal");
             if (modal) modal.classList.add("hidden");
+        }
+
+
+        // ---- Portal API Tokens (Phase 1) ----
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+            }[ch]));
+        }
+
+        function formatTokenDate(iso) {
+            if (!iso) return "\u2014";
+            try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+        }
+
+        async function loadApiTokens() {
+            const listEl = document.getElementById("api-token-list");
+            const statusEl = document.getElementById("api-token-status");
+            if (!listEl || !statusEl) return;
+            try {
+                const res = await fetch("/api/tokens");
+                if (res.status === 401 || res.status === 403) {
+                    statusEl.textContent = "Token management needs the admin portal role \u2014 this identity is not mapped to admin on this instance.";
+                    listEl.innerHTML = "";
+                    return;
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                renderApiTokens(data.tokens || []);
+                const n = (data.tokens || []).length;
+                statusEl.textContent = `${n} token${n === 1 ? "" : "s"}. Secrets are never shown again after creation; revoke instead of sharing.`;
+            } catch (err) {
+                statusEl.textContent = `Couldn't load tokens: ${err.message}`;
+            }
+        }
+
+        let apiTokensById = {};
+
+        function renderApiTokens(tokens) {
+            const listEl = document.getElementById("api-token-list");
+            apiTokensById = {};
+            tokens.forEach((t) => { apiTokensById[t.id] = t; });
+            if (!tokens.length) {
+                listEl.innerHTML = '<p class="text-xs text-slate-500">No tokens yet. Mint one above.</p>';
+                return;
+            }
+            listEl.innerHTML = tokens.map((t) => {
+                const roleBadge = t.role === "operator"
+                    ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
+                    : "bg-slate-800 text-slate-300 border-slate-700";
+                const revokedBadge = t.revoked
+                    ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-rose-950/60 text-rose-300 border-rose-800/60">revoked</span>'
+                    : "";
+                const revokeBtn = t.revoked ? "" : `<button type="button" data-revoke-token="${escapeHtml(t.id)}" class="px-2.5 py-1 rounded-lg border border-rose-800/60 bg-rose-950/40 text-rose-300 hover:text-white hover:border-rose-600 text-[11px] font-semibold transition">Revoke</button>`;
+                return `<div class="flex items-center gap-3 bg-slate-950/60 border border-slate-800/80 rounded-lg px-3 py-2">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-xs font-bold text-slate-200">${escapeHtml(t.name)}</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${roleBadge}">${escapeHtml(t.role)}</span>
+                            ${revokedBadge}
+                        </div>
+                        <div class="text-[10px] text-slate-500 font-mono mt-1 truncate">${escapeHtml(t.secret_prefix)}\u2026 \u00b7 created ${escapeHtml(formatTokenDate(t.created_at))} \u00b7 last used ${escapeHtml(formatTokenDate(t.last_used_at))}${t.expires_at ? ` \u00b7 expires ${escapeHtml(formatTokenDate(t.expires_at))}` : ""}</div>
+                    </div>
+                    ${revokeBtn}
+                </div>`;
+            }).join("");
+        }
+
+        async function mintApiToken() {
+            const nameEl = document.getElementById("api-token-name");
+            const roleEl = document.getElementById("api-token-role");
+            const name = (nameEl.value || "").trim();
+            if (!name) { showToast("Give the token a name first.", true); return; }
+            try {
+                const res = await fetch("/api/tokens", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name, role: roleEl.value })
+                });
+                if (res.status === 401 || res.status === 403) {
+                    throw new Error("admin portal role required");
+                }
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const once = document.getElementById("api-token-once");
+                document.getElementById("api-token-once-value").textContent = data.token;
+                once.classList.remove("hidden");
+                nameEl.value = "";
+                showToast("Token minted \u2014 copy it now, it won't be shown again.");
+                await loadApiTokens();
+            } catch (err) {
+                showToast(`Mint failed: ${err.message}`, true);
+            }
+        }
+
+        async function revokeApiToken(id) {
+            const known = apiTokensById[id];
+            const label = known ? known.name : id;
+            if (!confirm(`Revoke token "${label}"? This cannot be undone.`)) return;
+            try {
+                const res = await fetch(`/api/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                showToast(`Token "${label}" revoked.`);
+                await loadApiTokens();
+            } catch (err) {
+                showToast(`Revoke failed: ${err.message}`, true);
+            }
+        }
+
+        document.addEventListener("click", (event) => {
+            const btn = event.target && event.target.closest
+                ? event.target.closest("[data-revoke-token]")
+                : null;
+            if (btn && btn.dataset && btn.dataset.revokeToken) {
+                revokeApiToken(btn.dataset.revokeToken);
+            }
+        });
+
+        function copyApiTokenOnce() {
+            const value = document.getElementById("api-token-once-value").textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(value).then(
+                    () => showToast("Token copied to clipboard."),
+                    () => showToast("Copy failed \u2014 select the text manually.", true)
+                );
+            } else {
+                showToast("Clipboard unavailable \u2014 select the text manually.", true);
+            }
+        }
+
+        function dismissApiTokenOnce() {
+            document.getElementById("api-token-once").classList.add("hidden");
+            document.getElementById("api-token-once-value").textContent = "";
         }
 
         // Toasts

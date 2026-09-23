@@ -37,6 +37,7 @@ except ImportError:
 
 from pe.deploy.gateway_redeploy import GatewayRedeployer
 from pe.deploy.deploy_alerts import emit_deploy_alert
+from pe.deploy.deploy_events import emit_deploy_event
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
 from pe.deploy.linear_transition import LinearDeployTransitioner
@@ -343,6 +344,26 @@ def verify_hmac_signature(
     expected_sig = hmac.new(sec, body_bytes, hashlib.sha256).hexdigest()
 
     return hmac.compare_digest(sig, expected_sig)
+
+
+def _deploy_event_common(
+    payload: dict[str, Any],
+    repo_full_name: str,
+    deploy_id: str,
+) -> dict[str, Any]:
+    """Shared payload fields for every pipeline-level deploy event."""
+    common: dict[str, Any] = {
+        "deploy_id": deploy_id,
+        "repo": repo_full_name,
+        "pr_sha": str(payload.get("pr_sha", "")),
+        "pr_number": int(payload.get("pr_number", 0)),
+        "pr_title": str(payload.get("pr_title", "")),
+        "deployer": str(payload.get("deployer", "github-action")),
+    }
+    trigger = payload.get("trigger")
+    if trigger:
+        common["trigger"] = str(trigger)
+    return common
 
 
 class DeployReceiverPipeline:
@@ -682,6 +703,22 @@ class DeployReceiverPipeline:
             logger.info("DRY RUN: no deployment performed for %s", record.deploy_id)
             return record
 
+        # Portal Phase 1 (P0 #3): the deploy is accepted and starting --
+        # push deploy.started to the gateway event bus. Best-effort; the
+        # alert log stays the durable record. (Dry runs returned above and
+        # never emit.)
+        emit_deploy_event(
+            "deploy.started",
+            {
+                **_deploy_event_common(
+                    payload,
+                    repo.full_name,
+                    f"deploy-{pr_sha[:8] if pr_sha else 'manual'}",
+                ),
+                "step": "pipeline",
+            },
+        )
+
         # WS5: kill the merge->deploy race. The Actions trigger fires the
         # instant a PR merges, but the mirror timer only fetches every 15
         # minutes -- so fetch the routed repo's mirror NOW, before SHA
@@ -806,6 +843,9 @@ class DeployReceiverPipeline:
         # emit_deploy_alert never raises by contract; the guard below is
         # belt-and-braces so logging can never break the deploy path.
         try:
+            terminal_common = _deploy_event_common(
+                payload, repo.full_name, record.deploy_id
+            )
             if record.success:
                 version_name = Path(str(version_dir)).name if version_dir else ""
                 emit_deploy_alert(
@@ -816,6 +856,18 @@ class DeployReceiverPipeline:
                     f"pr_number={pr_number} version_dir={version_name} "
                     f"duration_ms={duration_ms}",
                 )
+                # Portal Phase 1 (P0 #3): push the success to the event bus
+                # (mirrors PostMergeDeploySucceeded).
+                emit_deploy_event(
+                    "deploy.succeeded",
+                    {
+                        **terminal_common,
+                        "step": "pipeline",
+                        "duration_ms": duration_ms,
+                        "success": True,
+                        "version_dir": version_name,
+                    },
+                )
             else:
                 gw = record.gateway_deploy or {}
                 emit_deploy_alert(
@@ -825,6 +877,19 @@ class DeployReceiverPipeline:
                     f"deploy_id={record.deploy_id} pr_sha={pr_sha} "
                     f"failure_reason={str(err_msg)[:300]} "
                     f"rolled_back={gw.get('rolled_back', False)}",
+                )
+                # Portal Phase 1 (P0 #3): push the failure to the event bus
+                # (mirrors PostMergeDeployFailed).
+                emit_deploy_event(
+                    "deploy.failed",
+                    {
+                        **terminal_common,
+                        "step": "pipeline",
+                        "duration_ms": duration_ms,
+                        "success": False,
+                        "failure_reason": str(err_msg)[:300],
+                        "rolled_back": bool(gw.get("rolled_back", False)),
+                    },
                 )
         except Exception as exc:  # pragma: no cover - emit never raises
             logger.warning("deploy-alerts: terminal-state emit failed: %s", exc)
@@ -965,6 +1030,20 @@ class DeployReceiverPipeline:
             repository,
         )
 
+        # Portal Phase 1 (P0 #3): the node deploy is accepted and starting.
+        emit_deploy_event(
+            "deploy.started",
+            {
+                **_deploy_event_common(
+                    payload,
+                    repository,
+                    f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-node-{node_name}",
+                ),
+                "step": "pipeline",
+                "node": node_name,
+            },
+        )
+
         # 4. Run the remote deploy cycle. The executor emits NodeDeploy*
         #    alerts tagged with the node name; the pipeline emits the
         #    terminal PostMergeDeploy* record below.
@@ -1020,6 +1099,11 @@ class DeployReceiverPipeline:
         self.store.record_deploy(record)
 
         try:
+            node_common = {
+                **_deploy_event_common(payload, repository, record.deploy_id),
+                "step": "pipeline",
+                "node": node_name,
+            }
             if record.success:
                 emit_deploy_alert(
                     "PostMergeDeploySucceeded",
@@ -1030,6 +1114,16 @@ class DeployReceiverPipeline:
                     f"pr_sha={pr_sha} pr_number={pr_number} "
                     f"duration_ms={duration_ms}",
                 )
+                # Portal Phase 1 (P0 #3): push the success to the event bus
+                # (mirrors PostMergeDeploySucceeded).
+                emit_deploy_event(
+                    "deploy.succeeded",
+                    {
+                        **node_common,
+                        "duration_ms": duration_ms,
+                        "success": True,
+                    },
+                )
             else:
                 emit_deploy_alert(
                     "PostMergeDeployFailed",
@@ -1039,6 +1133,18 @@ class DeployReceiverPipeline:
                     f"deploy_id={record.deploy_id} node={node_name} "
                     f"pr_sha={pr_sha} failure_reason={str(err_msg)[:300]} "
                     f"rolled_back={gw_dict.get('rolled_back', False)}",
+                )
+                # Portal Phase 1 (P0 #3): push the failure to the event bus
+                # (mirrors PostMergeDeployFailed).
+                emit_deploy_event(
+                    "deploy.failed",
+                    {
+                        **node_common,
+                        "duration_ms": duration_ms,
+                        "success": False,
+                        "failure_reason": str(err_msg)[:300] if err_msg else "",
+                        "rolled_back": bool(gw_dict.get("rolled_back", False)),
+                    },
                 )
         except Exception as exc:  # pragma: no cover - emit never raises
             logger.warning("deploy-alerts: terminal-state emit failed: %s", exc)
