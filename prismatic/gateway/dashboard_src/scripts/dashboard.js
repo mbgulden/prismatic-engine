@@ -612,6 +612,10 @@
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>';
             }
         }
+        // No-preference theme default: light (Portal Phase 1, P0 #6; was dark).
+        // The manual toggle and the ?theme=light|dark query override keep working;
+        // only the first-visit default changed. An explicit saved "dark" is honored.
+        const DEFAULT_THEME = "light";
         function applyTheme() {
             const urlParams = new URLSearchParams(window.location.search);
             const queryTheme = urlParams.get("theme");
@@ -619,13 +623,10 @@
                 localStorage.setItem("theme", queryTheme);
             }
             const saved = localStorage.getItem("theme");
-            if (saved === "light") {
-                document.body.classList.add("light-mode");
-                updateThemeIcon(true);
-            } else {
-                document.body.classList.remove("light-mode");
-                updateThemeIcon(false);
-            }
+            const theme = saved === "dark" || saved === "light" ? saved : DEFAULT_THEME;
+            const isLight = theme === "light";
+            document.body.classList.toggle("light-mode", isLight);
+            updateThemeIcon(isLight);
         }
 
         // Tab Switching
