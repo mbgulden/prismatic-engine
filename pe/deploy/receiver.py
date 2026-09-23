@@ -7,16 +7,25 @@ Validates HMAC-SHA256 signature (DEPLOY_HMAC_SECRET), triggers deploy pipeline, 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterator
+
+try:
+    from swarmlock import AcquireRequest, LockConflictError, SyncSwarmlock
+
+    _HAS_SWARMLOCK = True
+except ImportError:  # pragma: no cover - swarmlock ships in the deploy venvs
+    _HAS_SWARMLOCK = False
 
 try:
     from fastapi import FastAPI, Header, HTTPException, Request
@@ -40,6 +49,7 @@ from pe.deploy.config import (
     deploy_source_repo,
     deploy_timeout_s,
     load_repo_registry,
+    state_dir,
     strict_secrets,
 )
 
@@ -57,6 +67,108 @@ RECEIVER_BIND_HOST = "0.0.0.0"
 DEPLOY_TIMEOUT_S = deploy_timeout_s()
 
 MIRROR_FETCH_TIMEOUT_S = 120
+
+#: TTL for a mirror-fetch swarmlock lease: the fetch timeout plus margin, so
+#: a crashed holder's lease expires and can never wedge the deploy path.
+MIRROR_FETCH_LOCK_TTL_S = MIRROR_FETCH_TIMEOUT_S + 180
+
+#: How long a trigger waits for another holder's mirror-fetch lease before
+#: giving up and proceeding unserialized (fail-open on the lock only -- the
+#: deploy's fail-closed safety never depends on the lock).
+MIRROR_FETCH_LOCK_WAIT_S = MIRROR_FETCH_TIMEOUT_S + 60
+
+
+# ---------------------------------------------------------------------------
+# Per-mirror fetch serialization (WS5)
+# ---------------------------------------------------------------------------
+
+_mirror_fetch_thread_locks: dict[str, threading.Lock] = {}
+_mirror_fetch_thread_locks_guard = threading.Lock()
+
+
+def _thread_lock_for_mirror(mirror_key: str) -> threading.Lock:
+    """One process-wide ``threading.Lock`` per resolved mirror path (WS5)."""
+    with _mirror_fetch_thread_locks_guard:
+        lock = _mirror_fetch_thread_locks.get(mirror_key)
+        if lock is None:
+            lock = threading.Lock()
+            _mirror_fetch_thread_locks[mirror_key] = lock
+        return lock
+
+
+def _swarmlock_registry_file() -> Path:
+    """Registry file for mirror-fetch swarmlock leases (WS5).
+
+    Lives under the deploy state dir (``$PRISMATIC_STATE_DIR`` or
+    ``~/.prismatic``), never next to the code.
+    """
+    path = state_dir() / "deploy-mirror-fetch-locks.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@contextlib.contextmanager
+def _swarmlock_mirror_lease(mirror_key: str) -> Iterator[None]:
+    """Best-effort swarmlock lease around a mirror fetch (WS5).
+
+    Serializes the fetch against OTHER processes (e.g. the 15-minute mirror
+    timer). Blocks until the lease is held or the wait deadline passes; on
+    deadline expiry yields WITHOUT the lease (logged loudly) so a wedged
+    holder can never hang a deploy. Never raises.
+    """
+    sw = SyncSwarmlock(backend="file", registry_file=str(_swarmlock_registry_file()))
+    request = AcquireRequest(
+        resource=f"mirror-fetch:{mirror_key}",
+        holder=f"deploy-receiver:{os.getpid()}",
+        ttl_seconds=float(MIRROR_FETCH_LOCK_TTL_S),
+    )
+    deadline = time.monotonic() + MIRROR_FETCH_LOCK_WAIT_S
+    while True:
+        try:
+            with sw.lease(request, heartbeat=True):
+                yield
+            return
+        except LockConflictError:
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "mirror-fetch lock for %s still held after %ss; "
+                    "proceeding unserialized (fail-open on the lock only)",
+                    mirror_key,
+                    MIRROR_FETCH_LOCK_WAIT_S,
+                )
+                yield
+                return
+            time.sleep(0.5)
+
+
+@contextlib.contextmanager
+def _serialized_mirror_fetch(mirror: Path) -> Iterator[None]:
+    """Serialize concurrent fetches of one mirror (WS5).
+
+    Two layers, because swarmlock's file backend treats holders from the SAME
+    process as reentrant (it cannot serialize the receiver's own worker
+    threads): a per-mirror ``threading.Lock`` covers in-process threads
+    first, and the swarmlock lease then covers other processes fetching the
+    same mirror (the 15-minute timer).
+
+    Never raises: a swarmlock failure degrades to the in-process lock only
+    (logged loudly), never to a deploy failure.
+    """
+    mirror_key = str(mirror.resolve())
+    with _thread_lock_for_mirror(mirror_key):
+        if _HAS_SWARMLOCK:
+            try:
+                with _swarmlock_mirror_lease(mirror_key):
+                    yield
+                return
+            except Exception as exc:  # fail-open on the lock only
+                logger.warning(
+                    "mirror-fetch swarmlock failed for %s (%s); "
+                    "proceeding with in-process lock only",
+                    mirror_key,
+                    exc,
+                )
+        yield
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -327,38 +439,46 @@ class DeployReceiverPipeline:
         return self._redeployers[repo.full_name]
 
     def refresh_repo_mirror(
-        self, repo: DeployRepoConfig | None = None
+        self, repo: DeployRepoConfig | None = None, mirror: Path | None = None
     ) -> dict[str, Any]:
         """Best-effort ``git fetch origin --prune`` of the persistent repo mirror.
 
         Event-based freshness: a successful deploy means origin/main moved, so
         pull the mirror in now instead of waiting for the 15-minute systemd
-        timer (which remains the authoritative drift backstop).
+        timer (which remains the authoritative drift backstop). WS5 also calls
+        this BEFORE SHA validation, so a trigger that beats the timer still
+        sees the merged SHA.
 
-        The mirror is the *routed* repo's (WS1): an explicitly injected
-        ``mirror_repo`` wins (test seam), then the routed repo's
-        ``mirror_dir``, which defaults to ``~/.prismatic/repos/<owner>/<repo>``.
+        The mirror is the *routed* repo's (WS1): an explicit per-repo
+        ``mirror`` path wins, then the injected ``mirror_repo`` (test seam),
+        then the routed repo's ``mirror_dir``, which defaults to
+        ``~/.prismatic/repos/<owner>/<repo>``.
+
+        Concurrent fetches of the same mirror are serialized (WS5): a
+        per-mirror threading lock for the receiver's own worker threads plus
+        a swarmlock file-backend lease against other processes (the timer).
 
         Fail-closed: this never raises. Every failure is logged and returned
         in the result dict; the deploy itself is unaffected.
         """
         routed = repo or self.repo_config
-        mirror = self.mirror_repo
-        if mirror is None:
-            mirror = routed.mirror_dir
-        if not mirror.is_dir():
+        resolved_mirror = mirror or self.mirror_repo
+        if resolved_mirror is None:
+            resolved_mirror = routed.mirror_dir
+        if not resolved_mirror.is_dir():
             logger.warning(
                 "Repo mirror %s not present; skipping refresh (timer owns creation)",
-                mirror,
+                resolved_mirror,
             )
             return {"refreshed": False, "reason": "mirror-not-present"}
         try:
-            proc = subprocess.run(
-                ["git", "-C", str(mirror), "fetch", "origin", "--prune"],
-                capture_output=True,
-                text=True,
-                timeout=MIRROR_FETCH_TIMEOUT_S,
-            )
+            with _serialized_mirror_fetch(resolved_mirror):
+                proc = subprocess.run(
+                    ["git", "-C", str(resolved_mirror), "fetch", "origin", "--prune"],
+                    capture_output=True,
+                    text=True,
+                    timeout=MIRROR_FETCH_TIMEOUT_S,
+                )
         except Exception as exc:  # fail-closed: never break the deploy
             logger.warning("Repo mirror refresh failed (fail-closed): %s", exc)
             return {"refreshed": False, "reason": f"fetch-error: {exc}"}
@@ -371,7 +491,7 @@ class DeployReceiverPipeline:
                 last_line,
             )
             return {"refreshed": False, "reason": f"git-rc-{proc.returncode}"}
-        logger.info("Repo mirror refreshed after successful deploy: %s", mirror)
+        logger.info("Repo mirror refreshed: %s", resolved_mirror)
         return {"refreshed": True, "reason": "fetch-ok"}
 
     def _fail_closed_unknown_repo(
@@ -494,12 +614,35 @@ class DeployReceiverPipeline:
             logger.info("DRY RUN: no deployment performed for %s", record.deploy_id)
             return record
 
+        # WS5: kill the merge->deploy race. The Actions trigger fires the
+        # instant a PR merges, but the mirror timer only fetches every 15
+        # minutes -- so fetch the routed repo's mirror NOW, before SHA
+        # validation, instead of only after a successful deploy. #528's
+        # fail-fast is preserved: a SHA that is still unknown after a fresh
+        # fetch refuses loudly via the normal deploy path below. The
+        # 15-minute timer and the post-success refresh stay as backstops
+        # (don't remove).
+        pre_deploy_fetch = self.refresh_repo_mirror(repo=repo)
+        logger.info(
+            "pre-deploy mirror fetch for %s: %s", repo.full_name, pre_deploy_fetch
+        )
+
         # Step 1: Execute atomic deploy
         success, version_dir, err_msg = runner.deploy(
             source_repo=source_repo_for,
             pr_sha=pr_sha,
             branch=payload.get("ref", "main"),
         )
+
+        # If the deploy failed and the pre-deploy fetch did not refresh the
+        # mirror, name the fetch in the refusal: the PostMergeDeployFailed
+        # alert then says why the SHA may still be missing (remote
+        # unreachable / fetch timeout) instead of only naming the SHA.
+        if not success and not pre_deploy_fetch.get("refreshed"):
+            err_msg = (
+                f"{err_msg} [pre-deploy mirror fetch for {repo.full_name} "
+                f"did not refresh: {pre_deploy_fetch.get('reason')}]"
+            )
 
         # Step 1b: Real atomic gateway redeploy -- close the merge->prod loop.
         # A merge to main must redeploy the RUNNING gateway, not just record it.
@@ -513,13 +656,10 @@ class DeployReceiverPipeline:
                 logger.info("Gateway redeploy skipped: %s", gw_res.reason)
             elif not gw_res.success:
                 success = False
-                err_msg = (
-                    f"GATEWAY REDEPLOY FAILED: {gw_res.reason}"
-                    + (
-                        " [rolled back to previous release]"
-                        if gw_res.rolled_back
-                        else " [ROLLBACK FAILED -- manual recovery required]"
-                    )
+                err_msg = f"GATEWAY REDEPLOY FAILED: {gw_res.reason}" + (
+                    " [rolled back to previous release]"
+                    if gw_res.rolled_back
+                    else " [ROLLBACK FAILED -- manual recovery required]"
                 )
         elif is_dry_run:
             gateway_info = {"skipped": True, "reason": "dry-run"}
@@ -562,7 +702,7 @@ class DeployReceiverPipeline:
             merged_at=payload.get("merged_at", now_iso),
             deployed_at=now_iso,
             deployer=deployer,
-            repository=repo.full_name,
+                repository=repo.full_name,
             version_dir=str(version_dir),
             release_symlink=str(runner.release_symlink),
             health_check=health_res,
@@ -839,13 +979,13 @@ def create_deploy_receiver_app() -> Any:
         try:
             hmac_secret = get_repo_hmac_secret(repo)
         except RuntimeError as exc:
-            logger.error(
-                "deploy trigger for %s refused: %s", repository, exc
-            )
+            logger.error("deploy trigger for %s refused: %s", repository, exc)
             raise HTTPException(status_code=500, detail=str(exc))
 
         # Verify HMAC signature (§16.8 anti-pattern #3)
-        if not verify_hmac_signature(body_bytes, x_hub_signature_256, secret=hmac_secret):
+        if not verify_hmac_signature(
+            body_bytes, x_hub_signature_256, secret=hmac_secret
+        ):
             raise HTTPException(
                 status_code=401, detail="Invalid or missing HMAC signature"
             )
