@@ -6,6 +6,7 @@ Publishes realtime SwarmEvent messages via the Gateway EventBus singleton:
 - ``review_factory.receipt_issued``
 - ``review_factory.authorization_created``
 - ``review_factory.merge_completed``
+- ``review_factory.repair_exhausted``
 """
 
 from __future__ import annotations

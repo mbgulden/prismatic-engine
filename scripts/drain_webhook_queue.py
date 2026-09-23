@@ -14,7 +14,16 @@ Logic:
 2. For each event with a non-empty identifier + Issue type + agent:* label,
    call dispatch_issue_by_identifier (the same single-issue fast path the
    live webhook uses).
+2b. For each event with event_type 'task.review-factory' (review-factory
+   repair tasks), call dispatch_repair_by_identifier — the assigned-agent
+   entrypoint. Repair events never touch the Linear Issue path.
 3. Update dispatch_status to 'dispatched' / 'no_op' / 'failed' / 'stale'.
+
+Deployment note:
+  prismatic-webhook-drain.timer executes the copy at
+  /home/ubuntu/.prismatic/runtime/prismatic-engine/scripts/drain_webhook_queue.py,
+  NOT this repo file. After changing this script, sync it to the runtime path
+  and verify the checksums match before declaring the fix live.
 4. Mark events older than STALE_AFTER_SECONDS as 'stale' so we don't
    accidentally replay ancient events after a long outage.
 
@@ -46,6 +55,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # Allow running as a script from anywhere
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -191,7 +201,54 @@ def has_agent_label(raw_json: str) -> bool:
     return False
 
 
-def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
+def _apply_dispatch_result(
+    conn: sqlite3.Connection,
+    eid: str,
+    ident: str,
+    result: Any,
+    counters: dict,
+) -> None:
+    """Map a dispatch result to a queue status; update DB, counters, and log.
+
+    Shared by the Linear Issue path and the review-factory repair path so both
+    event types get identical status handling.
+    """
+    result_status = "dispatched" if result else "no_op"
+    if isinstance(result, dict):
+        result_status = str(
+            result.get("status") or ("dispatched" if result.get("ok") else "no_op")
+        )
+    if result_status == "dispatched":
+        update_status(conn, eid, "dispatched")
+        counters["dispatched"] += 1
+        print(f"[drain]   ✓ {ident} dispatched")
+    elif result_status == "deferred_rate_limit":
+        update_status(conn, eid, "deferred_rate_limit")
+        counters["deferred"] += 1
+        print(f"[drain]   ⏸ {ident} deferred by assigned-agent preflight")
+    elif result_status == "needs_manual_review":
+        update_status(conn, eid, "needs_manual_review")
+        counters["manual_review"] += 1
+        print(f"[drain]   ? {ident} needs manual review")
+    elif result_status in {"blocked_preflight", "preflight_failed"}:
+        update_status(conn, eid, "blocked_preflight")
+        counters["blocked_preflight"] += 1
+        print(f"[drain]   ⛔ {ident} blocked by preflight")
+    elif result_status == "failed":
+        update_status(conn, eid, "failed")
+        counters["failed"] += 1
+        print(f"[drain]   ✗ {ident} failed")
+    else:
+        update_status(conn, eid, "no_op")
+        counters["no_op"] += 1
+        print(f"[drain]   · {ident} no-op (no agent match or gate)")
+
+
+def drain(
+    args: argparse.Namespace,
+    dispatch_fn=None,
+    repair_dispatch_fn=None,
+) -> int:
     state_dir = Path(
         os.environ.get("PRISMATIC_STATE_DIR", str(Path.home() / ".prismatic" / "db"))
     )
@@ -246,87 +303,106 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
         print(f"[drain] Processing {len(events)} pending events")
 
         # Import here so script works even if prismatic package not on path
-        if dispatch_fn is None:
+        if dispatch_fn is None or repair_dispatch_fn is None:
             try:
                 from prismatic.dispatcher import (
-                    dispatch_issue_by_identifier as dispatch_fn,
+                    dispatch_issue_by_identifier,
+                    dispatch_repair_by_identifier,
                 )
             except Exception as exc:
                 print(f"[drain] FATAL: cannot import dispatcher: {exc}")
                 return 2
+            if dispatch_fn is None:
+                dispatch_fn = dispatch_issue_by_identifier
+            if repair_dispatch_fn is None:
+                repair_dispatch_fn = dispatch_repair_by_identifier
 
-        dispatched = 0
-        no_op = 0
-        failed = 0
-        deferred = 0
-        manual_review = 0
-        blocked_preflight = 0
-        stale = n_stale
+        counters = {
+            "dispatched": 0,
+            "no_op": 0,
+            "failed": 0,
+            "deferred": 0,
+            "manual_review": 0,
+            "blocked_preflight": 0,
+            "stale": n_stale,
+        }
         for ev in events:
             eid = ev["event_id"]
             ident = ev["identifier"]
             etype = ev["event_type"]
             action = ev["action"]
 
+            # Review-factory repair events take the assigned-agent repair
+            # entrypoint (F1). They never touch the Linear Issue path.
+            is_repair = etype == "task.review-factory"
+
             # Filter decisions — only mutate DB when not dry-run
-            if etype != "Issue" or action not in ("create", "update"):
+            if not is_repair and (
+                etype != "Issue" or action not in ("create", "update")
+            ):
                 if not args.dry_run:
                     update_status(conn, eid, "no_op")
-                    no_op += 1
+                    counters["no_op"] += 1
                 continue
 
             if args.dry_run:
-                print(f"[drain]   DRY: would dispatch {ident} ({action})")
+                kind = "repair" if is_repair else action
+                print(f"[drain]   DRY: would dispatch {ident} ({kind})")
                 continue
 
-            allowed, block_reason = _linear_dispatch_allowed()
-            if not allowed:
-                update_status(conn, eid, "deferred_rate_limit")
-                deferred += 1
-                print(f"[drain]   ⏸ {ident} deferred: {block_reason}")
-                continue
+            # The Linear budget gate applies to the Issue path only. Repair
+            # dispatch spends no Linear budget; the dispatcher's own preflight
+            # still runs inside dispatch_repair_by_identifier.
+            fn = repair_dispatch_fn if is_repair else dispatch_fn
+            if not is_repair:
+                allowed, block_reason = _linear_dispatch_allowed()
+                if not allowed:
+                    update_status(conn, eid, "deferred_rate_limit")
+                    counters["deferred"] += 1
+                    print(f"[drain]   ⏸ {ident} deferred: {block_reason}")
+                    continue
 
             try:
-                result = dispatch_fn(identifier=ident)
-                result_status = "dispatched" if result else "no_op"
-                if isinstance(result, dict):
-                    result_status = str(result.get("status") or ("dispatched" if result.get("ok") else "no_op"))
-                if result_status == "dispatched":
-                    update_status(conn, eid, "dispatched")
-                    dispatched += 1
-                    print(f"[drain]   ✓ {ident} dispatched")
-                elif result_status == "deferred_rate_limit":
-                    update_status(conn, eid, "deferred_rate_limit")
-                    deferred += 1
-                    print(f"[drain]   ⏸ {ident} deferred by assigned-agent preflight")
-                elif result_status == "needs_manual_review":
-                    update_status(conn, eid, "needs_manual_review")
-                    manual_review += 1
-                    print(f"[drain]   ? {ident} needs manual review")
-                elif result_status in {"blocked_preflight", "preflight_failed"}:
-                    update_status(conn, eid, "blocked_preflight")
-                    blocked_preflight += 1
-                    print(f"[drain]   ⛔ {ident} blocked by preflight")
-                elif result_status == "failed":
-                    update_status(conn, eid, "failed")
-                    failed += 1
-                    print(f"[drain]   ✗ {ident} failed")
-                else:
-                    update_status(conn, eid, "no_op")
-                    no_op += 1
-                    print(f"[drain]   · {ident} no-op (no agent match or gate)")
+                result = fn(identifier=ident)
             except Exception as exc:
                 update_status(conn, eid, f"failed: {str(exc)[:80]}")
-                failed += 1
+                counters["failed"] += 1
                 print(f"[drain]   ✗ {ident} failed: {exc}")
+                continue
 
-            # Gentle pacing — avoid hammering Linear API
-            time.sleep(0.2)
+            _apply_dispatch_result(conn, eid, ident, result, counters)
+
+            # Gentle pacing — avoid hammering Linear API (Issue path only)
+            if not is_repair:
+                time.sleep(0.2)
 
         if not args.dry_run:
             conn.commit()
-        result = "failed" if failed else ("deferred_rate_limit" if deferred else ("blocked_preflight" if blocked_preflight else ("needs_manual_review" if manual_review else "ok")))
-        counts = {"dispatched": dispatched, "no_op": no_op, "failed": failed, "deferred": deferred, "needs_manual_review": manual_review, "blocked_preflight": blocked_preflight, "stale": stale, "dry_run": bool(args.dry_run), "processed": len(events)}
+        c = counters
+        result = (
+            "failed"
+            if c["failed"]
+            else (
+                "deferred_rate_limit"
+                if c["deferred"]
+                else (
+                    "blocked_preflight"
+                    if c["blocked_preflight"]
+                    else ("needs_manual_review" if c["manual_review"] else "ok")
+                )
+            )
+        )
+        counts = {
+            "dispatched": c["dispatched"],
+            "no_op": c["no_op"],
+            "failed": c["failed"],
+            "deferred": c["deferred"],
+            "needs_manual_review": c["manual_review"],
+            "blocked_preflight": c["blocked_preflight"],
+            "stale": c["stale"],
+            "dry_run": bool(args.dry_run),
+            "processed": len(events),
+        }
         if not args.dry_run:
             try:
                 from prismatic.ingestion_queue import record_drain_result
@@ -335,10 +411,10 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
             except Exception as exc:
                 print(f"[drain] WARN: could not record drain result: {exc}")
         print(
-            f"[drain] Done: dispatched={dispatched} no_op={no_op} "
-            f"failed={failed} deferred={deferred} manual_review={manual_review} blocked_preflight={blocked_preflight} stale={stale} dry_run={args.dry_run}"
+            f"[drain] Done: dispatched={counters['dispatched']} no_op={counters['no_op']} "
+            f"failed={counters['failed']} deferred={counters['deferred']} manual_review={counters['manual_review']} blocked_preflight={counters['blocked_preflight']} stale={counters['stale']} dry_run={args.dry_run}"
         )
-        return 0 if failed == 0 else 1
+        return 0 if counters["failed"] == 0 else 1
     finally:
         conn.close()
 

@@ -59,6 +59,8 @@ VALID_TYPES = {
     # Portal Phase 1 (P0 #3): deploy lifecycle, pushed by the receiver
     # deploy pipeline (pe.deploy.deploy_events) over this bridge.
     "deploy.started", "deploy.succeeded", "deploy.failed", "deploy.rolled_back",
+    # Review Factory: repair redispatch budget exhausted (Phase A fix).
+    "review_factory.repair_exhausted",
 }
 
 
