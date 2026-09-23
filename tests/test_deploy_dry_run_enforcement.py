@@ -71,7 +71,7 @@ class _RecordingGatewayRedeployer:
     def __init__(self):
         self.calls = 0
 
-    def redeploy(self, pr_sha="", repo=None, dry_run=False):
+    def redeploy(self, pr_sha="", repo=None, dry_run=False, repo_config=None):
         self.calls += 1
         return GatewayDeployResult(
             success=True, skipped=True, reason="test-stub", pr_sha=pr_sha

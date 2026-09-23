@@ -300,7 +300,7 @@ class _StubGatewayRedeployer:
             rolled_back=rolled_back,
         )
 
-    def redeploy(self, pr_sha="", repo=None, dry_run=False):
+    def redeploy(self, pr_sha="", repo=None, dry_run=False, repo_config=None):
         return self._res
 
 
