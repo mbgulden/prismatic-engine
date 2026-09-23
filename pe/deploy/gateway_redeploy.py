@@ -58,6 +58,7 @@ from pe.deploy.process_manager_systemd import SystemdProcessManager
 from pe.deploy.config import (
     DEFAULT_HEALTH_ENDPOINTS,
     DEFAULT_RELEASE_PREFIX,
+    DEFAULT_SMOKE_IMPORT,
     DeployRepoConfig,
 )
 
@@ -133,11 +134,24 @@ class GatewayRedeployer:
         systemctl_bin: str = "/usr/bin/systemctl",
         manager: ProcessManager | None = None,
         health_endpoints: tuple[tuple[str, str], ...] | None = None,
+        release_prefix: str | None = None,
+        smoke_import: str | None = None,
     ):
         home_p = Path(home).expanduser() if home else Path.home()
         self.prismatic = home_p / ".prismatic"
-        self.current_link = self.prismatic / "current"
-        self.venv_link = self.prismatic / "venv_current"
+        # Per-repo live links (second-repo support). The default repo keeps
+        # the exact pre-existing link names, so gateway behavior is unchanged;
+        # any other repo gets suffixed links so its deploys can never flip
+        # the production gateway's symlinks.
+        self.release_prefix = release_prefix or DEFAULT_RELEASE_PREFIX
+        if self.release_prefix == DEFAULT_RELEASE_PREFIX:
+            self.current_link = self.prismatic / "current"
+            self.venv_link = self.prismatic / "venv_current"
+            self.state_name = STATE_NAME
+        else:
+            self.current_link = self.prismatic / f"current-{self.release_prefix}"
+            self.venv_link = self.prismatic / f"venv_current-{self.release_prefix}"
+            self.state_name = f"last-deploy-{self.release_prefix}.json"
         self.releases_dir = self.prismatic / "releases"
         self.venvs_dir = self.prismatic / "venvs"
         self.wheel_cache = self.prismatic / "wheel_cache"
@@ -149,10 +163,16 @@ class GatewayRedeployer:
         self.service = service or os.environ.get(
             "PRISMATIC_GATEWAY_SERVICE", DEFAULT_GATEWAY_SERVICE
         )
-        self.port = port or int(os.environ.get("PRISMATIC_PORT", str(DEFAULT_GATEWAY_PORT)))
-        self.extras = extras or os.environ.get(
-            "PRISMATIC_GATEWAY_EXTRAS", DEFAULT_EXTRAS
+        self.port = port if port is not None else int(
+            os.environ.get("PRISMATIC_PORT", str(DEFAULT_GATEWAY_PORT))
         )
+        # None = not provided (env/default); "" = explicitly no extras.
+        self.extras = (
+            extras
+            if extras is not None
+            else os.environ.get("PRISMATIC_GATEWAY_EXTRAS", DEFAULT_EXTRAS)
+        )
+        self.smoke_import = smoke_import or DEFAULT_SMOKE_IMPORT
         # WS1: per-repo HTTP health endpoints; default == pre-WS1 behavior.
         self.health_endpoints = health_endpoints or DEFAULT_HEALTH_ENDPOINTS
         self.systemctl_bin = systemctl_bin
@@ -407,9 +427,9 @@ class GatewayRedeployer:
             )
             if not res.rolled_back:
                 res.reason += (
-                    " | ROLLBACK FAILED -- gateway may be down. Manual recovery: "
+                    " | ROLLBACK FAILED -- service may be down. Manual recovery: "
                     f"sudo /usr/bin/systemctl restart {self.service} ; "
-                    "verify ~/.prismatic/current and ~/.prismatic/venv_current symlinks"
+                    f"verify {self.current_link} and {self.venv_link} symlinks"
                 )
             return res
         finally:
@@ -455,17 +475,16 @@ class GatewayRedeployer:
     def _live_sha(self) -> str | None:
         """Return the short SHA of the currently-live release, if any.
 
-        WS1 note: the ``current`` / ``venv_current`` live links stay shared
-        across repos (pre-WS1 behavior). Per-repo release *directories* are
-        distinct (release_prefix), which is what rollback restores; live-link
-        separation for multi-service hosts is follow-up work.
+        Reads this deployer's own live link, so per-repo links give per-repo
+        answers. The default repo keeps the exact pre-existing behavior.
         """
         target = self._readlink(self.current_link)
         if not target:
             return None
         name = target.name
-        if name.startswith("prismatic-engine-"):
-            sha = name[len("prismatic-engine-"):]
+        prefix = f"{self.release_prefix}-"
+        if name.startswith(prefix):
+            sha = name[len(prefix):]
             if SHA_RE.match(sha):
                 return sha
         return None
@@ -489,9 +508,11 @@ class GatewayRedeployer:
             shutil.rmtree(venv_dir)
         self._run_checked([sys.executable, "-m", "venv", str(venv_dir)], timeout=600)
         pip = venv_dir / "bin" / "pip"
+        # An explicitly empty extras means "install the bare wheel" (repos
+        # without extras would fail on wheel[]).
+        target = f"{wheel}[{self.extras}]" if self.extras else str(wheel)
         self._run_checked(
-            [str(pip), "install", "--find-links", str(self.wheel_cache),
-             f"{wheel}[{self.extras}]"],
+            [str(pip), "install", "--find-links", str(self.wheel_cache), target],
             timeout=1800,
         )
         logger.info("venv ready at %s", venv_dir)
@@ -535,7 +556,7 @@ class GatewayRedeployer:
             "new_version_dir": str(version_dir),
             "new_venv_dir": str(venv_dir),
         }
-        (self.run_dir / STATE_NAME).write_text(json.dumps(state, indent=2))
+        (self.run_dir / self.state_name).write_text(json.dumps(state, indent=2))
 
     def _systemctl(self, action: str, timeout: int | None = 120) -> None:
         # The only action the deploy loop ever issues is "restart"; the
@@ -583,7 +604,7 @@ class GatewayRedeployer:
         try:
             self._run_checked(
                 [str(venv_dir / "bin" / "python"), "-c",
-                 "import prismatic.gateway.server"],
+                 f"import {self.smoke_import}"],
                 timeout=120,
             )
             checks["smoke_import"] = True

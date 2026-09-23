@@ -56,9 +56,15 @@ class PostDeployHealthChecker:
             if not is_symlink:
                 details["symlink_error"] = f"Symlink {release_symlink} does not exist"
 
-        # 2. Version directory integrity
+        # 2. Version directory integrity — the staged release must look like a
+        # real source tree. prismatic-engine stages its `prismatic/` package;
+        # other repos stage whatever their build needs (a pyproject.toml is
+        # required for the wheel build, so it is the generic marker).
         if version_dir:
-            dir_valid = version_dir.is_dir() and (version_dir / "prismatic").exists()
+            dir_valid = version_dir.is_dir() and (
+                (version_dir / "prismatic").exists()
+                or (version_dir / "pyproject.toml").is_file()
+            )
             checks["version_dir_valid"] = dir_valid
             details["version_dir"] = str(version_dir)
             if not dir_valid:
