@@ -454,6 +454,10 @@ class DeployReceiverPipeline:
             self._redeployers[repo.full_name] = GatewayRedeployer(
                 service=repo.target_service,
                 health_endpoints=repo.health_endpoints,
+                release_prefix=repo.release_prefix,
+                port=repo.port,
+                extras=repo.extras,
+                smoke_import=repo.smoke_import,
             )
         return self._redeployers[repo.full_name]
 

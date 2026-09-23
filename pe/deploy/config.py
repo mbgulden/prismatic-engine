@@ -60,6 +60,9 @@ DEFAULT_GATEWAY_PORT = 9000
 #: pip extras installed into the gateway venv.
 DEFAULT_GATEWAY_EXTRAS = "gateway,primitives,verification"
 
+#: Python import used as the post-restart smoke test of the new venv.
+DEFAULT_SMOKE_IMPORT = "prismatic.gateway.server"
+
 #: Overall timeout for one deploy request (seconds).
 DEFAULT_DEPLOY_TIMEOUT_S = 1800
 
@@ -85,6 +88,9 @@ _OVERRIDE_KEYS = frozenset(
         "health_endpoints",
         "hmac_secret_env",
         "target_node",
+        "port",
+        "extras",
+        "smoke_import",
     }
 )
 
@@ -259,6 +265,11 @@ class DeployRepoConfig:
     health_endpoints: tuple[tuple[str, str], ...] = DEFAULT_HEALTH_ENDPOINTS
     hmac_secret_env: str = field(default="")
     target_node: str = "local"
+    # Per-repo deploy parameterization (pilot/second-repo support). Defaults
+    # preserve the exact pre-existing behavior for the default repo.
+    port: int = DEFAULT_GATEWAY_PORT
+    extras: str = DEFAULT_GATEWAY_EXTRAS
+    smoke_import: str = DEFAULT_SMOKE_IMPORT
 
     def __post_init__(self) -> None:
         if not self.hmac_secret_env:
@@ -325,6 +336,19 @@ def _config_for_name(
                 "non-empty list of [path, name] pairs"
             )
 
+    port = DEFAULT_GATEWAY_PORT
+    if "port" in ov:
+        try:
+            port = int(ov["port"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid port for {full_name!r}: expected an integer: {exc}"
+            ) from exc
+        if not 1 <= port <= 65535:
+            raise ValueError(
+                f"invalid port for {full_name!r}: expected 1-65535, got {port}"
+            )
+
     return DeployRepoConfig(
         full_name=full_name,
         mirror_dir=mirror_dir,
@@ -335,6 +359,9 @@ def _config_for_name(
         health_endpoints=health_endpoints,
         hmac_secret_env=str(ov.get("hmac_secret_env", "")),
         target_node=str(ov.get("target_node", "local")),
+        port=port,
+        extras=str(ov.get("extras", DEFAULT_GATEWAY_EXTRAS)),
+        smoke_import=str(ov.get("smoke_import", DEFAULT_SMOKE_IMPORT)),
     )
 
 
