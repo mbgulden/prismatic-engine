@@ -631,3 +631,110 @@ def validate_repo(
         )
 
     return ValidateResult(True, full_name, checks)
+
+
+# ---------------------------------------------------------------------------
+# remove-repo (Portal Plan P0 #2 CLI)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RemoveRepoResult:
+    """Outcome of :func:`remove_repo`."""
+
+    ok: bool
+    full_name: str
+    steps: list[RepoStep] = field(default_factory=list)
+    registry_file: str = ""
+    #: Things deliberately left behind (mirror, HMAC secret, release dirs).
+    leftovers: list[str] = field(default_factory=list)
+
+
+def remove_repo(
+    full_name: str,
+    *,
+    dry_run: bool = False,
+    registry_file: str = "",
+) -> RemoveRepoResult:
+    """Remove OWNER/REPO from the deploy registry file.
+
+    Fail-closed: invalid name, unknown repo, or removing the last remaining
+    repo raises :class:`OnboardError` before any mutation. ``dry_run``
+    mutates nothing. The mirror, the per-repo HMAC secret, and existing
+    release dirs are intentionally left in place and reported as leftovers
+    (removing registry routing must never delete deploy artifacts).
+
+    Remaining entries keep their order (registry order defines the default
+    repo; see the known add-repo ordering defect -- not touched here).
+    """
+    full_name = full_name.strip()
+    try:
+        deploy_config._validate_full_name(full_name)  # noqa: SLF001 - same package
+    except ValueError as exc:
+        raise OnboardError(str(exc)) from exc
+
+    target = (
+        Path(registry_file).expanduser() if registry_file else default_registry_file()
+    )
+    existing = _read_registry_json(target)
+    if full_name not in existing:
+        if not target.exists():
+            effective = deploy_config.load_repo_registry()
+            if full_name in effective:
+                raise OnboardError(
+                    f"cannot remove {full_name!r}: it is the only repo in the "
+                    "implicit deploy registry (no registry file exists); the "
+                    "registry must contain at least one repo"
+                )
+        raise OnboardError(
+            f"{full_name!r} is not in the deploy registry file {target} "
+            "-- nothing to do."
+        )
+    if len(existing) == 1:
+        raise OnboardError(
+            f"cannot remove {full_name!r}: the registry must contain at least one repo"
+        )
+
+    overrides = existing[full_name]
+    del existing[full_name]
+
+    steps = []
+    if dry_run:
+        steps.append(
+            RepoStep(
+                "registry",
+                "would-do",
+                f"remove {full_name} from {target} ({len(existing)} repos remain)",
+            )
+        )
+    else:
+        try:
+            _write_json_atomic(target, existing)
+        except OSError as exc:
+            raise OnboardError(f"cannot write registry file {target}: {exc}") from exc
+        steps.append(
+            RepoStep(
+                "registry",
+                "ok",
+                f"removed {full_name} from {target} ({len(existing)} repos remain)",
+            )
+        )
+
+    # Leftovers: mirror, secret, and release dirs stay (never delete deploy
+    # artifacts as a side effect of unregistering routing).
+    cfg = deploy_config._config_for_name(  # noqa: SLF001 - same package
+        full_name, overrides or None
+    )
+    leftovers = [
+        f"mirror left in place: {cfg.mirror_dir}",
+        f"HMAC secret left in place: {cfg.hmac_secret_env} (receiver env file)",
+        f"release dirs left in place: ~/.prismatic/releases/{cfg.release_prefix}-*",
+    ]
+    steps.append(RepoStep("leftovers", "skipped", "; ".join(leftovers)))
+    return RemoveRepoResult(
+        ok=True,
+        full_name=full_name,
+        steps=steps,
+        registry_file=str(target),
+        leftovers=leftovers,
+    )

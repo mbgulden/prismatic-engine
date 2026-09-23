@@ -6642,6 +6642,14 @@ _dep_router = create_deploy_router()
 if _dep_router:
     app.include_router(_dep_router, prefix="/api")
 
+from prismatic.gateway.deploy_control import (  # noqa: E402
+    create_deploy_control_router,
+)
+
+_deploy_control_router = create_deploy_control_router()
+if _deploy_control_router:
+    app.include_router(_deploy_control_router, prefix="/api")
+
 from prismatic.gateway.routes.pwp import pwp_router  # noqa: E402
 app.include_router(pwp_router)
 
