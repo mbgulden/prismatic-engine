@@ -187,7 +187,11 @@ from prismatic.completed_work_gate import (
 from prismatic.dispatcher import get_dispatcher_polling_budget_snapshot
 from prismatic.gateway.control_auth import control_authorization_middleware
 from prismatic.gateway.event_bus import get_event_bus
-from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
+from prismatic.gateway.ipc_bridge import (
+    UnixSocketListener,
+    create_event_ingest_route,
+    deploy_event_ws_forwarder,
+)
 from prismatic.gateway.workspace_tree import (
     RegistryError,
     WorkspaceTreeError,
@@ -411,6 +415,12 @@ async def lifespan(app: FastAPI):
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
     await _ipc_listener.start()
+
+    # Portal Phase 1 (P0 #3): bridge the EventBus to /ws. Deploy lifecycle
+    # events pushed by the receiver over the IPC bridge publish to the bus;
+    # this forwards deploy.* on to the /ws subscribers so the portal
+    # updates live instead of polling the alert log.
+    await get_event_bus().subscribe(deploy_event_ws_forwarder(broadcast_ws_json))
 
     # Start Gateway HTTP Unix socket proxy
     port = int(os.environ.get("PRISMATIC_PORT", "9000"))
