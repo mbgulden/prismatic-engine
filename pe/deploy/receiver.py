@@ -603,7 +603,37 @@ def create_deploy_receiver_app() -> Any:
     return app
 
 
-app = create_deploy_receiver_app()
+_app: Any = None
+
+
+def get_app() -> Any:
+    """Return the deploy receiver FastAPI app, creating it on first call.
+
+    Lazy by design: importing this module must have no side effects, because
+    other processes import it without receiver configuration -- notably the
+    gateway, which imports DeployReceiverPipeline via prismatic.deploy.routes
+    (2026-09-22: module-level app creation crashed the gateway on every
+    deploy of #528, because the gateway has no PRISMATIC_DEPLOY_SOURCE_REPO).
+    The fail-fast on a missing PRISMATIC_DEPLOY_SOURCE_REPO still fires here,
+    at actual receiver startup, never at import.
+    """
+    global _app
+    if _app is None:
+        _app = create_deploy_receiver_app()
+    return _app
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562: resolve ``pe.deploy.receiver:app`` lazily.
+
+    Keeps the ``"pe.deploy.receiver:app"`` import string used by uvicorn (and
+    the ``__main__`` block below) working without building the app at import
+    time. Any other name falls through to the normal AttributeError.
+    """
+    if name == "app":
+        return get_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 if __name__ == "__main__":
     import uvicorn

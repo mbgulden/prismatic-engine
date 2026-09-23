@@ -10,7 +10,6 @@ from typing import Any
 
 try:
     from fastapi import APIRouter, HTTPException, Query
-    from fastapi.responses import JSONResponse
     _HAS_FASTAPI = True
 except ImportError:
     _HAS_FASTAPI = False
@@ -37,8 +36,17 @@ def create_deploy_router() -> Any:
         return None
 
     store = DeployManifestStore()
-    pipeline = DeployReceiverPipeline()
     router = APIRouter(prefix="/deploy", tags=["deploy"])
+
+    def _pipeline() -> "DeployReceiverPipeline":
+        """Build a deploy pipeline on demand.
+
+        Deferred because constructing one requires PRISMATIC_DEPLOY_SOURCE_REPO
+        (#528 fail-fast), which the gateway does not set. Only the manual
+        /trigger endpoint needs a pipeline; read-only endpoints work without
+        it. Fail-fast fires here, at request time, never at import.
+        """
+        return DeployReceiverPipeline()
 
     @router.get("/recent")
     async def get_recent_deploys(
@@ -93,6 +101,7 @@ def create_deploy_router() -> Any:
             "deployer": "manual:user",
             "dry_run": dry_run,
         }
+        pipeline = _pipeline()
         pipeline.deploy_runner.dry_run = dry_run
         record = pipeline.process_deploy(payload)
         return {"status": "success" if record.success else "failed", "record": record.to_dict()}
