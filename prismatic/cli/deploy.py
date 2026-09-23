@@ -47,6 +47,29 @@ def register_deploy_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Override the systemd target service (default: registry default)",
     )
     add_p.add_argument(
+        "--release-prefix",
+        default="",
+        help="Release-dir/live-link prefix (default: derived from owner/repo)",
+    )
+    add_p.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="HTTP port the repo's service listens on (default: 9000)",
+    )
+    add_p.add_argument(
+        "--extras",
+        default=None,
+        help="pip extras to install, or empty string for none "
+        "(default: registry default)",
+    )
+    add_p.add_argument(
+        "--smoke-import",
+        default="",
+        help="Python import used as the post-restart smoke test "
+        "(default: prismatic.gateway.server)",
+    )
+    add_p.add_argument(
         "--registry-file",
         default="",
         help="Registry file override for PRISMATIC_DEPLOY_REPOS_FILE",
@@ -83,6 +106,10 @@ def run_deploy(args: argparse.Namespace) -> int:
             repo_url=args.repo_url,
             target_service=args.target_service,
             registry_file=args.registry_file,
+            release_prefix=args.release_prefix,
+            port=args.port,
+            extras=args.extras,
+            smoke_import=args.smoke_import,
         )
         try:
             result = onboard.add_repo(options)

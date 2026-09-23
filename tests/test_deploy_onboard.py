@@ -74,7 +74,9 @@ def test_add_repo_registers_atomically_and_preserves_existing(iso_env):  # noqa:
     assert result.ok
     data = json.loads(reg.read_text(encoding="utf-8"))
     assert set(data) == {"mbgulden/prismatic-engine", "octo/repo"}
-    assert data["octo/repo"] == {}
+    # release_prefix is always explicit: a second repo's live symlinks must
+    # never fall back to the production gateway's bare links.
+    assert data["octo/repo"] == {"release_prefix": "octo-repo"}
     # no clone when --no-mirror
     assert not any("clone" in c for c in calls)
 
