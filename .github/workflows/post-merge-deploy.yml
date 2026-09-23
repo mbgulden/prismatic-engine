@@ -42,13 +42,16 @@ jobs:
           COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
-          # Construct JSON payload
+          # Construct JSON payload. The repository field (owner/repo) is what
+          # the deploy receiver routes on (WS1 multi-repo); it must always be
+          # present -- the receiver fail-closes without it.
           PAYLOAD_JSON=$(jq -c -n \
             --arg sha "$PR_SHA" \
             --arg title "$COMMIT_MSG" \
             --arg deployer "${{ github.actor }}" \
             --arg time "$TIMESTAMP" \
-            '{pr_sha: $sha, pr_title: $title, deployer: $deployer, merged_at: $time}')
+            --arg repo "${{ github.repository }}" \
+            '{pr_sha: $sha, pr_title: $title, deployer: $deployer, merged_at: $time, repository: $repo}')
             
           HMAC_SIG=$(echo -n "$PAYLOAD_JSON" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | sed 's/^.*= //')
           

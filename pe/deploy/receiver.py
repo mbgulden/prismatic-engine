@@ -32,6 +32,16 @@ from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
 from pe.deploy.linear_transition import LinearDeployTransitioner
 from pe.deploy.manifest import DeployManifestStore, DeployRecord
+from pe.deploy.config import (
+    DeployRepoConfig,
+    UnknownRepoError,
+    allow_default_hmac,
+    default_repo_config,
+    deploy_source_repo,
+    deploy_timeout_s,
+    load_repo_registry,
+    strict_secrets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +51,8 @@ RECEIVER_PORT = 9460
 #: in a worker thread so /health stays responsive; a deploy that exceeds this
 #: fails loudly instead of hanging the workflow forever. (2026-09-22: an
 #: unbounded rsync hung the receiver for 37 minutes and starved /health.)
-DEPLOY_TIMEOUT_S = int(os.environ.get("PRISMATIC_DEPLOY_TIMEOUT_S", "1800"))
+DEPLOY_TIMEOUT_S = deploy_timeout_s()
 
-#: Default location of the persistent private-repo mirror that the gateway's
-#: repo-dir activation checks read. Refreshed eagerly on each successful
-#: deploy (piggyback) so the mirror tracks origin/main without waiting for
-#: the 15-minute systemd timer, which stays as the drift backstop.
-MIRROR_REPO_RELATIVE = Path(".prismatic/repos/mbgulden/prismatic-engine")
 MIRROR_FETCH_TIMEOUT_S = 120
 
 
@@ -86,7 +91,7 @@ def get_deploy_hmac_secret() -> str:
             return env_vars["DEPLOY_HMAC_SECRET"]
 
     # Graceful fallback for test/dev mode or default local setup
-    if os.environ.get("PRISMATIC_ALLOW_DEFAULT_HMAC") == "1" or not os.environ.get("PRISMATIC_STRICT_SECRETS"):
+    if allow_default_hmac() or not strict_secrets():
         logger.warning("DEPLOY_HMAC_SECRET not set; using default dev HMAC secret.")
         return "prismatic-deploy-hmac-secret-v1"
 
@@ -94,6 +99,44 @@ def get_deploy_hmac_secret() -> str:
         "DEPLOY_HMAC_SECRET environment variable or .env entry is missing! "
         "Set DEPLOY_HMAC_SECRET in .env or environment to enforce production security."
     )
+
+
+def get_repo_hmac_secret(repo: DeployRepoConfig) -> str:
+    """Resolve the HMAC secret for one routed repo (WS1).
+
+    Precedence: the repo's per-repo env var
+    (``DEPLOY_HMAC_SECRET_<OWNER>_<REPO>``, see
+    :attr:`DeployRepoConfig.hmac_secret_env`), then the same ``.env`` files
+    the shared secret uses, then the shared ``DEPLOY_HMAC_SECRET`` fallback
+    (which keeps the strict/dev semantics of :func:`get_deploy_hmac_secret`:
+    a missing secret for a routed repo is a loud refusal in strict mode).
+    """
+    per_repo_var = repo.hmac_secret_env
+    _env = os.environ
+    secret = _env.get(per_repo_var)
+    if secret:
+        return secret
+
+    # Check local .env files for the per-repo var (same precedence as shared)
+    for env_path in (
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+        Path.home() / ".prismatic" / ".env",
+    ):
+        env_vars = _load_env_file(env_path)
+        if per_repo_var in env_vars:
+            return env_vars[per_repo_var]
+
+    # Shared fallback -- a missing secret for a routed repo is a loud
+    # refusal in strict mode, naming the repo and the expected variable.
+    try:
+        return get_deploy_hmac_secret()
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"no HMAC secret for repository {repo.full_name!r}: "
+            f"{per_repo_var} is not set and the shared DEPLOY_HMAC_SECRET "
+            f"fallback is unavailable: {exc}"
+        ) from exc
 
 
 def verify_hmac_signature(
@@ -132,14 +175,29 @@ class DeployReceiverPipeline:
         store: DeployManifestStore | None = None,
         gateway_redeployer: GatewayRedeployer | None = None,
         mirror_repo: Path | None = None,
+        repo_config: DeployRepoConfig | None = None,
     ):
         self.source_repo = source_repo or self._source_repo_from_env()
-        self.deploy_runner = deploy_runner or AtomicDeployRunner()
+        # WS1: the repo this pipeline instance is configured for (registry
+        # default when unset). The default deploy runner / gateway redeployer
+        # are built from the default repo's config so release naming and the
+        # target service agree between the two writers of the convention.
+        # Explicitly injected doubles (tests) are still honored as-is.
+        self.repo_config = repo_config or default_repo_config()
+        self.deploy_runner = deploy_runner or AtomicDeployRunner(
+            release_prefix=self.repo_config.release_prefix
+        )
         self.health_checker = health_checker or PostDeployHealthChecker()
         self.transitioner = transitioner or LinearDeployTransitioner()
         self.store = store or DeployManifestStore()
-        self.gateway_redeployer = gateway_redeployer or GatewayRedeployer()
+        self.gateway_redeployer = gateway_redeployer or GatewayRedeployer(
+            service=self.repo_config.target_service,
+            health_endpoints=self.repo_config.health_endpoints,
+        )
         self.mirror_repo = mirror_repo
+        # Per-repo runners/redeployers for non-default repos, built lazily.
+        self._runners: dict[str, AtomicDeployRunner] = {}
+        self._redeployers: dict[str, GatewayRedeployer] = {}
 
     @staticmethod
     def _source_repo_from_env() -> Path:
@@ -150,28 +208,85 @@ class DeployReceiverPipeline:
         the entire ~/.prismatic home tree into a deploy source, rsynced 82G
         into itself, and filled the disk.)
         """
-        raw = os.environ.get("PRISMATIC_DEPLOY_SOURCE_REPO", "").strip()
-        if not raw:
-            raise RuntimeError(
-                "PRISMATIC_DEPLOY_SOURCE_REPO is not set: the deploy receiver "
-                "refuses to start without an explicit deploy source repo. "
-                "Set it to a git checkout of prismatic-engine."
-            )
-        return Path(raw).expanduser()
+        return deploy_source_repo()
 
-    def refresh_repo_mirror(self) -> dict[str, Any]:
+    def _resolve_repo(
+        self, payload: dict[str, Any], repo_config: DeployRepoConfig | None
+    ) -> DeployRepoConfig:
+        """Route a deploy payload to its repo config (WS1).
+
+        Explicit ``repo_config`` wins (internal callers); otherwise the
+        payload's ``repository`` field (``owner/repo``) is looked up in the
+        registry -- an unknown repo raises :class:`UnknownRepoError`. A
+        payload with no ``repository`` field falls back to this pipeline's
+        configured repo (direct/internal callers only; the HTTP intake
+        fail-closes on a missing field before reaching here).
+        """
+        if repo_config is not None:
+            return repo_config
+        repository = payload.get("repository")
+        if repository:
+            return load_repo_registry().get(str(repository))
+        return self.repo_config
+
+    def _runner_for(self, repo: DeployRepoConfig) -> AtomicDeployRunner:
+        """Atomic deploy runner for one repo (built lazily, cached)."""
+        if repo.full_name == self.repo_config.full_name:
+            return self.deploy_runner
+        if repo.full_name not in self._runners:
+            from pe.deploy.config import release_symlink_path, versions_dir
+
+            self._runners[repo.full_name] = AtomicDeployRunner(
+                versions_dir=versions_dir(),
+                release_symlink=release_symlink_path(repo.release_prefix),
+                release_prefix=repo.release_prefix,
+                dry_run=self.deploy_runner.dry_run,
+            )
+        return self._runners[repo.full_name]
+
+    def _source_repo_for(self, repo: DeployRepoConfig) -> Path:
+        """Source checkout a deploy builds from (WS1).
+
+        The default repo builds from the explicit ``PRISMATIC_DEPLOY_SOURCE_REPO``
+        checkout (fail-fast when unset, pre-WS1 behavior). An additional repo
+        has no configured source checkout, so it builds from its own persistent
+        mirror -- the mirror timer keeps it tracking origin/main.
+        """
+        if repo.full_name == self.repo_config.full_name:
+            return self.source_repo
+        return repo.mirror_dir
+
+    def _redeployer_for(self, repo: DeployRepoConfig) -> GatewayRedeployer:
+        """Gateway redeployer for one repo (built lazily, cached)."""
+        if repo.full_name == self.repo_config.full_name:
+            return self.gateway_redeployer
+        if repo.full_name not in self._redeployers:
+            self._redeployers[repo.full_name] = GatewayRedeployer(
+                service=repo.target_service,
+                health_endpoints=repo.health_endpoints,
+            )
+        return self._redeployers[repo.full_name]
+
+    def refresh_repo_mirror(
+        self, repo: DeployRepoConfig | None = None
+    ) -> dict[str, Any]:
         """Best-effort ``git fetch origin --prune`` of the persistent repo mirror.
 
         Event-based freshness: a successful deploy means origin/main moved, so
         pull the mirror in now instead of waiting for the 15-minute systemd
         timer (which remains the authoritative drift backstop).
 
+        The mirror is the *routed* repo's (WS1): an explicitly injected
+        ``mirror_repo`` wins (test seam), then the routed repo's
+        ``mirror_dir``, which defaults to ``~/.prismatic/repos/<owner>/<repo>``.
+
         Fail-closed: this never raises. Every failure is logged and returned
         in the result dict; the deploy itself is unaffected.
         """
+        routed = repo or self.repo_config
         mirror = self.mirror_repo
         if mirror is None:
-            mirror = Path.home() / MIRROR_REPO_RELATIVE
+            mirror = routed.mirror_dir
         if not mirror.is_dir():
             logger.warning(
                 "Repo mirror %s not present; skipping refresh (timer owns creation)",
@@ -200,13 +315,71 @@ class DeployReceiverPipeline:
         logger.info("Repo mirror refreshed after successful deploy: %s", mirror)
         return {"refreshed": True, "reason": "fetch-ok"}
 
+    def _fail_closed_unknown_repo(
+        self,
+        payload: dict[str, Any],
+        repository: str,
+        reason: str,
+        now_iso: str,
+        start_time: float,
+    ) -> DeployRecord:
+        """Fail-closed record for a trigger naming an unregistered repo (WS1).
+
+        The deploy is refused before any side effect; the refusal is recorded
+        and alert-logged as ``PostMergeDeployFailed`` naming the repo, so a
+        misconfigured trigger can never silently no-op.
+        """
+        pr_sha = str(payload.get("pr_sha", ""))
+        duration_ms = int((time.time() - start_time) * 1000)
+        failure_reason = f"refused: unknown repository {repository!r}: {reason}"
+        record = DeployRecord(
+            deploy_id=f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-refused",
+            pr_sha=pr_sha,
+            pr_number=int(payload.get("pr_number", 0)),
+            pr_title=str(payload.get("pr_title", "")),
+            merged_at=payload.get("merged_at", now_iso),
+            deployed_at=now_iso,
+            deployer=str(payload.get("deployer", "github-action")),
+            repository=repository,
+            duration_ms=duration_ms,
+            success=False,
+            failure_reason=failure_reason,
+        )
+        self.store.record_deploy(record)
+        logger.error("deploy REFUSED: %s", failure_reason)
+        try:
+            emit_deploy_alert(
+                "PostMergeDeployFailed",
+                "critical",
+                f"deploy refused: unknown repository {repository}",
+                f"deploy_id={record.deploy_id} repository={repository} "
+                f"failure_reason={failure_reason[:300]}",
+            )
+        except Exception as exc:  # pragma: no cover - emit never raises
+            logger.warning("deploy-alerts: refusal emit failed: %s", exc)
+        return record
+
     def process_deploy(
         self,
         payload: dict[str, Any],
+        repo_config: DeployRepoConfig | None = None,
     ) -> DeployRecord:
         """Process incoming deploy request payload."""
         start_time = time.time()
         now_iso = datetime.now(timezone.utc).isoformat()
+
+        # WS1: route the trigger to its repo config. An unknown repo is
+        # fail-closed (refused record + PostMergeDeployFailed naming it).
+        try:
+            repo = self._resolve_repo(payload, repo_config)
+        except UnknownRepoError as exc:
+            return self._fail_closed_unknown_repo(
+                payload,
+                str(payload.get("repository", "")),
+                str(exc),
+                now_iso,
+                start_time,
+            )
 
         pr_sha = str(payload.get("pr_sha", ""))
         pr_number = int(payload.get("pr_number", 0))
@@ -214,13 +387,19 @@ class DeployReceiverPipeline:
         deployer = str(payload.get("deployer", "github-action"))
         commits = payload.get("commits", [])
 
+        # The deploy runner for the routed repo (default repo: the injected
+        # runner, preserving every existing test double).
+        runner = self._runner_for(repo)
+        redeployer = self._redeployer_for(repo)
+        source_repo_for = self._source_repo_for(repo)
+
         # Fail-closed dry-run gate: evaluate BEFORE any side effect. A dry run
         # must produce zero deployment side effects (no release dir, no symlink
         # move, no gateway redeploy, no Linear transitions, no mirror refresh).
         # Any truthy dry_run value means "do not deploy" -- ambiguity resolves
         # to no-deploy. (Repair 2026-09-22: the flag was previously read only
         # AFTER deploy() had already run, so a signed dry-run payload deployed.)
-        is_dry_run = self.deploy_runner.dry_run or bool(payload.get("dry_run", False))
+        is_dry_run = runner.dry_run or bool(payload.get("dry_run", False))
         if is_dry_run:
             duration_ms = int((time.time() - start_time) * 1000)
             record = DeployRecord(
@@ -231,8 +410,9 @@ class DeployReceiverPipeline:
                 merged_at=payload.get("merged_at", now_iso),
                 deployed_at=now_iso,
                 deployer=deployer,
+            repository=repo.full_name,
                 version_dir="",
-                release_symlink=str(self.deploy_runner.release_symlink),
+                release_symlink=str(runner.release_symlink),
                 health_check={
                     "passed": True,
                     "checks": {},
@@ -256,8 +436,8 @@ class DeployReceiverPipeline:
             return record
 
         # Step 1: Execute atomic deploy
-        success, version_dir, err_msg = self.deploy_runner.deploy(
-            source_repo=self.source_repo,
+        success, version_dir, err_msg = runner.deploy(
+            source_repo=source_repo_for,
             pr_sha=pr_sha,
             branch=payload.get("ref", "main"),
         )
@@ -266,8 +446,8 @@ class DeployReceiverPipeline:
         # A merge to main must redeploy the RUNNING gateway, not just record it.
         gateway_info: dict[str, Any] = {}
         if success and not is_dry_run:
-            gw_res = self.gateway_redeployer.redeploy(
-                pr_sha=pr_sha, repo=self.source_repo
+            gw_res = redeployer.redeploy(
+                pr_sha=pr_sha, repo=source_repo_for, repo_config=repo
             )
             gateway_info = gw_res.to_dict()
             if gw_res.skipped:
@@ -291,7 +471,7 @@ class DeployReceiverPipeline:
         # Both are recorded in failure_reason.
         health_res = self.health_checker.check(
             version_dir=version_dir,
-            release_symlink=self.deploy_runner.release_symlink,
+            release_symlink=runner.release_symlink,
             dry_run=is_dry_run,
         )
 
@@ -323,8 +503,9 @@ class DeployReceiverPipeline:
             merged_at=payload.get("merged_at", now_iso),
             deployed_at=now_iso,
             deployer=deployer,
+            repository=repo.full_name,
             version_dir=str(version_dir),
-            release_symlink=str(self.deploy_runner.release_symlink),
+            release_symlink=str(runner.release_symlink),
             health_check=health_res,
             linear_transitions=transitions,
             gateway_deploy=gateway_info,
@@ -339,7 +520,7 @@ class DeployReceiverPipeline:
         # failure is logged in the record but never fails the deploy itself;
         # the timer stays as the backstop.
         if success and not is_dry_run:
-            record.mirror_refresh = self.refresh_repo_mirror()
+            record.mirror_refresh = self.refresh_repo_mirror(repo)
         elif is_dry_run:
             record.mirror_refresh = {"refreshed": False, "reason": "skipped: dry-run"}
         else:
@@ -549,23 +730,69 @@ def create_deploy_receiver_app() -> Any:
     ) -> Dict[str, Any]:
         body_bytes = await request.body()
 
-        # Verify HMAC signature (§16.8 anti-pattern #3)
-        if not verify_hmac_signature(body_bytes, x_hub_signature_256):
-            raise HTTPException(
-                status_code=401, detail="Invalid or missing HMAC signature"
-            )
-
+        # Parse first: the payload's ``repository`` field selects the repo
+        # config (WS1), and the per-repo HMAC secret cannot be resolved
+        # without it.
         try:
             payload = json.loads(body_bytes.decode("utf-8"))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        # Fail-closed routing: a trigger without a repository field is
+        # refused -- the receiver never guesses which repo a deploy is for.
+        repository = payload.get("repository")
+        if not repository or not isinstance(repository, str):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "payload is missing the required 'repository' field "
+                    "(owner/repo); refusing to route an unidentified deploy"
+                ),
+            )
+
+        # Fail-closed: unknown repos are refused loudly and alert-logged as
+        # PostMergeDeployFailed naming the repo (never silently skipped).
+        registry = load_repo_registry()
+        try:
+            repo = registry.get(repository)
+        except UnknownRepoError as exc:
+            logger.error("deploy trigger refused: %s", exc)
+            try:
+                emit_deploy_alert(
+                    "PostMergeDeployFailed",
+                    "critical",
+                    f"deploy trigger refused: unknown repository {repository}",
+                    f"repository={repository} reason=unknown-repo-not-in-registry",
+                )
+            except Exception:  # pragma: no cover - emit never raises
+                logger.warning("deploy-alerts: refusal emit failed")
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown repository {repository!r}: not in the deploy registry",
+            )
+
+        # Per-repo HMAC secret (shared DEPLOY_HMAC_SECRET fallback). A routed
+        # repo with no usable secret is a loud refusal, never a skip.
+        try:
+            hmac_secret = get_repo_hmac_secret(repo)
+        except RuntimeError as exc:
+            logger.error(
+                "deploy trigger for %s refused: %s", repository, exc
+            )
+            raise HTTPException(status_code=500, detail=str(exc))
+
+        # Verify HMAC signature (§16.8 anti-pattern #3)
+        if not verify_hmac_signature(body_bytes, x_hub_signature_256, secret=hmac_secret):
+            raise HTTPException(
+                status_code=401, detail="Invalid or missing HMAC signature"
+            )
 
         # The deploy is blocking; run it in a worker thread so /health stays
         # responsive during deploys, and fail loudly on an overall timeout
         # instead of hanging the workflow forever.
         try:
             record = await asyncio.wait_for(
-                asyncio.to_thread(pipeline.process_deploy, payload),
+                asyncio.to_thread(pipeline.process_deploy, payload, repo),
                 timeout=DEPLOY_TIMEOUT_S,
             )
         except asyncio.TimeoutError:

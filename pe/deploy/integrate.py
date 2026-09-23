@@ -24,6 +24,12 @@ from pathlib import Path
 
 from prismatic.integrate import IntegratePhase
 
+from pe.deploy.config import (
+    DEFAULT_RELEASE_PREFIX,
+    release_symlink_path,
+    versions_dir,
+)
+
 logger = logging.getLogger(__name__)
 
 #: Env var naming the git checkout deploys are built from. The receiver unit
@@ -58,22 +64,19 @@ RSYNC_EXCLUDES = (
 
 def default_versions_dir() -> Path:
     """Resolve base versioned releases directory (~/.prismatic/versions)."""
-    env_dir = os.environ.get("PRISMATIC_VERSIONS_DIR")
-    if env_dir:
-        return Path(env_dir).expanduser()
-    p = Path("~/.prismatic/versions").expanduser()
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return versions_dir()
 
 
-def default_releases_symlink() -> Path:
-    """Resolve release symlink path (~/.prismatic/releases/prismatic-engine)."""
-    env_path = os.environ.get("PRISMATIC_RELEASE_SYMLINK")
-    if env_path:
-        return Path(env_path).expanduser()
-    p = Path("~/.prismatic/releases/prismatic-engine").expanduser()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+def default_releases_symlink(
+    release_prefix: str = DEFAULT_RELEASE_PREFIX,
+) -> Path:
+    """Resolve release symlink path.
+
+    ``$PRISMATIC_RELEASE_SYMLINK`` wins when set; otherwise
+    ``~/.prismatic/releases/<release_prefix>`` -- one symlink per repo, so
+    two repos' releases never collide (WS1).
+    """
+    return release_symlink_path(release_prefix)
 
 
 class AtomicDeployRunner:
@@ -84,9 +87,15 @@ class AtomicDeployRunner:
         versions_dir: Path | None = None,
         release_symlink: Path | None = None,
         dry_run: bool = False,
+        release_prefix: str | None = None,
     ):
+        # WS1: release naming is keyed per repo (default: prismatic-engine,
+        # i.e. exactly today's behavior when unset).
+        self.release_prefix = release_prefix or DEFAULT_RELEASE_PREFIX
         self.versions_dir = versions_dir or default_versions_dir()
-        self.release_symlink = release_symlink or default_releases_symlink()
+        self.release_symlink = release_symlink or default_releases_symlink(
+            self.release_prefix
+        )
         self.dry_run = dry_run
 
     # ------------------------------------------------------------------
@@ -191,7 +200,7 @@ class AtomicDeployRunner:
         Returns (success, version_dir_path, error_message).
         """
         sha_short = pr_sha[:12] if pr_sha else str(uuid.uuid4())[:8]
-        target_version_dir = self.versions_dir / f"prismatic-engine-{sha_short}"
+        target_version_dir = self.versions_dir / f"{self.release_prefix}-{sha_short}"
 
         if self.dry_run:
             logger.info("DRY RUN: would deploy to %s", target_version_dir)

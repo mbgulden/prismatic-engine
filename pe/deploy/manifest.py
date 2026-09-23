@@ -6,12 +6,13 @@ Corresponds to §5.2 of okf-docs-workspace-deploy-v1.md.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from pe.deploy.config import deploy_db_path
 
 
 def default_deploy_db_path() -> Path:
@@ -22,18 +23,7 @@ def default_deploy_db_path() -> Path:
     2. ~/.prismatic/db/deploy_records.json
     3. ./prismatic_state/deploy_records.json (fallback)
     """
-    env_path = os.environ.get("PRISMATIC_DEPLOY_DB")
-    if env_path:
-        return Path(env_path).expanduser()
-
-    db_dir = Path("~/.prismatic/db").expanduser()
-    if db_dir.exists() or db_dir.parent.exists():
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return db_dir / "deploy_records.json"
-
-    fallback = Path("./prismatic_state")
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback / "deploy_records.json"
+    return deploy_db_path()
 
 
 @dataclass
@@ -47,6 +37,7 @@ class DeployRecord:
     merged_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     deployed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     deployer: str = "github-action"
+    repository: str = ""
     version_dir: str = ""
     release_symlink: str = ""
     health_check: dict[str, Any] = field(default_factory=dict)
@@ -71,6 +62,7 @@ class DeployRecord:
             merged_at=d.get("merged_at", datetime.now(timezone.utc).isoformat()),
             deployed_at=d.get("deployed_at", datetime.now(timezone.utc).isoformat()),
             deployer=d.get("deployer", "github-action"),
+            repository=d.get("repository", ""),
             version_dir=d.get("version_dir", ""),
             release_symlink=d.get("release_symlink", ""),
             health_check=d.get("health_check", {}),
@@ -99,8 +91,10 @@ class DeployManifestStore:
         data = [r.to_dict() for r in records]
         self.db_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def list_deploys(self, limit: int = 50) -> list[DeployRecord]:
-        """List recent deploy records."""
+    def list_deploys(
+        self, limit: int = 50, repository: str | None = None
+    ) -> list[DeployRecord]:
+        """List recent deploy records, optionally filtered to one repo (WS1)."""
         if not self.db_path.exists():
             return []
 
@@ -108,6 +102,8 @@ class DeployManifestStore:
             raw = json.loads(self.db_path.read_text(encoding="utf-8"))
             if isinstance(raw, list):
                 records = [DeployRecord.from_dict(d) for d in raw]
+                if repository is not None:
+                    records = [r for r in records if r.repository == repository]
                 return sorted(records, key=lambda r: r.deployed_at, reverse=True)[:limit]
         except Exception:
             pass
