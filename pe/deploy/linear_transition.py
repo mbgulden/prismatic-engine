@@ -10,12 +10,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from pe.deploy.config import linear_transitions_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,7 @@ MAX_TRANSITIONS_PER_MINUTE = 10
 
 def default_linear_transitions_db_path() -> Path:
     """Resolve JSON storage path for Linear transitions (~/.prismatic/db/linear_transitions.json)."""
-    env_path = os.environ.get("PRISMATIC_LINEAR_TRANSITIONS_DB")
-    if env_path:
-        return Path(env_path).expanduser()
-    p = Path("~/.prismatic/db/linear_transitions.json").expanduser()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+    return linear_transitions_db_path()
 
 
 class LinearTransitionsStore:

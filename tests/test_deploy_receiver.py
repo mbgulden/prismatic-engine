@@ -203,7 +203,7 @@ class _StubGatewayRedeployer:
             success=success, skipped=skipped, reason=reason, pr_sha="t" * 40
         )
 
-    def redeploy(self, pr_sha="", repo=None, dry_run=False):
+    def redeploy(self, pr_sha="", repo=None, dry_run=False, repo_config=None):
         return self._res
 
 

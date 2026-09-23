@@ -173,6 +173,45 @@ def _print_native_components(report: DoctorReport) -> None:
         )
 
 
+def _print_deploy(report: DoctorReport) -> None:
+    """Print the [Deploy] section."""
+    d = report.deploy
+    print("\n[Deploy] Post-merge deploy plane...")
+    if not d.installed:
+        print("  Status: not installed (no deploy layout under ~/.prismatic)")
+        if d.error:
+            print(f"  Note: {d.error}")
+        return
+    total_dirs = len(d.layout_dirs_ok) + len(d.layout_dirs_missing)
+    print(f"  Layout: {d.state_dir} ({len(d.layout_dirs_ok)}/{total_dirs} dirs)")
+    for missing in d.layout_dirs_missing:
+        print(f"    ✗ missing dir: {missing}")
+    r_unit = "✓ installed" if d.receiver_unit_installed else "✗ MISSING"
+    g_unit = "✓ installed" if d.gateway_unit_installed else "✗ MISSING"
+    print(f"  Receiver unit: {r_unit}")
+    print(f"  Gateway unit: {g_unit}")
+    listening = "✓ listening" if d.receiver_listening else "- not listening"
+    print(f"  Receiver port {d.receiver_port}: {listening}")
+    hmac = "✓ set" if d.hmac_secret_set else "✗ MISSING"
+    print(f"  HMAC secret: {hmac}")
+    for repo in d.repos:
+        if repo.secret_configured:
+            secret = "explicit"
+        elif repo.shared_secret_fallback:
+            secret = "shared"
+        else:
+            secret = "✗ MISSING"
+        mirror = "✓" if repo.mirror_present else "✗"
+        fetch = "✓" if repo.fetch_unit_installed else "✗"
+        print(
+            f"  Repo {repo.full_name}: mirror {mirror}, fetch unit {fetch}, secret {secret}"
+        )
+        if repo.remediation:
+            print(f"    Remediation: {repo.remediation}")
+    if d.error:
+        print(f"  Error: {d.error}")
+
+
 def _print_capabilities(report: DoctorReport) -> None:
     """Print the [Capabilities] section."""
     print("\n[Capabilities] Verifying registered capabilities...")
@@ -226,6 +265,7 @@ def run(args: Any) -> int:
 
     _print_native_components(report)
     _print_capabilities(report)
+    _print_deploy(report)
 
     print("\nDiagnostics complete.")
     return EXIT_ERROR if report.verdict == "ERROR" else EXIT_OK

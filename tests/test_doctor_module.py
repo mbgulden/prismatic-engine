@@ -120,6 +120,7 @@ class TestDoctorPureFunction(unittest.TestCase):
                 "providers",
                 "capabilities",
                 "native_components",
+                "deploy",
                 "verdict",
                 "acceptance_authority",
                 "required_providers",
