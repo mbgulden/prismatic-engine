@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly learn-loop self-review timer
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target

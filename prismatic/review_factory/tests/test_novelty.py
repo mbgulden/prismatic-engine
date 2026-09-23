@@ -501,3 +501,21 @@ def test_page_names_release_authority(tmp_path):
         "release authority" in page["top_signals"][-1]
         and "mbgulden" in page["top_signals"][-1]
     )
+
+
+# ── wiring: disabled audit row carries the real candidate id (§2.1) ───
+
+
+def test_disabled_audit_row_carries_candidate_id(tmp_path):
+    det = _detector(tmp_path)  # shipped state: enabled: false
+    result = det.evaluate(_familiar_input(candidate_id="review-job-42"))
+    assert result.state == STATE_DISABLED
+    assert result.candidate_id == "review-job-42"
+    # the emitted audit row is joinable back to the job (was "" before)
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "novelty-audit.jsonl").read_text().splitlines()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["state"] == STATE_DISABLED
+    assert rows[0]["candidate_id"] == "review-job-42"
