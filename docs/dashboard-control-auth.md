@@ -92,6 +92,39 @@ Malformed native-cron JSON is not treated as `run`; it still requires the
 default `operator` role and is then handled normally by FastAPI/the route. This
 preserves existing validation behavior after authorization succeeds.
 
+## Portal Phase 1: auth providers and API tokens
+
+The credential file above still works exactly as before and is evaluated
+first. Two additional subject kinds are accepted, in order:
+
+1. **Portal API tokens** (`Authorization: Bearer <token>`): revocable tokens
+   minted via `POST /api/tokens`, scoped to the `viewer` or `operator` portal
+   role. Secrets are stored as SHA-256 digests in
+   `$PRISMATIC_STATE_DIR/db/portal_tokens.db` (mode 0600) and are shown only
+   once, at creation. A token is valid only on the instance that minted it.
+   `viewer` passes read-only routes and is rejected (403) on any protected
+   route; `operator` implies the `operator`/`approver`/`executor` control
+   roles. Tokens can never mint tokens.
+2. **Auth-provider identities**: the configured provider
+   (`prismatic.gateway.auth_providers`) establishes identity per request --
+   `cloudflare-access` (edge email header), `basic-auth` (instance users
+   file), `tailnet-only` (Tailscale peer), `localhost-only` (loopback) --
+   and the instance's `identity_roles` mapping (`$PRISMATIC_STATE_DIR/instance.json`)
+   maps that identity to `viewer` / `operator` / `admin`. The portal never
+   hard-codes a provider; the default (`cloudflare-access`, no mapping) keeps
+   the historical posture unchanged.
+
+The provider is chosen at install time:
+`python -m pe.deploy.install --auth-provider <name> --admin-identities <subjects>`,
+persisted to `instance.json` by the `auth` install step. Existing instances
+can be managed without reinstalling via `python -m pe.deploy.instance`
+(`show`, `set-provider`, `grant <subject> <role>`, `revoke <subject>`).
+
+`GET /api/tokens`, `POST /api/tokens`, and `DELETE /api/tokens/{id}` require
+the `admin` portal role (granted only via the identity mapping) and are
+managed from the dashboard Settings tab. On success the middleware also sets
+`request.state.portal_roles` and `request.state.auth_provider` for audit use.
+
 ## Operational validation
 
 Before enabling a token for a client, validate in a non-production environment:

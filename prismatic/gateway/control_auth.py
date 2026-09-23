@@ -4,6 +4,14 @@ This module deliberately performs no configuration reads at import time.  The
 credential file is opened and validated for every protected request so changes
 (including replacement, permission changes, and removal) take effect without a
 process restart.
+
+Portal Phase 1 extends this enforcement point (it is not replaced): in
+addition to the control credential file, a request may authenticate with a
+revocable portal API token (``prismatic.gateway.token_store``) or with an
+identity established by the configured auth provider
+(``prismatic.gateway.auth_providers``) mapped to a portal role
+(viewer/operator/admin) in the instance configuration.  The credential-file
+path is evaluated first and is behaviorally unchanged.
 """
 
 from __future__ import annotations
@@ -21,8 +29,17 @@ from typing import Final
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
+from prismatic.gateway import auth_providers as _auth_providers
+from prismatic.gateway import instance_config as _instance_config
+from prismatic.gateway.token_store import TokenStore
+
 _READ_ONLY_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS"})
 _ROLES: Final = frozenset({"operator", "approver", "executor"})
+_PORTAL_ROLES: Final = frozenset({"viewer", "operator", "admin"})
+#: Internal required-role for portal token management endpoints.
+_ADMIN_ROLE: Final = "admin"
+#: Token management API prefix (admin-only, including reads).
+_TOKEN_API_PREFIX: Final = "/api/tokens"
 _CREDENTIAL_FILE_ENV: Final = "PRISMATIC_CONTROL_AUTH_FILE"
 _MAX_CREDENTIAL_FILE_BYTES: Final = 1024 * 1024
 
@@ -38,6 +55,31 @@ class Credential:
 
 class CredentialConfigurationError(Exception):
     """An intentionally detail-free invalid-configuration signal."""
+
+
+@dataclass(frozen=True)
+class PortalSubject:
+    """One authenticated subject for a protected request."""
+
+    actor: str
+    control_roles: frozenset[str]
+    portal_roles: frozenset[str]
+    provider: str | None = None
+
+
+def _portal_roles_to_control_roles(portal_roles: frozenset[str]) -> frozenset[str]:
+    """Expand portal roles to the internal control roles they imply.
+
+    ``viewer`` implies nothing (read-only routes need no role); ``operator``
+    implies the control-plane roles; ``admin`` additionally implies token
+    management.
+    """
+    granted: set[str] = set()
+    if "operator" in portal_roles:
+        granted |= {"operator", "approver", "executor"}
+    if "admin" in portal_roles:
+        granted |= {"operator", "approver", "executor", _ADMIN_ROLE}
+    return frozenset(granted)
 
 
 def _object_without_duplicate_keys(
@@ -215,6 +257,11 @@ async def required_role(request: Request) -> str | None:
     """Classify a request, parsing native-cron JSON without consuming it."""
 
     path = request.url.path
+    # Portal token management is admin-only, including reads: classify
+    # before the broad read-only exemption below.
+    if path == _TOKEN_API_PREFIX or path.startswith(_TOKEN_API_PREFIX + "/"):
+        return _ADMIN_ROLE
+
     # Task-admission rows expose producer/worktree control-plane coordinates.
     # Protect readback as operator data before the broad read-only exemption.
     if path == "/api/dashboard/task-admissions" or path.startswith(
@@ -275,11 +322,110 @@ async def required_role(request: Request) -> str | None:
     return "operator"
 
 
-def _unauthorized() -> JSONResponse:
+def _authenticate_portal_token(request: Request) -> PortalSubject | None:
+    """Authenticate a revocable portal API token (P0 #5).
+
+    Returns None for any failure: missing/unreadable store, unknown secret,
+    revoked or expired token, or a token minted on another instance.
+    """
+    presented = _bearer_token(request)
+    if presented is None:
+        return None
+    try:
+        state_dir = _instance_config.state_dir()
+        config = _instance_config.load_instance_config(state_dir)
+        if not config.instance_id:
+            return None
+        store = TokenStore.for_state_dir(state_dir, config.instance_id)
+        record = store.verify(presented)
+    except Exception:
+        return None
+    if record is None:
+        return None
+    try:
+        store.touch_last_used(record.id)
+    except Exception:
+        pass
+    return PortalSubject(
+        actor=f"portal-token:{record.name}",
+        control_roles=frozenset(),
+        portal_roles=frozenset({record.role}),
+        provider="portal-token",
+    )
+
+
+async def _authenticate_provider_identity(
+    request: Request,
+) -> tuple[PortalSubject | None, str]:
+    """Establish identity via the configured auth provider (P0 #7).
+
+    Returns (subject, www_authenticate_challenge).  Any provider failure --
+    unknown provider name, missing users file, whois outage -- fails closed
+    with no identity.
+    """
+    challenge = "Bearer"
+    try:
+        state_dir = _instance_config.state_dir()
+        config = _instance_config.load_instance_config(state_dir)
+        provider = _auth_providers.get_provider(config.auth_provider, state_dir)
+        challenge = provider.challenge
+        identity = await provider.authenticate(request)
+    except Exception:
+        return None, challenge
+    if identity is None:
+        return None, challenge
+    role = config.role_for(identity.subject)
+    if role is None or role not in _PORTAL_ROLES:
+        # An established identity with no mapped role grants nothing.
+        return None, challenge
+    return (
+        PortalSubject(
+            actor=f"{identity.provider}:{identity.subject}",
+            control_roles=frozenset(),
+            portal_roles=frozenset({role}),
+            provider=identity.provider,
+        ),
+        challenge,
+    )
+
+
+async def _resolve_subject(request: Request) -> tuple[PortalSubject | None, str]:
+    """Resolve the request's subject, preserving the credential-file path.
+
+    Order: (1) control credential file -- evaluated first, behaviorally
+    unchanged; (2) portal API token; (3) auth-provider identity mapped to a
+    portal role.  The challenge string suits the configured provider.
+    """
+    challenge = "Bearer"
+    try:
+        credentials = _load_credentials()
+    except Exception:
+        # Configuration/read failures stay indistinguishable from absent
+        # credentials here; the token/provider paths below still run so an
+        # instance that moved off the credential file keeps working.
+        credentials = ()
+    if credentials:
+        credential = _authenticate(request, credentials)
+        if credential is not None:
+            return (
+                PortalSubject(
+                    actor=credential.actor,
+                    control_roles=credential.roles,
+                    portal_roles=frozenset(),
+                ),
+                challenge,
+            )
+    token_subject = _authenticate_portal_token(request)
+    if token_subject is not None:
+        return token_subject, challenge
+    return await _authenticate_provider_identity(request)
+
+
+def _unauthorized(challenge: str = "Bearer") -> JSONResponse:
     return JSONResponse(
         {"detail": "control authorization required"},
         status_code=401,
-        headers={"WWW-Authenticate": "Bearer"},
+        headers={"WWW-Authenticate": challenge},
     )
 
 
@@ -292,22 +438,22 @@ async def control_authorization_middleware(
     if role is None:
         return await call_next(request)
 
-    try:
-        credentials = _load_credentials()
-    except Exception:
-        # Configuration/read failures are deliberately indistinguishable from
-        # absent credentials and must never turn the boundary into a 500.
-        return _unauthorized()
+    subject, challenge = await _resolve_subject(request)
+    if subject is None:
+        # Absent/invalid credentials must never turn the boundary into a 500.
+        return _unauthorized(challenge)
 
-    credential = _authenticate(request, credentials)
-    if credential is None:
-        return _unauthorized()
-    if role not in credential.roles:
+    effective_roles = subject.control_roles | _portal_roles_to_control_roles(
+        subject.portal_roles
+    )
+    if role not in effective_roles:
         return JSONResponse({"detail": "insufficient control role"}, status_code=403)
 
-    request.state.control_actor = credential.actor
-    request.state.control_roles = credential.roles
+    request.state.control_actor = subject.actor
+    request.state.control_roles = subject.control_roles
     request.state.control_authorization_class = role
+    request.state.portal_roles = subject.portal_roles
+    request.state.auth_provider = subject.provider
     response = await call_next(request)
     response.headers["X-Prismatic-Control-Authorization"] = "authorized"
     response.headers["X-Prismatic-Control-Role"] = role
