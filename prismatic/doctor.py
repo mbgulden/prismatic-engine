@@ -24,6 +24,7 @@ import importlib.util
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -118,6 +119,80 @@ class CapabilityReport:
         }
 
 
+# ── Deploy plane section (WS3) ─────────────────────────────────────
+
+#: Env var overriding the systemd unit search dirs (os.pathsep-separated).
+#: Test seam; default covers user units + system units.
+DEPLOY_UNIT_DIRS_ENV_VAR = "PRISMATIC_DEPLOY_UNIT_DIRS"
+
+#: Unit names the WS3 installer writes (must match pe.deploy.install).
+DEPLOY_RECEIVER_UNIT_NAME = "prismatic-deploy-receiver.service"
+DEPLOY_GATEWAY_UNIT_NAME = "prismatic-gateway.service"
+
+#: Env file (relative to the state dir) the installer generates (0600).
+DEPLOY_RECEIVER_ENV_RELATIVE = "env.d/deploy-receiver.env"
+
+#: Shared HMAC secret var (per-repo vars come from the WS1 registry).
+DEPLOY_HMAC_SECRET_VAR = "DEPLOY_HMAC_SECRET"
+
+#: Receiver port default (cf. pe.deploy.receiver.RECEIVER_PORT).
+DEPLOY_RECEIVER_PORT = 9460
+
+
+@dataclass
+class DeployRepoCheck:
+    """Per-repo deploy-plane status for one registry entry."""
+
+    full_name: str
+    mirror_present: bool = False
+    fetch_unit_installed: bool = False
+    secret_configured: bool = False  # explicit per-repo secret found
+    shared_secret_fallback: bool = False  # only the shared secret found
+    remediation: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "full_name": self.full_name,
+            "mirror_present": self.mirror_present,
+            "fetch_unit_installed": self.fetch_unit_installed,
+            "secret_configured": self.secret_configured,
+            "shared_secret_fallback": self.shared_secret_fallback,
+            "remediation": self.remediation,
+        }
+
+
+@dataclass
+class DeployReport:
+    """Deploy-plane diagnostics: layout, units, secrets, per-repo coverage."""
+
+    installed: bool = False
+    state_dir: str = ""
+    layout_dirs_ok: list[str] = field(default_factory=list)
+    layout_dirs_missing: list[str] = field(default_factory=list)
+    receiver_unit_installed: bool = False
+    gateway_unit_installed: bool = False
+    receiver_port: int = DEPLOY_RECEIVER_PORT
+    receiver_listening: bool = False
+    hmac_secret_set: bool = False
+    repos: list[DeployRepoCheck] = field(default_factory=list)
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "installed": self.installed,
+            "state_dir": self.state_dir,
+            "layout_dirs_ok": self.layout_dirs_ok,
+            "layout_dirs_missing": self.layout_dirs_missing,
+            "receiver_unit_installed": self.receiver_unit_installed,
+            "gateway_unit_installed": self.gateway_unit_installed,
+            "receiver_port": self.receiver_port,
+            "receiver_listening": self.receiver_listening,
+            "hmac_secret_set": self.hmac_secret_set,
+            "repos": [r.to_dict() for r in self.repos],
+            "error": self.error,
+        }
+
+
 @dataclass
 class DoctorReport:
     """Aggregated doctor report. The CLI layer iterates these."""
@@ -127,6 +202,7 @@ class DoctorReport:
     providers: list[ProviderReport] = field(default_factory=list)
     capabilities: list[CapabilityReport] = field(default_factory=list)
     native_components: list[CapabilityReport] = field(default_factory=list)
+    deploy: DeployReport = field(default_factory=DeployReport)
     verdict: str = "OK"  # "OK" | "WARN" | "ERROR"
     acceptance_authority: str = "native_provider_neutral_receipt"
     required_providers: list[str] = field(default_factory=list)
@@ -139,6 +215,7 @@ class DoctorReport:
             "providers": [p.to_dict() for p in self.providers],
             "capabilities": [c.to_dict() for c in self.capabilities],
             "native_components": [c.to_dict() for c in self.native_components],
+            "deploy": self.deploy.to_dict(),
             "verdict": self.verdict,
             "acceptance_authority": self.acceptance_authority,
             "required_providers": self.required_providers,
@@ -632,12 +709,14 @@ def _compute_verdict(
     capabilities: list[CapabilityReport],
     required_providers: set[str] | None = None,
     native_components: list[CapabilityReport] | None = None,
+    deploy: DeployReport | None = None,
 ) -> str:
     """Roll up the report verdict.
 
     ERROR: a required native component fails, or a provider explicitly required
     by local policy is disconnected/authentication failed.
-    WARN: any optional provider is disconnected OR any optional capability is not ok.
+    WARN: any optional provider is disconnected OR any optional capability is
+    not ok OR an installed deploy plane has failing checks.
     OK: required native components and observed optional signals are green.
     """
     for component in native_components or []:
@@ -656,7 +735,187 @@ def _compute_verdict(
     for cap in capabilities:
         if cap.status != "ok":
             return "WARN"
+    if deploy is not None and deploy.installed and not _deploy_section_ok(deploy):
+        return "WARN"
     return "OK"
+
+
+def _deploy_unit_dirs() -> list[Path]:
+    """systemd unit search dirs: user units, then system units."""
+    raw = os.environ.get(DEPLOY_UNIT_DIRS_ENV_VAR, "").strip()
+    if raw:
+        return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
+    return [
+        Path.home() / ".config" / "systemd" / "user",
+        Path("/etc/systemd/system"),
+    ]
+
+
+def _find_unit(name: str, unit_dirs: list[Path]) -> Path | None:
+    """First unit file named ``name`` under ``unit_dirs`` (observation only)."""
+    for unit_dir in unit_dirs:
+        candidate = unit_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _unit_env_files(unit_path: Path) -> list[Path]:
+    """EnvironmentFile= entries from a unit file (observation only)."""
+    files: list[Path] = []
+    try:
+        text = unit_path.read_text(encoding="utf-8")
+    except OSError:
+        return files
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("EnvironmentFile="):
+            continue
+        value = stripped.split("=", 1)[1].strip().strip("'\"").lstrip("-")
+        # Expand the common systemd specifier for the home directory.
+        value = value.replace("%h", str(Path.home()))
+        if value:
+            files.append(Path(value).expanduser())
+    return files
+
+
+def _secret_var_present(var_names: list[str], env_files: list[Path]) -> str | None:
+    """First secret var found in env or env files. Returns the NAME, never
+    the value -- secrets must not land in the report."""
+    for var in var_names:
+        if os.environ.get(var):
+            return var
+    for env_file in env_files:
+        try:
+            text = env_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key = stripped.split("=", 1)[0].strip().strip("'\"")
+            if key in var_names:
+                return key
+    return None
+
+
+def _port_listening(port: int, timeout: float = 1.0) -> bool:
+    """Whether something accepts TCP on 127.0.0.1:port (observation only)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _probe_deploy() -> DeployReport:
+    """Probe the post-merge deploy plane. Pure/observation-only.
+
+    Not-installed (no deploy layout) is a normal state, not an error --
+    the section reports installed=False and the verdict is unaffected. A
+    present-but-broken plane rolls the verdict to WARN.
+    """
+    report = DeployReport()
+    try:
+        from pe.deploy import config as deploy_config
+        from pe.deploy.install import (
+            INSTALL_MARKER_NAME,
+            LAYOUT_SUBDIRS,
+            fetch_unit_base,
+        )
+    except Exception as exc:
+        report.error = f"pe.deploy unavailable: {exc}"
+        return report
+
+    state_dir = deploy_config.state_dir()
+    report.state_dir = str(state_dir)
+    if not (state_dir / INSTALL_MARKER_NAME).is_file():
+        # Neutral: no WS3 installer layout here. Covers a fresh machine
+        # and a grandfathered pre-WS3 layout (which must not be judged by
+        # the WS3 layout). The verdict is unaffected.
+        return report
+    report.installed = True
+
+    for sub in LAYOUT_SUBDIRS:
+        if (state_dir / sub).is_dir():
+            report.layout_dirs_ok.append(sub)
+        else:
+            report.layout_dirs_missing.append(sub)
+
+    unit_dirs = _deploy_unit_dirs()
+    receiver_unit = _find_unit(DEPLOY_RECEIVER_UNIT_NAME, unit_dirs)
+    report.receiver_unit_installed = receiver_unit is not None
+    report.gateway_unit_installed = (
+        _find_unit(DEPLOY_GATEWAY_UNIT_NAME, unit_dirs) is not None
+    )
+
+    # Secret sources the receiver actually sees: the well-known env files
+    # plus EnvironmentFile= entries on the installed receiver unit.
+    env_files = [
+        state_dir / ".env",
+        state_dir / DEPLOY_RECEIVER_ENV_RELATIVE,
+    ]
+    if receiver_unit is not None:
+        env_files.extend(_unit_env_files(receiver_unit))
+
+    try:
+        registry = deploy_config.load_repo_registry()
+    except Exception as exc:
+        report.error = f"deploy repo registry unreadable: {exc}"
+        return report
+
+    default_name = registry.default().full_name
+    shared_found = _secret_var_present([DEPLOY_HMAC_SECRET_VAR], env_files)
+    for repo in registry:
+        check = DeployRepoCheck(full_name=repo.full_name)
+        mirror = repo.mirror_dir
+        check.mirror_present = (mirror / "HEAD").is_file() or (
+            mirror / ".git" / "HEAD"
+        ).is_file()
+        fetch_name = fetch_unit_base(repo.full_name, default_name) + ".service"
+        check.fetch_unit_installed = _find_unit(fetch_name, unit_dirs) is not None
+        if _secret_var_present([repo.hmac_secret_env], env_files):
+            check.secret_configured = True
+        elif shared_found:
+            check.shared_secret_fallback = True
+        else:
+            check.remediation = (
+                f"set {repo.hmac_secret_env} (or the shared "
+                f"{DEPLOY_HMAC_SECRET_VAR}) where the receiver can read it: "
+                "environment, ~/.prismatic/.env, or the receiver unit's "
+                "EnvironmentFile"
+            )
+        report.repos.append(check)
+
+    report.hmac_secret_set = shared_found is not None or any(
+        c.secret_configured for c in report.repos
+    )
+    report.receiver_port = DEPLOY_RECEIVER_PORT
+    report.receiver_listening = _port_listening(report.receiver_port)
+    return report
+
+
+def _deploy_section_ok(deploy: DeployReport) -> bool:
+    """True when an installed deploy plane has no failing checks."""
+    if (
+        deploy.error
+        or not deploy.hmac_secret_set
+        or not deploy.receiver_unit_installed
+        or not deploy.gateway_unit_installed
+        or deploy.layout_dirs_missing
+    ):
+        return False
+    return all(
+        r.mirror_present
+        and r.fetch_unit_installed
+        and (r.secret_configured or r.shared_secret_fallback)
+        for r in deploy.repos
+    )
 
 
 # ── Public API ───────────────────────────────────────────────────────
@@ -735,10 +994,12 @@ def run_doctor(
 
     report.capabilities = _probe_capabilities(capability_names)
     report.native_components = _probe_native_components()
+    report.deploy = _probe_deploy()
     report.verdict = _compute_verdict(
         report.providers,
         report.capabilities,
         explicit_required,
         report.native_components,
+        deploy=report.deploy,
     )
     return report

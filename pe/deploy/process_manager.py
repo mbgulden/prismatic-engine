@@ -70,8 +70,14 @@ class ProcessManager(ABC):
         """
 
     @abstractmethod
-    def enable(self, service: str) -> None:
-        """Enable ``service`` to start on boot. Raises ProcessManagerError."""
+    def enable(self, service: str, *, scope: str = "system") -> None:
+        """Enable ``service`` to start on boot. Raises ProcessManagerError.
+
+        ``scope`` is ``"system"`` (the default, preserving the WS2
+        behavior) or ``"user"`` (``systemctl --user enable`` for user
+        units like the deploy receiver). Unknown scopes raise
+        ProcessManagerError.
+        """
 
     @abstractmethod
     def status(self, service: str) -> dict[str, Any]:

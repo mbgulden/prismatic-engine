@@ -22,12 +22,14 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-try:
-    from prismatic.deploy.manifest import DeployManifestStore
-    from prismatic.deploy.receiver import DeployReceiverPipeline
-except ImportError:
-    from pe.deploy.manifest import DeployManifestStore  # type: ignore
-    from pe.deploy.receiver import DeployReceiverPipeline  # type: ignore
+# Canonical deploy pipeline lives in pe.deploy (WS1 registry-aware). The
+# legacy prismatic.deploy.* modules are stale copies and must not serve the
+# API -- the manual trigger has to route through the same registry as the
+# signed webhook intake.
+# noqa: E402 -- repo-root sys.path bootstrap above must run first.
+from pe.deploy.config import default_repo_full_name  # noqa: E402
+from pe.deploy.manifest import DeployManifestStore  # noqa: E402
+from pe.deploy.receiver import DeployReceiverPipeline  # noqa: E402
 
 
 def create_deploy_router() -> Any:
@@ -95,11 +97,14 @@ def create_deploy_router() -> Any:
         dry_run: bool = Query(True, description="Dry-run mode (default True per §16.8)"),
     ) -> dict[str, Any]:
         """Trigger a manual deploy (supports dry-run mode)."""
+        # WS1: route through the same repo registry as the HTTP receiver --
+        # the manual trigger always targets the default repo.
         payload = {
             "pr_sha": pr_sha,
             "pr_title": pr_title,
             "deployer": "manual:user",
             "dry_run": dry_run,
+            "repository": default_repo_full_name(),
         }
         pipeline = _pipeline()
         pipeline.deploy_runner.dry_run = dry_run

@@ -1,0 +1,14 @@
+# Repo mirror fetch — systemd timer template (WS3).
+#
+# Rendered per repo by pe.deploy.install.render_template() (UPPER_SNAKE
+# tokens in double braces). Paired with mirror-fetch.service.template.
+[Unit]
+Description=Refresh {{REPO_FULL_NAME}} deploy mirror every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit={{FETCH_SERVICE_NAME}}
+
+[Install]
+WantedBy=timers.target
