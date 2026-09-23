@@ -1063,21 +1063,25 @@ class ReviewQueue:
             except Exception:
                 pass
 
+        # Resolve the repair agent before building the context so the payload
+        # carries it (F2): resolve_assigned_agent reads agent/agent_name/
+        # target_agent keys from the payload.
+        agent = (
+            (target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred"))
+            .strip()
+            .lower()
+        )
+        if agent not in _REPAIR_DISPATCH_AGENTS:
+            logger.warning("unknown repair agent %r; falling back to fred", agent)
+            agent = "fred"
+
         context = self._repair_context(
-            review_job_id, job, failure_reason, extra_context
+            review_job_id, job, failure_reason, extra_context, target_agent=agent
         )
 
         try:
             from prismatic.ingestion_queue import enqueue_multi_channel_task
 
-            agent = (
-                (target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred"))
-                .strip()
-                .lower()
-            )
-            if agent not in _REPAIR_DISPATCH_AGENTS:
-                logger.warning("unknown repair agent %r; falling back to fred", agent)
-                agent = "fred"
             row = enqueue_multi_channel_task(
                 identifier=f"RF-REPAIR-{review_job_id[:8]}",
                 channel="review-factory",
@@ -1164,6 +1168,7 @@ class ReviewQueue:
         job: ReviewJob,
         failure_reason: str,
         extra_context: Optional[dict] = None,
+        target_agent: str = "fred",
     ) -> dict:
         """Build the repair title + payload handed to the task intake."""
         decisions = self.db.get_decisions_for_job(review_job_id)
@@ -1233,6 +1238,7 @@ class ReviewQueue:
         payload = {
             "kind": "review-factory-repair",
             "review_job_id": review_job_id,
+            "target_agent": target_agent,
             "task_id": job.task_id,
             "repository": job.repository,
             "base_commit": job.base_commit,
@@ -1636,6 +1642,28 @@ class ReviewQueue:
                     job_id,
                     attempts,
                 )
+                # F4: first-class event on the gateway event bus so exhaustion
+                # is never silent. (The Linear hook below is dead without
+                # LINEAR_API_KEY.)
+                try:
+                    from prismatic.review_factory.events import emit_rf_event
+
+                    emit_rf_event(
+                        "review_factory.repair_exhausted",
+                        {
+                            "review_job_id": job_id,
+                            "task_id": getattr(job, "task_id", ""),
+                            "repository": getattr(job, "repository", ""),
+                            "attempts": attempts,
+                            "max_attempts": max_attempts,
+                        },
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "repair_exhausted event emission failed for %s: %s",
+                        job_id,
+                        exc,
+                    )
                 try:
                     from prismatic.review_factory.linear_hooks import (
                         LinearReviewHooks,
