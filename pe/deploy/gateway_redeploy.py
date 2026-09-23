@@ -55,6 +55,11 @@ from typing import Any
 from pe.deploy.deploy_alerts import emit_deploy_alert
 from pe.deploy.process_manager import ProcessManager, ProcessManagerError
 from pe.deploy.process_manager_systemd import SystemdProcessManager
+from pe.deploy.config import (
+    DEFAULT_HEALTH_ENDPOINTS,
+    DEFAULT_RELEASE_PREFIX,
+    DeployRepoConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +132,7 @@ class GatewayRedeployer:
         extras: str | None = None,
         systemctl_bin: str = "/usr/bin/systemctl",
         manager: ProcessManager | None = None,
+        health_endpoints: tuple[tuple[str, str], ...] | None = None,
     ):
         home_p = Path(home).expanduser() if home else Path.home()
         self.prismatic = home_p / ".prismatic"
@@ -147,6 +153,8 @@ class GatewayRedeployer:
         self.extras = extras or os.environ.get(
             "PRISMATIC_GATEWAY_EXTRAS", DEFAULT_EXTRAS
         )
+        # WS1: per-repo HTTP health endpoints; default == pre-WS1 behavior.
+        self.health_endpoints = health_endpoints or DEFAULT_HEALTH_ENDPOINTS
         self.systemctl_bin = systemctl_bin
         self._process_manager = (
             manager
@@ -242,9 +250,18 @@ class GatewayRedeployer:
     # ------------------------------------------------------------------
 
     def redeploy(
-        self, pr_sha: str, repo: Path | str, dry_run: bool = False
+        self,
+        pr_sha: str,
+        repo: Path | str,
+        dry_run: bool = False,
+        repo_config: DeployRepoConfig | None = None,
     ) -> GatewayDeployResult:
-        """Run the full atomic redeploy. Never raises; result carries all."""
+        """Run the full atomic redeploy. Never raises; result carries all.
+
+        ``repo_config`` (WS1) supplies the release-naming prefix and the
+        health endpoints for the routed repo; unset means the default repo's
+        values, i.e. exactly today's behavior.
+        """
         started = time.time()
         res = GatewayDeployResult(pr_sha=str(pr_sha or ""))
         if dry_run:
@@ -253,9 +270,15 @@ class GatewayRedeployer:
             res.reason = "dry-run: gateway redeploy skipped"
             res.duration_ms = int((time.time() - started) * 1000)
             return res
+        release_prefix = repo_config.release_prefix if repo_config else DEFAULT_RELEASE_PREFIX
         try:
             with self._locked():
-                res = self._redeploy_locked(str(pr_sha or ""), Path(repo), started)
+                res = self._redeploy_locked(
+                    str(pr_sha or ""),
+                    Path(repo),
+                    started,
+                    release_prefix=release_prefix,
+                )
         except DeployBusy as exc:
             res.success = False
             res.skipped = True
@@ -268,7 +291,11 @@ class GatewayRedeployer:
     # ------------------------------------------------------------------
 
     def _redeploy_locked(
-        self, pr_sha: str, repo: Path, started: float
+        self,
+        pr_sha: str,
+        repo: Path,
+        started: float,
+        release_prefix: str = DEFAULT_RELEASE_PREFIX,
     ) -> GatewayDeployResult:
         res = GatewayDeployResult(pr_sha=pr_sha)
         tmp = Path(tempfile.mkdtemp(prefix="gw-deploy-"))
@@ -309,11 +336,11 @@ class GatewayRedeployer:
             wheel = self._build_wheel(worktree, dist)
 
             # 6. fresh venv + install
-            venv_dir = self.venvs_dir / f"prismatic-engine-{full_sha}"
+            venv_dir = self.venvs_dir / f"{release_prefix}-{full_sha}"
             self._create_venv(venv_dir, wheel)
 
             # 7. stage immutable release dir
-            version_dir = self.releases_dir / f"prismatic-engine-{full_sha}"
+            version_dir = self.releases_dir / f"{release_prefix}-{full_sha}"
             self._stage_release(worktree, version_dir)
 
             # record previous targets for rollback + audit
@@ -381,7 +408,7 @@ class GatewayRedeployer:
             if not res.rolled_back:
                 res.reason += (
                     " | ROLLBACK FAILED -- gateway may be down. Manual recovery: "
-                    "sudo /usr/bin/systemctl restart prismatic-gateway.service ; "
+                    f"sudo /usr/bin/systemctl restart {self.service} ; "
                     "verify ~/.prismatic/current and ~/.prismatic/venv_current symlinks"
                 )
             return res
@@ -426,6 +453,13 @@ class GatewayRedeployer:
         return getattr(cp, "returncode", 1) == 0
 
     def _live_sha(self) -> str | None:
+        """Return the short SHA of the currently-live release, if any.
+
+        WS1 note: the ``current`` / ``venv_current`` live links stay shared
+        across repos (pre-WS1 behavior). Per-repo release *directories* are
+        distinct (release_prefix), which is what rollback restores; live-link
+        separation for multi-service hosts is follow-up work.
+        """
         target = self._readlink(self.current_link)
         if not target:
             return None
@@ -442,9 +476,11 @@ class GatewayRedeployer:
              "--wheel-dir", str(dist_dir), str(worktree)],
             timeout=900,
         )
-        wheels = sorted(dist_dir.glob("prismatic_engine-*.whl"))
+        # WS1: accept whatever wheel the repo's source tree builds. The
+        # default repo still produces prismatic_engine-*.whl, as before.
+        wheels = sorted(dist_dir.glob("*.whl"))
         if not wheels:
-            raise DeployFailed("wheel build produced no prismatic_engine wheel")
+            raise DeployFailed("wheel build produced no wheel")
         logger.info("built wheel %s", wheels[-1].name)
         return wheels[-1]
 
@@ -555,8 +591,7 @@ class GatewayRedeployer:
             checks["smoke_import"] = False
             details["smoke_import_error"] = str(exc)[:300]
 
-        for path, name in (("/health", "gateway_health"),
-                           ("/api/review-factory/jobs", "review_jobs")):
+        for path, name in self.health_endpoints:
             ok, detail = self._poll_http(path, timeout_s=90)
             checks[f"http_{name}"] = ok
             details[f"http_{name}_detail"] = detail
