@@ -143,7 +143,15 @@ class AtomicDeployRunner:
                 f"deploy source_repo {src} is not a git repository; refusing "
                 "to deploy from a non-repo directory"
             )
-        if not (src / "prismatic").is_dir():
+        # The prismatic/ layout check only applies to worktree checkouts of
+        # prismatic-engine itself. Routed repos deploy from their own bare
+        # mirror (which is the git dir itself), so the check is skipped for
+        # bare repositories rather than hard-coding another repo's layout.
+        bare_ok, bare_out = self._run_git(
+            "rev-parse", "--is-bare-repository", cwd=src
+        )
+        is_bare = bare_ok and bare_out.strip() == "true"
+        if not is_bare and not (src / "prismatic").is_dir():
             raise ValueError(
                 f"deploy source_repo {src} has no prismatic/ package directory"
             )
