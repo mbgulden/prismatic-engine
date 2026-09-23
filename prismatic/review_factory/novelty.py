@@ -580,6 +580,11 @@ class NoveltyDetector:
         if not self.policy.enabled:
             result = NoveltyResult(
                 state=STATE_DISABLED,
+                candidate_id=(
+                    candidate.candidate_id
+                    if isinstance(candidate.candidate_id, str)
+                    else ""
+                ),
                 policy_version=self.policy.version,
                 mode=self.policy.mode,
             )

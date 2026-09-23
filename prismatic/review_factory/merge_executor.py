@@ -38,6 +38,21 @@ from prismatic.verification.receipt_store import VerificationReceiptStore
 logger = logging.getLogger(__name__)
 
 
+def _record_learn_loop_rollback_outcome(job_id: str) -> None:
+    """Record a rolled-back merge outcome for the learn loop (wiring-only).
+
+    Fail-open: a learn-loop failure must never break the hot path. While
+    the learn-loop policy is disabled this emits one refused audit row per
+    call (the invocation evidence) and records no outcome.
+    """
+    try:
+        from prismatic.review_factory.learn_loop import LearnLoop
+
+        LearnLoop().record_outcome(job_id, "rolled_back")
+    except Exception:
+        logger.warning("learn loop record_outcome failed", exc_info=True)
+
+
 @dataclass
 class MergeResult:
     """Outcome of a merge execution."""
@@ -513,6 +528,11 @@ class MergeExecutor:
                                 "watchdog feed record_rollback failed",
                                 exc_info=True,
                             )
+                        # Learn-loop outcome record (review-factory wiring):
+                        # the auto-merge was rolled back. Same fail-open
+                        # guard as the metrics feed above — a learn-loop
+                        # failure must never break the hot path.
+                        _record_learn_loop_rollback_outcome(job.review_job_id)
                 except Exception as rollback_exc:
                     rollback_error = rollback_exc
                     logger.error(
