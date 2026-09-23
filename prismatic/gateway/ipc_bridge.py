@@ -56,6 +56,9 @@ VALID_TYPES = {
     "vcs.branch_created", "vcs.pr_opened", "vcs.pr_status", "vcs.pr_comment",
     "jules.handoff", "jules.review_started", "jules.review_completed",
     "schedule.recorded", "golden_flow_completed",
+    # Portal Phase 1 (P0 #3): deploy lifecycle, pushed by the receiver
+    # deploy pipeline (pe.deploy.deploy_events) over this bridge.
+    "deploy.started", "deploy.succeeded", "deploy.failed", "deploy.rolled_back",
 }
 
 
@@ -354,3 +357,40 @@ def send_event_via_socket(
     except (TimeoutError, OSError, json.JSONDecodeError) as exc:
         logger.debug("IPC bridge send failed: %s", exc)
         return False
+
+
+# ── Phase 1 portal forwarder ──────────────────────────────────────
+
+
+def deploy_event_ws_forwarder(broadcast):
+    """Build an EventBus handler relaying deploy.* events to /ws clients.
+
+    Portal Phase 1 (P0 #3): the gateway's own ``/ws`` endpoint is fed by
+    ad-hoc ``broadcast_ws_json`` calls today -- nothing bridges the
+    EventBus to it. Subscribing the handler this returns in the server
+    lifespan closes that gap, so deploy lifecycle events pushed by the
+    receiver over the IPC bridge reach portal ``/ws`` subscribers live.
+
+    Only ``deploy.*`` types are forwarded; every other bus event is left
+    for the existing subscribers (the :8765 ws_broadcaster, the dispatch
+    consumer). A broadcast failure is logged, never raised.
+
+    Args:
+        broadcast: async callable taking the event dict, e.g.
+            ``server.broadcast_ws_json``.
+    """
+
+    async def _forward(event) -> None:
+        event_type = getattr(event, "type", "")
+        if not isinstance(event_type, str) or not event_type.startswith("deploy."):
+            return
+        try:
+            await broadcast(event.to_dict())
+        except Exception:
+            logger.warning(
+                "deploy-event forwarder: broadcast of %s failed",
+                event_type,
+                exc_info=True,
+            )
+
+    return _forward

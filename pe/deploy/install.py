@@ -16,7 +16,10 @@ Builds a working deploy-plane install on a fresh Linux machine::
                        via the process-manager abstraction
     7. secrets       -- generated DEPLOY_HMAC_SECRET in env.d/deploy-receiver.env
                        (0600); never a shipped default
-    8. checklist     -- printed per-repo trigger setup checklist (always runs)
+    8. auth          -- auth provider selection persisted to instance.json
+                       (0600) with the identity->role mapping; basic-auth
+                       also writes auth/basic-auth-users.json (0600)
+    9. checklist     -- printed per-repo trigger setup checklist (always runs)
 
 Extends (does not fork) install.sh's flow: OS detection, config-dir
 conventions, and "print next steps" at the end. Every numbered step is
@@ -64,6 +67,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from pe.deploy import config as deploy_config
+from pe.deploy import instance as deploy_instance
 from pe.deploy.process_manager import ProcessManager, ProcessManagerError
 from pe.deploy.process_manager_systemd import SystemdProcessManager
 
@@ -86,6 +90,7 @@ STEP_FETCH_TIMER = "fetch_timer"
 STEP_VENVS = "venvs"
 STEP_UNITS = "units"
 STEP_SECRETS = "secrets"
+STEP_AUTH = "auth"
 STEP_NAMES = (
     STEP_PREREQUISITES,
     STEP_LAYOUT,
@@ -94,6 +99,7 @@ STEP_NAMES = (
     STEP_VENVS,
     STEP_UNITS,
     STEP_SECRETS,
+    STEP_AUTH,
 )
 
 #: Subdirs created under the state dir (the deploy-plane layout).
@@ -165,6 +171,9 @@ class InstallOptions:
     unit_scope: str = "user"  # "user" | "system"
     receiver_port: int = DEFAULT_RECEIVER_PORT
     gateway_port: int = DEFAULT_GATEWAY_PORT
+    auth_provider: str = deploy_instance.DEFAULT_AUTH_PROVIDER
+    admin_identities: tuple[str, ...] = ()
+    basic_auth_users: tuple[str, ...] = ()
 
 
 @dataclass
@@ -624,6 +633,65 @@ def _write_secrets(state_dir: Path, dry_run: bool) -> StepResult:
     return StepResult(STEP_SECRETS, "ok", f"wrote {env_file} (0600)")
 
 
+def _write_auth_config(
+    state_dir: Path, options: InstallOptions, dry_run: bool
+) -> StepResult:
+    """Step 8: persist the install-time auth provider selection.
+
+    Writes ``instance.json`` (0600) with the chosen provider and the
+    identity->role mapping (``--admin-identities`` become admins).  With
+    ``basic-auth``, also writes ``auth/basic-auth-users.json`` (0600, password
+    hashes only -- never plaintext).
+    """
+    provider = options.auth_provider
+    if provider not in deploy_instance.PROVIDER_NAMES:
+        raise InstallRefused(
+            f"unknown --auth-provider {provider!r} "
+            f"(valid: {', '.join(deploy_instance.PROVIDER_NAMES)})"
+        )
+    if provider == "basic-auth" and not options.basic_auth_users:
+        raise InstallRefused(
+            "basic-auth needs at least one --basic-auth-user "
+            "(password via PRISMATIC_BASIC_AUTH_PASSWORD or prompt)"
+        )
+    instance_path = deploy_instance.instance_file_path(state_dir)
+    admin_list = ", ".join(options.admin_identities) or "(none)"
+    if dry_run:
+        detail = (
+            f"write {instance_path} (0600): provider={provider}, "
+            f"admin identities={admin_list}"
+        )
+        if provider == "basic-auth":
+            detail += (
+                "; write auth/basic-auth-users.json (0600) for "
+                + ", ".join(options.basic_auth_users)
+            )
+        return StepResult(STEP_AUTH, "would-do", detail)
+    if instance_path.exists():
+        raise InstallRefused(
+            f"{instance_path} already exists: refusing to overwrite "
+            "an instance identity"
+        )
+    config = deploy_instance.new_config(
+        auth_provider=provider,
+        identity_roles={subject: "admin" for subject in options.admin_identities},
+    )
+    deploy_instance.save(config, state_dir)
+    detail = (
+        f"wrote {instance_path} (0600): provider={provider}, "
+        f"admin identities={admin_list}"
+    )
+    if provider == "basic-auth":
+        everyone = {username: "" for username in options.basic_auth_users}
+        users = {
+            username: deploy_instance.resolve_password(username, everyone)
+            for username in options.basic_auth_users
+        }
+        users_path = deploy_instance.write_basic_auth_users(users, state_dir)
+        detail += f"; wrote {users_path} (0600, password hashes only)"
+    return StepResult(STEP_AUTH, "ok", detail)
+
+
 # ---------------------------------------------------------------------------
 # Enroll-node flow (WS7)
 # ---------------------------------------------------------------------------
@@ -877,6 +945,15 @@ def run_install(
         raise InstallError(
             f"invalid unit scope {options.unit_scope!r}: 'user' or 'system'"
         )
+    if options.auth_provider not in deploy_instance.PROVIDER_NAMES:
+        raise InstallRefused(
+            f"unknown auth provider {options.auth_provider!r} "
+            f"(valid: {', '.join(deploy_instance.PROVIDER_NAMES)})"
+        )
+    if options.auth_provider == "basic-auth" and not options.basic_auth_users:
+        raise InstallRefused(
+            "basic-auth needs at least one basic_auth_user"
+        )
     unknown = set(options.skip_steps) - set(STEP_NAMES)
     if unknown:
         raise InstallError(
@@ -938,6 +1015,10 @@ def run_install(
             ),
         )
         _do(STEP_SECRETS, lambda: _write_secrets(state_dir, options.dry_run))
+        _do(
+            STEP_AUTH,
+            lambda: _write_auth_config(state_dir, options, options.dry_run),
+        )
     except InstallRefused:
         result.ok = False
         result.steps = steps
@@ -1000,6 +1081,28 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=int,
         default=DEFAULT_GATEWAY_PORT,
         help="gateway port (default: 9000)",
+    )
+    parser.add_argument(
+        "--auth-provider",
+        choices=deploy_instance.PROVIDER_NAMES,
+        default=deploy_instance.DEFAULT_AUTH_PROVIDER,
+        help="portal auth provider persisted to instance.json "
+        "(default: cloudflare-access, the historical posture)",
+    )
+    parser.add_argument(
+        "--admin-identities",
+        default="",
+        help="comma-separated identity subjects mapped to the admin portal "
+        "role (e.g. your Cloudflare Access email); written to instance.json",
+    )
+    parser.add_argument(
+        "--basic-auth-user",
+        action="append",
+        default=[],
+        dest="basic_auth_user",
+        help="basic-auth username (repeatable; requires "
+        "--auth-provider basic-auth; password via "
+        "PRISMATIC_BASIC_AUTH_PASSWORD or an interactive prompt)",
     )
 
     # WS7: enroll a tailnet node into the deploy registry. When set, the
@@ -1075,6 +1178,11 @@ def main(argv: list[str] | None = None) -> int:
         unit_scope=args.unit_scope,
         receiver_port=args.receiver_port,
         gateway_port=args.gateway_port,
+        auth_provider=args.auth_provider,
+        admin_identities=tuple(
+            s.strip() for s in args.admin_identities.split(",") if s.strip()
+        ),
+        basic_auth_users=tuple(args.basic_auth_user or ()),
     )
     try:
         result = run_install(options)
