@@ -6690,14 +6690,11 @@ async def gateway_workspace_tree(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.get("/api/deploy/status")
-async def gateway_deploy_status() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "deploy_receiver": "active",
-        "mode": "standalone",
-        "timestamp": time.time(),
-    }
+# NOTE: the canonical GET /api/deploy/status handler lives in
+# prismatic/deploy/routes.py (mounted above, so it takes precedence).
+# The duplicate stub that used to sit here returned static data and was
+# unreachable; it was removed in Portal Phase 1 (P0 #4) in favor of the
+# real implementation built by prismatic/gateway/deploy_status.py.
 
 
 # ── SwarmProof Truth Oracle & Verification API ───────────────────────────
