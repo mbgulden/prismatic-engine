@@ -3425,6 +3425,35 @@ def dispatch_issue_by_identifier(
     return dispatch_assigned_agent_event(normalize_row(row), **kwargs)
 
 
+def dispatch_repair_by_identifier(
+    identifier: str, **kwargs: Any
+) -> dict[str, Any] | None:
+    """Bounded queue drain entrypoint for review-factory repair events.
+
+    Same mechanics as dispatch_issue_by_identifier: look up the pending queue
+    row by identifier, normalize it, and dispatch to the assigned agent. The
+    repair payload carries its agent in ``target_agent``/``agent``/``agent_name``
+    keys (see ReviewQueue._repair_context), which resolve_assigned_agent picks
+    up. Idempotent: once dispatched, the row leaves 'pending' and a redelivery
+    resolves to no_op.
+    """
+    from .ingestion_queue import QUEUE_TABLE, _connect, normalize_row
+
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {QUEUE_TABLE} WHERE identifier = ? AND dispatch_status = 'pending' ORDER BY COALESCE(received_at, 0) ASC, id ASC LIMIT 1",
+            (identifier,),
+        ).fetchone()
+    if row is None:
+        return {
+            "ok": False,
+            "status": "no_op",
+            "reason": "no pending queue row for identifier",
+            "wakes": [],
+        }
+    return dispatch_assigned_agent_event(normalize_row(row), **kwargs)
+
+
 # ═══════════════════════════════════════════════════════════════
 # Process observer — fixes GRO-2979 / GRO-2978 closure gap.
 #
