@@ -1,0 +1,12 @@
+# Repo mirror fetch — systemd oneshot service template (WS3).
+#
+# Rendered per repo by pe.deploy.install.render_template() (UPPER_SNAKE
+# tokens in double braces). Paired with mirror-fetch.timer.template.
+# The 15-minute timer is the drift backstop; the receiver also fetches
+# before SHA validation (WS5), so a deploy never waits on the timer.
+[Unit]
+Description=Fetch latest main into the {{REPO_FULL_NAME}} deploy mirror
+
+[Service]
+Type=oneshot
+ExecStart={{GIT_BIN}} -C {{MIRROR_DIR}} fetch origin --prune

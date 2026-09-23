@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from pe.deploy.config import alert_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +43,7 @@ def default_alert_log_path() -> Path:
          ``./prismatic_state/alerts.log`` default: the receiver runs under
          systemd and a CWD-relative path is not deterministic there.
     """
-    override = os.environ.get("PRISMATIC_ALERT_LOG")
-    if override:
-        return Path(override)
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR")
-    if state_dir:
-        return Path(state_dir) / "alerts.log"
-    return Path.home() / ".prismatic" / "alerts.log"
+    return alert_log_path()
 
 
 def build_alert_entry(
