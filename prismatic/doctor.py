@@ -162,6 +162,33 @@ class DeployRepoCheck:
 
 
 @dataclass
+class DeployNodeCheck:
+    """Per-node deploy-target status for one node-registry entry (WS7)."""
+
+    name: str
+    address: str = ""
+    resolvable: bool = False  # tailnet address resolved via the mesh client
+    mesh_reachable: bool = False  # tailscale ping answered
+    ssh_reachable: bool = False  # BatchMode ssh probe answered
+    remediation: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.resolvable and self.mesh_reachable and self.ssh_reachable
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "address": self.address,
+            "resolvable": self.resolvable,
+            "mesh_reachable": self.mesh_reachable,
+            "ssh_reachable": self.ssh_reachable,
+            "remediation": self.remediation,
+            "ok": self.ok,
+        }
+
+
+@dataclass
 class DeployReport:
     """Deploy-plane diagnostics: layout, units, secrets, per-repo coverage."""
 
@@ -175,6 +202,7 @@ class DeployReport:
     receiver_listening: bool = False
     hmac_secret_set: bool = False
     repos: list[DeployRepoCheck] = field(default_factory=list)
+    nodes: list[DeployNodeCheck] = field(default_factory=list)  # WS7
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -189,6 +217,7 @@ class DeployReport:
             "receiver_listening": self.receiver_listening,
             "hmac_secret_set": self.hmac_secret_set,
             "repos": [r.to_dict() for r in self.repos],
+            "nodes": [n.to_dict() for n in self.nodes],
             "error": self.error,
         }
 
@@ -813,6 +842,107 @@ def _port_listening(port: int, timeout: float = 1.0) -> bool:
         sock.close()
 
 
+def _probe_deploy_node_ssh(node: Any, address: str, timeout_s: int = 10) -> bool:
+    """Observation-only SSH reachability probe (``true`` over ssh).
+
+    Same fail-closed flags as the deploy transport: BatchMode (never
+    prompts), StrictHostKeyChecking=yes (unknown host key refuses), short
+    ConnectTimeout. Returns a bool -- the caller names the failing node.
+    Kept module-level (not a method) so tests can monkeypatch it.
+    """
+    from pe.deploy.node_executor import probe_ssh
+
+    return probe_ssh(node, address, timeout_s=timeout_s)
+
+
+def _ssh_known_hosts_path() -> str:
+    """Host-key pinning source shared with the node executor transport."""
+    from pe.deploy.node_executor import default_known_hosts
+
+    return str(default_known_hosts())
+
+
+def _probe_deploy_nodes() -> list[DeployNodeCheck]:
+    """Probe the WS7 node registry: resolve + mesh ping + ssh per node.
+
+    Pure/observation-only -- performs no deploy and writes nothing. An
+    unreadable registry yields one erroring check naming the registry
+    (fail-closed: the plane claims nodes it cannot describe).
+    """
+    checks: list[DeployNodeCheck] = []
+    try:
+        from pe.deploy import nodes as deploy_nodes
+    except Exception as exc:
+        return [
+            DeployNodeCheck(
+                name="(registry)",
+                remediation=f"pe.deploy.nodes unavailable: {exc}",
+            )
+        ]
+    try:
+        registry = deploy_nodes.load_node_registry()
+    except deploy_nodes.NodeRegistryError as exc:
+        return [
+            DeployNodeCheck(
+                name="(registry)",
+                remediation=f"node registry unreadable: {exc}",
+            )
+        ]
+    if not registry.nodes:
+        return checks  # no remote nodes enrolled: nothing to check
+
+    try:
+        from prismatic.mesh.tailscale import get_tailscale_mesh_client
+
+        mesh_client: Any = get_tailscale_mesh_client()
+    except Exception as exc:
+        return [
+            DeployNodeCheck(
+                name=n.name,
+                address=n.address,
+                remediation=(
+                    f"node {n.name!r}: cannot reach the tailnet mesh client: "
+                    f"{exc} -- is Tailscale running on this control plane?"
+                ),
+            )
+            for n in registry
+        ]
+
+    for node in registry:
+        check = DeployNodeCheck(name=node.name, address=node.address)
+        try:
+            address = deploy_nodes.resolve_address(node, mesh_client)
+        except deploy_nodes.UnresolvableNodeError as exc:
+            check.remediation = (
+                f"node {node.name!r}: {exc} -- fix the registry address or "
+                "enroll the node with the installer enroll-node flow"
+            )
+            checks.append(check)
+            continue
+        check.resolvable = True
+        check.address = address
+        ping = deploy_nodes.ping_node(node, mesh_client)
+        if not ping.get("success"):
+            check.remediation = (
+                f"node {node.name!r}: tailnet ping to {address} failed: "
+                f"{ping.get('error', 'no pong')} -- is Tailscale up on the node?"
+            )
+            checks.append(check)
+            continue
+        check.mesh_reachable = True
+        if _probe_deploy_node_ssh(node, address):
+            check.ssh_reachable = True
+        else:
+            check.remediation = (
+                f"node {node.name!r}: ssh probe failed "
+                f"({node.ssh_user}@{address}) -- check the ssh method/key, "
+                "tailnet ACLs, and the pinned host key in "
+                f"{_ssh_known_hosts_path()}"
+            )
+        checks.append(check)
+    return checks
+
+
 def _probe_deploy() -> DeployReport:
     """Probe the post-merge deploy plane. Pure/observation-only.
 
@@ -897,6 +1027,10 @@ def _probe_deploy() -> DeployReport:
     )
     report.receiver_port = DEPLOY_RECEIVER_PORT
     report.receiver_listening = _port_listening(report.receiver_port)
+
+    # WS7: per-node tailnet reachability. Observation-only; each failing
+    # check names the exact node and the remediation.
+    report.nodes = _probe_deploy_nodes()
     return report
 
 
@@ -908,6 +1042,7 @@ def _deploy_section_ok(deploy: DeployReport) -> bool:
         or not deploy.receiver_unit_installed
         or not deploy.gateway_unit_installed
         or deploy.layout_dirs_missing
+        or any(not n.ok for n in deploy.nodes)
     ):
         return False
     return all(
