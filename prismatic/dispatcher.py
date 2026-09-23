@@ -1808,6 +1808,79 @@ def _assigned_agent_execution_prompt(
     )
 
 
+def _repair_agent_execution_prompt(payload: dict[str, Any]) -> str:
+    """Build the wake prompt for a review-factory repair dispatch.
+
+    Unlike the generic Linear-task prompt, this renders the repair brief the
+    worker needs: what failed, what to fix, and how to re-queue the job for
+    re-verification. All fields come from the repair payload (see
+    ReviewQueue._repair_context in prismatic/review_factory/queue.py).
+    """
+    review_job_id = str(payload.get("review_job_id") or "")
+    agent = str(payload.get("target_agent") or "agent").upper()
+    title = str(payload.get("title") or f"REPAIR: {review_job_id or 'repair'}")
+    requeue = payload.get("requeue")
+    requeue = requeue if isinstance(requeue, dict) else {}
+    requeue_method = str(
+        requeue.get("method") or "ReviewQueue.requeue_repaired_candidate"
+    )
+    cls_name, _, meth_name = requeue_method.rpartition(".")
+    requeue_call = f"{cls_name}().{meth_name}" if cls_name and meth_name else requeue_method
+    findings = payload.get("findings") or []
+    if not isinstance(findings, list):
+        findings = [findings]
+    lines = [
+        f"You are {agent} executing one Prismatic Engine repair task: {review_job_id or title}.",
+        "",
+        f"Title: {title}",
+        f"Review job id: {review_job_id or 'n/a'}",
+        f"Verdict: {payload.get('verdict') or 'n/a'}",
+        f"Receipt: {payload.get('receipt_id') or 'n/a'}",
+        f"Failure reason: {payload.get('failure_reason') or 'see findings'}",
+        "",
+        "Findings to fix:",
+    ]
+    if findings:
+        for finding in findings[:10]:
+            if isinstance(finding, dict):
+                lines.append(
+                    "- [{}] {}: {}".format(
+                        finding.get("severity", "?"),
+                        finding.get("check") or finding.get("code") or "finding",
+                        finding.get("message") or finding.get("detail") or "",
+                    ).rstrip()
+                )
+            else:
+                lines.append(f"- {finding}")
+        if len(findings) > 10:
+            lines.append(
+                f"- ... and {len(findings) - 10} more finding(s); see the repair brief"
+            )
+    else:
+        lines.append("- (no structured findings recorded)")
+    description = str(payload.get("description") or "")
+    if description:
+        lines += ["", "Repair brief:", description]
+    lines += [
+        "",
+        "When the fix is committed, re-queue the job for re-verification:",
+        "from prismatic.review_factory.queue import ReviewQueue",
+        f"{requeue_call}({review_job_id!r}, new_candidate_commit, new_candidate_tree)",
+        "",
+        "Required final compact packet:",
+        "COMMAND=<main command(s) or action taken>",
+        "RESULT=<PASS|BLOCKED|FAIL>",
+        "LOG=<path to detailed log/artifact>",
+        "SCOPE=<files/features verified>",
+        "AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>",
+        "NOT_CLAIMING=<explicit non-claims>",
+        "MARKER=<ISSUE_SPECIFIC_OK_OR_BLOCKED>",
+        "",
+        "Do not claim the repair is complete unless the fix is committed and the job is re-queued.",
+    ]
+    return "\n".join(lines)
+
+
 def launch_visible_hermes_agent(
     agent: str,
     issue_id: str,
@@ -1818,6 +1891,7 @@ def launch_visible_hermes_agent(
     cycle_id: str | None = None,
     request_id: str | None = None,
     run_id: str = "",
+    prompt: str | None = None,
 ) -> subprocess.Popen | None:
     """Launch Fred/Kai as actual Hermes profile executions with durable logs.
 
@@ -1844,10 +1918,14 @@ def launch_visible_hermes_agent(
     safe_issue = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier or issue_id or "task")[:80]
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"hermes-{agent}-{safe_issue}-{ts}.log"
-    prompt = _assigned_agent_execution_prompt(
-        agent, identifier or issue_id, title=title, run_id=run_id
+    wake_prompt = (
+        prompt
+        if prompt is not None
+        else _assigned_agent_execution_prompt(
+            agent, identifier or issue_id, title=title, run_id=run_id
+        )
     )
-    cmd = [hermes, "--profile", profile, "-z", prompt]
+    cmd = [hermes, "--profile", profile, "-z", wake_prompt]
     try:
         emit_visible_agent_stream_event(
             agent,
@@ -3092,6 +3170,10 @@ def dispatch_assigned_agent_event(
         }
     launcher_map = launchers or AGENT_LAUNCHERS
     title = str(payload.get("title") or identifier)
+    is_repair = str(payload.get("kind") or "") == "review-factory-repair" or str(
+        row.get("event_type") or ""
+    ) == "task.review-factory"
+    repair_prompt = _repair_agent_execution_prompt(payload) if is_repair else None
     emit_visible_agent_stream_event(
         target, identifier, "WAKE_STARTED", title=title, run_id=run_id
     )
@@ -3107,6 +3189,7 @@ def dispatch_assigned_agent_event(
                 cycle_id=str(row.get("cycle_id") or ""),
                 request_id=str(row.get("request_id") or row.get("event_id") or ""),
                 run_id=run_id,
+                prompt=repair_prompt,
             )
         if not proc:
             proc = launcher_map[target](identifier, title=title, priority=3)
