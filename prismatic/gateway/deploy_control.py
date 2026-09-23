@@ -82,7 +82,11 @@ RECEIVER_URL_ENV = "PRISMATIC_DEPLOY_RECEIVER_URL"
 DEFAULT_RECEIVER_URL = "http://127.0.0.1:9460"
 
 #: Receiver env file holding the per-repo HMAC secrets (0600, same box).
-RECEIVER_ENV_RELATIVE = Path("env.d") / "deploy-receiver.env"
+#: This is the HOME-based ``~/.prismatic/env.d/deploy-receiver.env`` file the
+#: receiver's own systemd drop-in sources -- NOT ``state_dir()/env.d/...``:
+#: in production ``PRISMATIC_STATE_DIR`` is ``~/.prismatic/db``, so resolving
+#: against ``state_dir()`` points at a path that does not exist.
+RECEIVER_ENV_PATH = Path.home() / ".prismatic" / "env.d" / "deploy-receiver.env"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _DETAIL_KV_RE = re.compile(r"(\w+)=([^\s]+)")
@@ -142,7 +146,7 @@ def _repo_hmac_secret(repo: Any) -> str:
     not source that file, but it runs as the same user and may read it).
     """
     var = repo.hmac_secret_env
-    file_values = _read_env_file_values(state_dir() / RECEIVER_ENV_RELATIVE)
+    file_values = _read_env_file_values(RECEIVER_ENV_PATH)
     for candidate in (var, "DEPLOY_HMAC_SECRET"):
         value = os.environ.get(candidate, "").strip()
         if value:
@@ -168,7 +172,7 @@ def _secret_available(repo: Any) -> bool:
     file) without raising. Used for the read-only releases listing.
     """
     var = repo.hmac_secret_env
-    file_values = _read_env_file_values(state_dir() / RECEIVER_ENV_RELATIVE)
+    file_values = _read_env_file_values(RECEIVER_ENV_PATH)
     for candidate in (var, "DEPLOY_HMAC_SECRET"):
         if os.environ.get(candidate, "").strip():
             return True

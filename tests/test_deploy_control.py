@@ -604,3 +604,76 @@ def test_releases_lists_per_repo_state(iso, monkeypatch):
         r["repo"]: r for r in iso.client.get("/api/deploys/releases").json()["repos"]
     }[PILOT]
     assert pilot2["secret_configured"] is True
+
+
+# ---------------------------------------------------------------------------
+# Receiver-env path: the gateway must read HMAC secrets from the HOME-based
+# ~/.prismatic/env.d/deploy-receiver.env (the file the receiver's own
+# systemd drop-in sources) -- never from state_dir()/env.d/... (in
+# production PRISMATIC_STATE_DIR is ~/.prismatic/db, where that file does
+# not exist; #543 follow-up regression pin).
+# ---------------------------------------------------------------------------
+
+from fastapi import HTTPException
+
+
+def _fake_repo(**overrides):
+    base = {
+        "full_name": PILOT,
+        "hmac_secret_env": "DEPLOY_HMAC_SECRET_TEST_PILOT",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _point_receiver_env_at(monkeypatch, tmp_path, lines) -> Path:
+    env_file = tmp_path / "env.d" / "deploy-receiver.env"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(dc, "RECEIVER_ENV_PATH", env_file)
+    return env_file
+
+
+def test_receiver_env_path_is_home_based_not_state_dir():
+    """The resolved receiver-env path must be HOME-based, independent of
+    PRISMATIC_STATE_DIR. (No iso fixture: HOME is untouched here.)"""
+    assert dc.RECEIVER_ENV_PATH == (
+        Path.home() / ".prismatic" / "env.d" / "deploy-receiver.env"
+    )
+
+
+def test_repo_hmac_secret_per_repo_from_receiver_env_file(iso, monkeypatch):
+    _point_receiver_env_at(
+        monkeypatch, iso.tmp, ["DEPLOY_HMAC_SECRET_TEST_PILOT=file-secret-1"]
+    )
+    assert dc._repo_hmac_secret(_fake_repo()) == "file-secret-1"
+
+
+def test_repo_hmac_secret_shared_fallback_from_receiver_env_file(iso, monkeypatch):
+    _point_receiver_env_at(monkeypatch, iso.tmp, ["DEPLOY_HMAC_SECRET=shared-secret-9"])
+    assert dc._repo_hmac_secret(_fake_repo()) == "shared-secret-9"
+
+
+def test_repo_hmac_secret_prefers_process_env_over_file(iso, monkeypatch):
+    _point_receiver_env_at(
+        monkeypatch, iso.tmp, ["DEPLOY_HMAC_SECRET_TEST_PILOT=file-secret-1"]
+    )
+    monkeypatch.setenv("DEPLOY_HMAC_SECRET_TEST_PILOT", "env-secret-2")
+    assert dc._repo_hmac_secret(_fake_repo()) == "env-secret-2"
+
+
+def test_repo_hmac_secret_missing_everywhere_raises_500(iso, monkeypatch):
+    monkeypatch.setattr(dc, "RECEIVER_ENV_PATH", iso.tmp / "no-such-file.env")
+    with pytest.raises(HTTPException) as excinfo:
+        dc._repo_hmac_secret(_fake_repo())
+    assert excinfo.value.status_code == 500
+    assert PILOT in excinfo.value.detail
+
+
+def test_secret_available_mirrors_repo_hmac_secret(iso, monkeypatch):
+    _point_receiver_env_at(
+        monkeypatch, iso.tmp, ["DEPLOY_HMAC_SECRET_TEST_PILOT=file-secret-1"]
+    )
+    assert dc._secret_available(_fake_repo()) is True
+    monkeypatch.setattr(dc, "RECEIVER_ENV_PATH", iso.tmp / "no-such-file.env")
+    assert dc._secret_available(_fake_repo()) is False
