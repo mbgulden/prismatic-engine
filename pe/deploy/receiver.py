@@ -32,6 +32,17 @@ from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
 from pe.deploy.linear_transition import LinearDeployTransitioner
 from pe.deploy.manifest import DeployManifestStore, DeployRecord
+from pe.deploy.nodes import (
+    LOCAL_NODE_NAME,
+    NodeRegistryError,
+    UnknownNodeError,
+    load_node_registry,
+)
+from pe.deploy.node_executor import (
+    NodeDeployer,
+    NodeDeployResult,
+    NodeUnreachableError,
+)
 from pe.deploy.config import (
     DeployRepoConfig,
     UnknownRepoError,
@@ -235,6 +246,7 @@ class DeployReceiverPipeline:
         gateway_redeployer: GatewayRedeployer | None = None,
         mirror_repo: Path | None = None,
         repo_config: DeployRepoConfig | None = None,
+        node_deployer_factory: Any | None = None,
     ):
         self.source_repo = source_repo or self._source_repo_from_env()
         # WS1: the repo this pipeline instance is configured for (registry
@@ -257,6 +269,13 @@ class DeployReceiverPipeline:
         # Per-repo runners/redeployers for non-default repos, built lazily.
         self._runners: dict[str, AtomicDeployRunner] = {}
         self._redeployers: dict[str, GatewayRedeployer] = {}
+        # WS7: factory building the node executor for remote deploys.
+        # Signature: (node, repo_config) -> object with
+        # .check_reachable() and .deploy(pr_sha, dry_run). Tests inject a
+        # fake; production builds the real NodeDeployer.
+        self._node_deployer_factory = (
+            node_deployer_factory or self._default_node_deployer_factory
+        )
 
     @staticmethod
     def _source_repo_from_env() -> Path:
@@ -374,25 +393,35 @@ class DeployReceiverPipeline:
         logger.info("Repo mirror refreshed after successful deploy: %s", mirror)
         return {"refreshed": True, "reason": "fetch-ok"}
 
-    def _fail_closed_unknown_repo(
+    @staticmethod
+    def _default_node_deployer_factory(
+        node: Any, repo: DeployRepoConfig
+    ) -> NodeDeployer:
+        """Build the real node executor (WS7). Test seam: inject a fake."""
+        return NodeDeployer(node, repo)
+
+    def _fail_closed_refusal(
         self,
         payload: dict[str, Any],
         repository: str,
         reason: str,
         now_iso: str,
         start_time: float,
+        *,
+        deploy_id_suffix: str,
+        alert_summary: str,
     ) -> DeployRecord:
-        """Fail-closed record for a trigger naming an unregistered repo (WS1).
+        """Fail-closed refusal record shared by the routing refusals.
 
         The deploy is refused before any side effect; the refusal is recorded
-        and alert-logged as ``PostMergeDeployFailed`` naming the repo, so a
-        misconfigured trigger can never silently no-op.
+        and alert-logged as ``PostMergeDeployFailed``, so a misconfigured
+        trigger can never silently no-op.
         """
         pr_sha = str(payload.get("pr_sha", ""))
         duration_ms = int((time.time() - start_time) * 1000)
-        failure_reason = f"refused: unknown repository {repository!r}: {reason}"
+        failure_reason = f"refused: {reason}"
         record = DeployRecord(
-            deploy_id=f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-refused",
+            deploy_id=f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-{deploy_id_suffix}",
             pr_sha=pr_sha,
             pr_number=int(payload.get("pr_number", 0)),
             pr_title=str(payload.get("pr_title", "")),
@@ -410,13 +439,32 @@ class DeployReceiverPipeline:
             emit_deploy_alert(
                 "PostMergeDeployFailed",
                 "critical",
-                f"deploy refused: unknown repository {repository}",
+                alert_summary,
                 f"deploy_id={record.deploy_id} repository={repository} "
                 f"failure_reason={failure_reason[:300]}",
             )
         except Exception as exc:  # pragma: no cover - emit never raises
             logger.warning("deploy-alerts: refusal emit failed: %s", exc)
         return record
+
+    def _fail_closed_unknown_repo(
+        self,
+        payload: dict[str, Any],
+        repository: str,
+        reason: str,
+        now_iso: str,
+        start_time: float,
+    ) -> DeployRecord:
+        """Fail-closed record for a trigger naming an unregistered repo (WS1)."""
+        return self._fail_closed_refusal(
+            payload,
+            repository,
+            f"unknown repository {repository!r}: {reason}",
+            now_iso,
+            start_time,
+            deploy_id_suffix="refused",
+            alert_summary=f"deploy refused: unknown repository {repository}",
+        )
 
     def process_deploy(
         self,
@@ -445,6 +493,22 @@ class DeployReceiverPipeline:
         pr_title = str(payload.get("pr_title", ""))
         deployer = str(payload.get("deployer", "github-action"))
         commits = payload.get("commits", [])
+
+        # WS7: route the deploy to the repo's target node. "local" (the
+        # default) keeps the exact existing path below; any other node runs
+        # the deploy cycle on the tailnet node via the node executor.
+        # Routing happens BEFORE the dry-run gate so a node-targeted dry
+        # run is recorded as a node dry run (zero remote actions) rather
+        # than a misleading local one. The payload flag is the authority;
+        # runner.dry_run is a local-path test seam and does not apply here.
+        if repo.target_node != LOCAL_NODE_NAME:
+            return self._process_node_deploy(
+                payload,
+                repo,
+                start_time,
+                now_iso,
+                dry_run=bool(payload.get("dry_run", False)),
+            )
 
         # The deploy runner for the routed repo (default repo: the injected
         # runner, preserving every existing test double).
@@ -513,13 +577,10 @@ class DeployReceiverPipeline:
                 logger.info("Gateway redeploy skipped: %s", gw_res.reason)
             elif not gw_res.success:
                 success = False
-                err_msg = (
-                    f"GATEWAY REDEPLOY FAILED: {gw_res.reason}"
-                    + (
-                        " [rolled back to previous release]"
-                        if gw_res.rolled_back
-                        else " [ROLLBACK FAILED -- manual recovery required]"
-                    )
+                err_msg = f"GATEWAY REDEPLOY FAILED: {gw_res.reason}" + (
+                    " [rolled back to previous release]"
+                    if gw_res.rolled_back
+                    else " [ROLLBACK FAILED -- manual recovery required]"
                 )
         elif is_dry_run:
             gateway_info = {"skipped": True, "reason": "dry-run"}
@@ -633,6 +694,210 @@ class DeployReceiverPipeline:
         # production rollback of an auto-merge. Append-only, never raises.
         self._feed_watchdog_rollback(record)
 
+        return record
+
+    # ------------------------------------------------------------------
+    # WS7: tailnet node routing
+    # ------------------------------------------------------------------
+
+    def _process_node_deploy(
+        self,
+        payload: dict[str, Any],
+        repo: DeployRepoConfig,
+        start_time: float,
+        now_iso: str,
+        dry_run: bool = False,
+    ) -> DeployRecord:
+        """Run the deploy cycle on the repo's tailnet target node (WS7).
+
+        Fail-closed ordering: the node must resolve in the registry AND pass
+        the reachability probe BEFORE any remote action -- and before any
+        local deploy side effects (no local runner/redeployer is touched on
+        this path at all). A dry run resolves the node (local read) but
+        never builds the executor: zero remote actions, no Linear
+        transitions, no terminal alert -- same contract as the local
+        dry-run path.
+        """
+        node_name = repo.target_node
+        repository = repo.full_name
+        pr_sha = str(payload.get("pr_sha", ""))
+        pr_number = int(payload.get("pr_number", 0))
+        pr_title = str(payload.get("pr_title", ""))
+        deployer = str(payload.get("deployer", "github-action"))
+        commits = payload.get("commits", [])
+
+        def _refuse(reason: str, summary: str) -> DeployRecord:
+            return self._fail_closed_refusal(
+                payload,
+                repository,
+                reason,
+                now_iso,
+                start_time,
+                deploy_id_suffix=f"node-{node_name}-refused",
+                alert_summary=summary,
+            )
+
+        # 1. Registry lookup -- unknown node refuses before anything else.
+        try:
+            registry = load_node_registry()
+        except NodeRegistryError as exc:
+            return _refuse(
+                f"node registry unreadable for target node {node_name!r}: {exc}",
+                f"deploy refused: node registry unreadable ({node_name})",
+            )
+        try:
+            node = registry.get(node_name)
+        except UnknownNodeError as exc:
+            return _refuse(
+                f"unknown target node {node_name!r} for repository {repository!r}: {exc}",
+                f"deploy refused: unknown target node {node_name}",
+            )
+
+        # 2. Dry run: the node resolved above (a local read); the executor
+        #    is never built and no remote action happens.
+        if dry_run:
+            duration_ms = int((time.time() - start_time) * 1000)
+            record = DeployRecord(
+                deploy_id=f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-node-{node_name}-dryrun",
+                pr_sha=pr_sha,
+                pr_number=pr_number,
+                pr_title=pr_title,
+                merged_at=payload.get("merged_at", now_iso),
+                deployed_at=now_iso,
+                deployer=deployer,
+                repository=repository,
+                version_dir="",
+                release_symlink="",
+                health_check={
+                    "passed": True,
+                    "checks": {},
+                    "details": {
+                        "dry_run": "skipped: dry-run, zero remote actions",
+                        "node": node_name,
+                    },
+                },
+                linear_transitions=[],
+                gateway_deploy={
+                    "skipped": True,
+                    "reason": "dry-run",
+                    "node": node_name,
+                },
+                mirror_refresh={
+                    "refreshed": False,
+                    "reason": "skipped: dry-run",
+                },
+                duration_ms=duration_ms,
+                success=True,
+                failure_reason=None,
+                dry_run=True,
+            )
+            self.store.record_deploy(record)
+            logger.info(
+                "DRY RUN: no deployment performed for %s (node %s)",
+                record.deploy_id,
+                node_name,
+            )
+            return record
+
+        # 3. Build the executor (test seam: injected factory) and probe
+        #    reachability -- refused before ANY remote action.
+        deployer_obj = self._node_deployer_factory(node, repo)
+        try:
+            reachability = deployer_obj.check_reachable()
+        except NodeUnreachableError as exc:
+            return _refuse(
+                f"target node {node_name!r} unreachable for repository "
+                f"{repository!r}: {exc}",
+                f"deploy refused: target node {node_name} unreachable",
+            )
+        logger.info(
+            "node deploy: %s reachable at %s (node=%s repo=%s)",
+            node_name,
+            reachability.get("address"),
+            node_name,
+            repository,
+        )
+
+        # 4. Run the remote deploy cycle. The executor emits NodeDeploy*
+        #    alerts tagged with the node name; the pipeline emits the
+        #    terminal PostMergeDeploy* record below.
+        node_result: NodeDeployResult = deployer_obj.deploy(pr_sha, dry_run=False)
+        gw = node_result.gateway
+        gw_dict = gw.to_dict() if gw is not None else {}
+        gw_dict["node"] = node_name
+        gw_health = gw_dict.get("health") or {}
+        health_check = {
+            "passed": bool(gw_health.get("passed", node_result.success)),
+            "checks": gw_health.get("checks", {}),
+            "details": dict(gw_health.get("details", {}), node=node_name),
+        }
+        success = node_result.success
+        err_msg = None if success else node_result.reason
+
+        # 5. Linear transitions on success (repo-level, same as the local path).
+        transitions: list[dict[str, Any]] = []
+        record_id = f"deploy-{pr_sha[:8] if pr_sha else 'manual'}-node-{node_name}"
+        if success:
+            receipts = self.transitioner.transition_issues_for_deploy(
+                deploy_id=record_id,
+                pr_sha=pr_sha,
+                pr_title=pr_title,
+                commit_messages=commits,
+            )
+            transitions = [r.to_dict() for r in receipts]
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        record = DeployRecord(
+            deploy_id=record_id,
+            pr_sha=pr_sha,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            merged_at=payload.get("merged_at", now_iso),
+            deployed_at=now_iso,
+            deployer=deployer,
+            repository=repository,
+            version_dir=str(gw_dict.get("version_dir", "")),
+            release_symlink="",
+            health_check=health_check,
+            linear_transitions=transitions,
+            gateway_deploy=gw_dict,
+            mirror_refresh={
+                "refreshed": False,
+                "reason": "remote: the node verifies the SHA from its own "
+                "mirror (WS5 fetch-before-validate runs on-node)",
+            },
+            duration_ms=duration_ms,
+            success=success,
+            failure_reason=err_msg,
+        )
+        self.store.record_deploy(record)
+
+        try:
+            if record.success:
+                emit_deploy_alert(
+                    "PostMergeDeploySucceeded",
+                    "info",
+                    f"deploy {record.deploy_id} succeeded on node {node_name}: "
+                    f"gateway at {pr_sha[:12]}",
+                    f"deploy_id={record.deploy_id} node={node_name} "
+                    f"pr_sha={pr_sha} pr_number={pr_number} "
+                    f"duration_ms={duration_ms}",
+                )
+            else:
+                emit_deploy_alert(
+                    "PostMergeDeployFailed",
+                    "critical",
+                    f"deploy {record.deploy_id} failed on node {node_name}: "
+                    f"{str(err_msg)[:120]}",
+                    f"deploy_id={record.deploy_id} node={node_name} "
+                    f"pr_sha={pr_sha} failure_reason={str(err_msg)[:300]} "
+                    f"rolled_back={gw_dict.get('rolled_back', False)}",
+                )
+        except Exception as exc:  # pragma: no cover - emit never raises
+            logger.warning("deploy-alerts: terminal-state emit failed: %s", exc)
+
+        self._feed_learn_loop(record)
+        self._feed_watchdog_rollback(record)
         return record
 
     def _feed_learn_loop(self, record: DeployRecord) -> None:
@@ -839,13 +1104,13 @@ def create_deploy_receiver_app() -> Any:
         try:
             hmac_secret = get_repo_hmac_secret(repo)
         except RuntimeError as exc:
-            logger.error(
-                "deploy trigger for %s refused: %s", repository, exc
-            )
+            logger.error("deploy trigger for %s refused: %s", repository, exc)
             raise HTTPException(status_code=500, detail=str(exc))
 
         # Verify HMAC signature (§16.8 anti-pattern #3)
-        if not verify_hmac_signature(body_bytes, x_hub_signature_256, secret=hmac_secret):
+        if not verify_hmac_signature(
+            body_bytes, x_hub_signature_256, secret=hmac_secret
+        ):
             raise HTTPException(
                 status_code=401, detail="Invalid or missing HMAC signature"
             )
