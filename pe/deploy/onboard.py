@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import tempfile
@@ -51,6 +52,21 @@ class OnboardError(Exception):
     """A loud, user-facing onboarding failure. Nothing was half-done."""
 
 
+def _default_release_prefix(full_name: str) -> str:
+    """Derive a unique, filesystem-safe release prefix from ``owner/repo``.
+
+    Lowercased ``owner-repo`` with non-alphanumerics as dashes. Used for
+    release dir names and live symlink suffixes, so two repos never share
+    the production gateway's links. (``mbgulden/prismatic-engine`` itself is
+    the default entry and keeps the config default ``prismatic-engine``; this
+    derivation only applies to newly onboarded repos.)
+    """
+    owner, repo = full_name.split("/")
+    slug = f"{owner}-{repo}".lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+    return slug or deploy_config.DEFAULT_RELEASE_PREFIX
+
+
 # ---------------------------------------------------------------------------
 # Options / results (no prints; the CLI renders these)
 # ---------------------------------------------------------------------------
@@ -67,6 +83,10 @@ class AddRepoOptions:
     target_service: str = ""  # default: registry default
     health_endpoints: tuple[tuple[str, str], ...] = ()
     registry_file: str = ""  # override for PRISMATIC_DEPLOY_REPOS_FILE
+    release_prefix: str = ""  # default: derived from owner/repo (unique per repo)
+    port: int = 0  # 0 = registry default
+    extras: str | None = None  # None = registry default; "" = explicitly no extras
+    smoke_import: str = ""  # default: registry default
 
 
 @dataclass
@@ -300,6 +320,18 @@ def add_repo(
         overrides["health_endpoints"] = [
             [path, name] for path, name in options.health_endpoints
         ]
+    # The release prefix is ALWAYS explicit: it names the release dirs AND
+    # the live symlinks. Auto-deriving from owner/repo guarantees two repos
+    # can never share the production gateway's links by accident.
+    overrides["release_prefix"] = (
+        options.release_prefix.strip() or _default_release_prefix(full_name)
+    )
+    if options.port:
+        overrides["port"] = options.port
+    if options.extras is not None:
+        overrides["extras"] = options.extras
+    if options.smoke_import:
+        overrides["smoke_import"] = options.smoke_import
     existing[full_name] = overrides
 
     steps = [RepoStep("validate", "ok", f"{full_name} reachable at {url}")]
@@ -437,6 +469,7 @@ def _render_repo_checklist(
         "  4. Registry: the receiver reloads it per trigger — no restart.",
         f"     Entry: {full_name} -> mirror={cfg.mirror_dir}",
         f"             service={cfg.target_service} node={cfg.target_node}",
+        f"             port={cfg.port} extras={cfg.extras or '(none)'}",
         f"             secret-var={secret_var}",
     ]
     if export_hint:
