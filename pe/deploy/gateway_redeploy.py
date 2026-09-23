@@ -58,6 +58,8 @@ from pe.deploy.config import (
     DEFAULT_RELEASE_PREFIX,
     DeployRepoConfig,
 )
+from pe.deploy.process_manager import ProcessManager, ProcessManagerError
+from pe.deploy.process_manager_systemd import SystemdProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,7 @@ class GatewayRedeployer:
         extras: str | None = None,
         systemctl_bin: str = "/usr/bin/systemctl",
         health_endpoints: tuple[tuple[str, str], ...] | None = None,
+        manager: ProcessManager | None = None,
     ):
         home_p = Path(home).expanduser() if home else Path.home()
         self.prismatic = home_p / ".prismatic"
@@ -153,6 +156,11 @@ class GatewayRedeployer:
         # WS1: per-repo HTTP health endpoints; default == pre-WS1 behavior.
         self.health_endpoints = health_endpoints or DEFAULT_HEALTH_ENDPOINTS
         self.systemctl_bin = systemctl_bin
+        self._process_manager = (
+            manager
+            if manager is not None
+            else SystemdProcessManager(systemctl_bin=systemctl_bin, run=self._run)
+        )
 
     # ------------------------------------------------------------------
     # low-level helpers
@@ -530,25 +538,23 @@ class GatewayRedeployer:
         (self.run_dir / STATE_NAME).write_text(json.dumps(state, indent=2))
 
     def _systemctl(self, action: str, timeout: int | None = 120) -> None:
-        # argv must match the NOPASSWD sudoers entry exactly
-        self._run_checked(
-            ["sudo", "-n", self.systemctl_bin, action, self.service], timeout=timeout
-        )
+        # The only action the deploy loop ever issues is "restart"; the
+        # real work is delegated to the process manager (whose argv must
+        # match the NOPASSWD sudoers entry exactly). This wrapper keeps
+        # the override point and the DeployFailed surface that callers
+        # and tests rely on.
+        if action != "restart":
+            raise DeployFailed(f"unsupported systemctl action: {action!r}")
+        try:
+            self._process_manager.restart(self.service, timeout=timeout)
+        except ProcessManagerError as exc:
+            raise DeployFailed(str(exc)) from exc
 
     def _service_active(self, timeout_s: int = 60) -> bool:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                out = self._run_out(
-                    ["sudo", "-n", self.systemctl_bin, "is-active", self.service],
-                    timeout=15,
-                )
-                if out == "active":
-                    return True
-            except DeployFailed:
-                pass
-            time.sleep(3)
-        return False
+        try:
+            return self._process_manager.is_active(self.service, timeout_s=timeout_s)
+        except ProcessManagerError as exc:
+            raise DeployFailed(str(exc)) from exc
 
     def _poll_http(self, path: str, timeout_s: int = 90) -> tuple[bool, str]:
         url = f"http://localhost:{self.port}{path}"
