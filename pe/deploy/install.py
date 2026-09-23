@@ -34,6 +34,14 @@ The installer operates on the process HOME (``--home`` sets HOME for this
 process up front, so every config.py path default agrees). ``PRISMATIC_*``
 env vars are honored wherever config.py defines them.
 
+Enroll-node mode (WS7): ``python -m pe.deploy.install --enroll-node
+--node-name athens --node-address athens --node-ssh-user ubuntu
+[--node-confirm]`` verifies a tailnet node (mesh resolution, tailscale
+ping, BatchMode ssh, platform probe) and registers it in the node registry
+(``$PRISMATIC_NODES_FILE`` or ``~/.prismatic/nodes.yaml``). Registration is
+a local file write only and REQUIRES ``--node-confirm`` -- nodes are never
+auto-enrolled. ``--dry-run`` previews the checks without writing.
+
 Stdlib only (plus pe.deploy.config / pe.deploy.process_manager*, which are
 stdlib-only too), and no work happens at import time -- so this module runs
 on a bare system python with no Prismatic dependencies installed.
@@ -617,6 +625,194 @@ def _write_secrets(state_dir: Path, dry_run: bool) -> StepResult:
 
 
 # ---------------------------------------------------------------------------
+# Enroll-node flow (WS7)
+# ---------------------------------------------------------------------------
+
+#: Valid --node-ssh-method values (cf. pe.deploy.nodes.SSH_METHODS).
+ENROLL_SSH_METHODS = ("tailscale-ssh", "key")
+
+#: Valid --node-platform values (macOS/Windows deferred per the plan).
+ENROLL_PLATFORMS = ("linux-systemd",)
+
+
+@dataclass
+class EnrollNodeOptions:
+    """Enroll-node knobs (see --enroll-node --help)."""
+
+    name: str = ""
+    address: str = ""
+    ssh_user: str = ""
+    ssh_method: str = "tailscale-ssh"
+    ssh_key: str | None = None
+    platform: str = "linux-systemd"
+    roles: tuple[str, ...] = ("gateway",)
+    confirm: bool = False
+    dry_run: bool = False
+    nodes_file: str | None = None
+
+
+@dataclass
+class EnrollResult:
+    """Outcome of one enroll-node run."""
+
+    ok: bool
+    steps: list[StepResult] = field(default_factory=list)
+    node_name: str = ""
+    registry_path: str = ""
+
+
+def _mesh_client_or_raise() -> Any:
+    """The shared tailscale mesh client; fail-closed when unavailable."""
+    try:
+        from prismatic.mesh.tailscale import get_tailscale_mesh_client
+    except Exception as exc:
+        raise InstallError(
+            "cannot reach the tailnet mesh client "
+            f"(prismatic.mesh.tailscale unavailable: {exc}); is Tailscale "
+            "running on this control plane?"
+        ) from exc
+    return get_tailscale_mesh_client()
+
+
+def enroll_node(
+    options: EnrollNodeOptions,
+    *,
+    mesh_client: Any | None = None,
+    probe: Callable[..., bool] | None = None,
+    run_remote: Callable[..., Any] | None = None,
+) -> EnrollResult:
+    """Verify a tailnet node and register it in the node registry.
+
+    Verification (all fail-closed, nothing written until every check passes):
+
+    1. the address resolves via the mesh client (Tailscale IP or MagicDNS);
+    2. the node answers a tailscale ping;
+    3. BatchMode ssh answers (no prompts, pinned host key);
+    4. the platform probe matches (``uname -s`` == Linux, systemctl present
+       for ``linux-systemd``).
+
+    Registration is a LOCAL registry-file write only -- this flow never
+    writes to the node. Enrollment requires explicit confirmation
+    (``confirm=True`` / ``--node-confirm``); without it the flow refuses
+    (exit 2) -- nodes are never auto-enrolled.
+
+    ``mesh_client``, ``probe`` (ssh true-probe), and ``run_remote``
+    (arbitrary remote command) are test seams.
+    """
+    from pe.deploy import nodes as deploy_nodes
+    from pe.deploy.node_executor import probe_ssh, run_remote_command
+
+    steps: list[StepResult] = []
+    result = EnrollResult(ok=False, node_name=options.name)
+
+    def _step(name: str, status: str, detail: str = "") -> None:
+        steps.append(StepResult(name, status, detail))
+        result.steps = steps
+
+    # 0. Validate the requested entry up front (cheap, local).
+    if options.name == deploy_nodes.LOCAL_NODE_NAME:
+        raise InstallError(
+            f"invalid node entry: name {deploy_nodes.LOCAL_NODE_NAME!r} is "
+            "reserved for the control plane"
+        )
+    try:
+        node = deploy_nodes.DeployNode(
+            name=options.name,
+            address=options.address,
+            ssh_user=options.ssh_user,
+            ssh_method=options.ssh_method,
+            platform=options.platform,
+            roles=tuple(options.roles),
+            ssh_key=options.ssh_key,
+        )
+    except ValueError as exc:
+        raise InstallError(f"invalid node entry: {exc}") from exc
+    _step("validate", "ok", f"{node.name} -> {node.address} ({node.ssh_method})")
+
+    # 1-2. Mesh resolution + ping.
+    client = mesh_client if mesh_client is not None else _mesh_client_or_raise()
+    try:
+        address = deploy_nodes.resolve_address(node, client)
+    except deploy_nodes.UnresolvableNodeError as exc:
+        raise InstallError(f"enroll refused: {exc}") from exc
+    _step("mesh-resolve", "ok", f"{node.address} -> {address}")
+    ping = deploy_nodes.ping_node(node, client)
+    if not ping.get("success"):
+        raise InstallError(
+            f"enroll refused: node {node.name!r} unreachable over the tailnet "
+            f"(tailscale ping to {address} failed: "
+            f"{ping.get('error', 'no pong')})"
+        )
+    _step("mesh-ping", "ok", f"pong from {address}")
+
+    # 3. SSH probe (BatchMode: fail-closed, never prompts).
+    ssh_probe = probe or probe_ssh
+    if not ssh_probe(node, address, 10):
+        raise InstallError(
+            f"enroll refused: ssh probe failed for {node.ssh_user}@{address} "
+            f"(node {node.name!r}) -- check the ssh method/key, tailnet ACLs, "
+            "and the pinned host key"
+        )
+    _step("ssh", "ok", f"{node.ssh_user}@{address} answered")
+
+    # 4. Platform probe (read-only remote commands).
+    remote = run_remote or run_remote_command
+    try:
+        uname = remote(node, address, ["uname", "-s"], timeout=30)
+        kernel = (getattr(uname, "stdout", "") or "").strip()
+    except Exception as exc:
+        raise InstallError(
+            f"enroll refused: cannot probe platform on {node.name!r}: {exc}"
+        ) from exc
+    if kernel != "Linux":
+        raise InstallError(
+            f"enroll refused: node {node.name!r} reports kernel {kernel!r}; "
+            "only linux-systemd nodes are supported"
+        )
+    if node.platform == "linux-systemd":
+        which = remote(node, address, ["command", "-v", "systemctl"], timeout=30)
+        if (
+            getattr(which, "returncode", 1) != 0
+            or not (getattr(which, "stdout", "") or "").strip()
+        ):
+            raise InstallError(
+                f"enroll refused: node {node.name!r} has no systemctl on PATH; "
+                "platform linux-systemd requires systemd"
+            )
+    _step("platform", "ok", f"{kernel} + systemctl ({node.platform})")
+
+    # 5. Register (local file write only). Confirmation is mandatory --
+    #    never auto-enroll.
+    registry_path = (
+        Path(options.nodes_file).expanduser()
+        if options.nodes_file
+        else deploy_nodes.nodes_file_path()
+    )
+    if options.dry_run:
+        _step(
+            "register",
+            "would-do",
+            f"append {node.name} to {registry_path} (dry-run: not written)",
+        )
+        result.ok = True
+        result.registry_path = str(registry_path)
+        return result
+    if not options.confirm:
+        raise InstallRefused(
+            f"refusing to enroll node {node.name!r} without explicit "
+            "confirmation: re-run with --node-confirm"
+        )
+    try:
+        written = deploy_nodes.append_node(registry_path, node)
+    except deploy_nodes.NodeRegistryError as exc:
+        raise InstallError(f"enroll failed: {exc}") from exc
+    _step("register", "ok", f"registered {node.name} in {written} (0600)")
+    result.ok = True
+    result.registry_path = str(written)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Checklist (pure rendering; printed by main)
 # ---------------------------------------------------------------------------
 
@@ -805,6 +1001,57 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=DEFAULT_GATEWAY_PORT,
         help="gateway port (default: 9000)",
     )
+
+    # WS7: enroll a tailnet node into the deploy registry. When set, the
+    # installer skips the install steps and runs the enroll-node flow
+    # instead (verify via mesh/ssh, register locally -- never auto-enrolled
+    # without --node-confirm).
+    enroll = parser.add_argument_group("enroll a tailnet node (--enroll-node)")
+    enroll.add_argument(
+        "--enroll-node",
+        action="store_true",
+        help="enroll a tailnet node as a deploy target instead of installing",
+    )
+    enroll.add_argument("--node-name", default="", help="registry name for the node")
+    enroll.add_argument(
+        "--node-address",
+        default="",
+        help="tailnet address: Tailscale IP or MagicDNS name",
+    )
+    enroll.add_argument("--node-ssh-user", default="", help="ssh user on the node")
+    enroll.add_argument(
+        "--node-ssh-method",
+        choices=ENROLL_SSH_METHODS,
+        default="tailscale-ssh",
+        help="tailscale-ssh (default) or key",
+    )
+    enroll.add_argument(
+        "--node-ssh-key",
+        default=None,
+        help="private key file (required with --node-ssh-method=key)",
+    )
+    enroll.add_argument(
+        "--node-platform",
+        choices=ENROLL_PLATFORMS,
+        default="linux-systemd",
+        help="node platform (default: linux-systemd)",
+    )
+    enroll.add_argument(
+        "--node-roles",
+        default="gateway",
+        help="comma-separated node roles (default: gateway)",
+    )
+    enroll.add_argument(
+        "--node-confirm",
+        action="store_true",
+        help="explicit confirmation to register the node (required)",
+    )
+    enroll.add_argument(
+        "--nodes-file",
+        default=None,
+        help="node registry path (default: $PRISMATIC_NODES_FILE or "
+        "~/.prismatic/nodes.yaml)",
+    )
     return parser.parse_args(argv)
 
 
@@ -815,6 +1062,11 @@ def main(argv: list[str] | None = None) -> int:
         # Set HOME for this process so every config.py path default
         # (state dir, registry mirror dirs, unit dirs) agrees.
         os.environ["HOME"] = str(Path(args.home).expanduser().resolve())
+
+    # WS7: enroll-node flow (replaces the install steps for this run).
+    if args.enroll_node:
+        return _main_enroll_node(args)
+
     options = InstallOptions(
         dry_run=args.dry_run,
         skip_steps=tuple(s.strip() for s in args.skip_steps.split(",") if s.strip()),
@@ -845,6 +1097,56 @@ def main(argv: list[str] | None = None) -> int:
         print(f"warning: cannot render checklist: {exc}", file=sys.stderr)
         return EXIT_OK if result.ok else EXIT_FAILED
     print(render_checklist(registry, options.receiver_port))
+    return EXIT_OK if result.ok else EXIT_FAILED
+
+
+def _main_enroll_node(args: argparse.Namespace) -> int:
+    """CLI driver for the WS7 enroll-node flow. Returns an exit code."""
+    from pe.deploy import nodes as deploy_nodes
+
+    missing = [
+        flag
+        for flag, value in (
+            ("--node-name", args.node_name),
+            ("--node-address", args.node_address),
+            ("--node-ssh-user", args.node_ssh_user),
+        )
+        if not value
+    ]
+    if missing:
+        print(
+            f"enroll-node needs {', '.join(missing)} (see --help)",
+            file=sys.stderr,
+        )
+        return EXIT_REFUSED
+    options = EnrollNodeOptions(
+        name=args.node_name,
+        address=args.node_address,
+        ssh_user=args.node_ssh_user,
+        ssh_method=args.node_ssh_method,
+        ssh_key=args.node_ssh_key,
+        platform=args.node_platform,
+        roles=tuple(r.strip() for r in args.node_roles.split(",") if r.strip()),
+        confirm=args.node_confirm,
+        dry_run=args.dry_run,
+        nodes_file=args.nodes_file,
+    )
+    try:
+        result = enroll_node(options)
+    except InstallRefused as exc:
+        print(f"enroll-node refused: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    except InstallError as exc:
+        print(f"enroll-node failed: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    for step in result.steps:
+        print(f"[{step.status}] {step.name}: {step.detail}")
+    registry = (
+        Path(options.nodes_file).expanduser()
+        if options.nodes_file
+        else deploy_nodes.nodes_file_path()
+    )
+    print(f"node registry: {registry}")
     return EXIT_OK if result.ok else EXIT_FAILED
 
 
