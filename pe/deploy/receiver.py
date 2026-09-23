@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 RECEIVER_PORT = 9460
 
+#: Interface the receiver binds when started via ``python -m pe.deploy.receiver``.
+RECEIVER_BIND_HOST = "0.0.0.0"
+
 #: Overall timeout for one deploy request (seconds). The blocking deploy runs
 #: in a worker thread so /health stays responsive; a deploy that exceeds this
 #: fails loudly instead of hanging the workflow forever. (2026-09-22: an
@@ -137,6 +140,62 @@ def get_repo_hmac_secret(repo: DeployRepoConfig) -> str:
             f"{per_repo_var} is not set and the shared DEPLOY_HMAC_SECRET "
             f"fallback is unavailable: {exc}"
         ) from exc
+
+
+def _secret_configured(env_var: str) -> bool:
+    """Whether an HMAC secret var is set in env or any deploy .env file.
+
+    Same lookup order as get_repo_hmac_secret / get_deploy_hmac_secret
+    (env, then the deploy .env files) but WITHOUT the dev fallback: the
+    well-known dev secret is not "configured". Used by startup diagnostics
+    only -- it never returns or logs a secret value.
+    """
+    if os.environ.get(env_var):
+        return True
+    for env_path in (
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+        Path.home() / ".prismatic" / ".env",
+    ):
+        if _load_env_file(env_path).get(env_var):
+            return True
+    return False
+
+
+def log_receiver_startup_config() -> None:
+    """Log the bind address/port and the routed repo registry at startup (WS4).
+
+    Names only, never secret values. A routed repo with no HMAC secret
+    configured (neither its per-repo DEPLOY_HMAC_SECRET_<OWNER>_<REPO> var
+    nor the shared DEPLOY_HMAC_SECRET in env or .env files) gets a LOUD
+    warning: in strict mode its triggers will be refused with a 500, in
+    non-strict mode they would be signed with the well-known dev fallback.
+    """
+    registry = load_repo_registry()
+    names = ", ".join(r.full_name for r in registry)
+    logger.info(
+        "deploy receiver startup: bind %s:%d; routing %d repo(s): %s",
+        RECEIVER_BIND_HOST,
+        RECEIVER_PORT,
+        len(registry),
+        names,
+    )
+    for repo in registry:
+        if _secret_configured(repo.hmac_secret_env) or _secret_configured(
+            "DEPLOY_HMAC_SECRET"
+        ):
+            logger.info(
+                "deploy receiver: HMAC secret configured for %s", repo.full_name
+            )
+        else:
+            logger.warning(
+                "deploy receiver: NO HMAC secret configured for repository %s "
+                "(checked %s and shared DEPLOY_HMAC_SECRET in env and .env "
+                "files); triggers for this repo will fail closed -- set the "
+                "per-repo var or the shared secret before expecting deploys",
+                repo.full_name,
+                repo.hmac_secret_env,
+            )
 
 
 def verify_hmac_signature(
@@ -411,7 +470,7 @@ class DeployReceiverPipeline:
                 deployed_at=now_iso,
                 deployer=deployer,
             repository=repo.full_name,
-                version_dir="",
+            version_dir="",
                 release_symlink=str(runner.release_symlink),
                 health_check={
                     "passed": True,
@@ -720,6 +779,10 @@ def create_deploy_receiver_app() -> Any:
     if not _HAS_FASTAPI:
         return None
 
+    # Startup diagnostics: what this receiver will route and with which
+    # secrets, before the pipeline's fail-fast can cut the log short.
+    log_receiver_startup_config()
+
     app = FastAPI(title="Prismatic Deploy Receiver", version="1.0.0")
     pipeline = DeployReceiverPipeline()
 
@@ -866,5 +929,8 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "pe.deploy.receiver:app", host="0.0.0.0", port=RECEIVER_PORT, reload=False
+        "pe.deploy.receiver:app",
+        host=RECEIVER_BIND_HOST,
+        port=RECEIVER_PORT,
+        reload=False,
     )
