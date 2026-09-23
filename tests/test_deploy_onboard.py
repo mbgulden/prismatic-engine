@@ -188,3 +188,70 @@ def test_list_repos_readonly(iso_env):  # noqa: ANN001, ANN201
     assert len(rows) == 1
     assert rows[0].full_name == "mbgulden/prismatic-engine"
     assert rows[0].secret in ("per-repo", "shared-fallback", "missing")
+
+
+def _two_repo_registry(path):  # noqa: ANN001, ANN202
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "mbgulden/prismatic-engine": {},
+                "octo/repo": {"release_prefix": "octo-repo"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_remove_repo_unknown_rejected(iso_env):  # noqa: ANN001, ANN201
+    reg = _two_repo_registry(iso_env / ".prismatic" / "deploy-repos.json")
+    with pytest.raises(OnboardError, match="not in the deploy registry"):
+        onboard.remove_repo("octo/ghost", registry_file=str(reg))
+    # Untouched.
+    assert set(json.loads(reg.read_text(encoding="utf-8"))) == {
+        "mbgulden/prismatic-engine",
+        "octo/repo",
+    }
+
+
+def test_remove_repo_refuses_last_remaining_repo(iso_env):  # noqa: ANN001, ANN201
+    reg = iso_env / ".prismatic" / "deploy-repos.json"
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text(json.dumps({"octo/solo": {}}), encoding="utf-8")
+    with pytest.raises(OnboardError, match="at least one repo"):
+        onboard.remove_repo("octo/solo", registry_file=str(reg))
+    assert set(json.loads(reg.read_text(encoding="utf-8"))) == {"octo/solo"}
+
+
+def test_remove_repo_refuses_implicit_single_repo(iso_env):  # noqa: ANN001, ANN201
+    # No registry file: the effective registry is the implicit default repo.
+    with pytest.raises(OnboardError, match="at least one repo"):
+        onboard.remove_repo("mbgulden/prismatic-engine")
+
+
+def test_remove_repo_removes_only_target_and_preserves_order(iso_env):  # noqa: ANN001, ANN201
+    reg = _two_repo_registry(iso_env / ".prismatic" / "deploy-repos.json")
+    result = onboard.remove_repo("mbgulden/prismatic-engine", registry_file=str(reg))
+    assert result.ok
+    assert result.full_name == "mbgulden/prismatic-engine"
+    data = json.loads(reg.read_text(encoding="utf-8"))
+    assert list(data) == ["octo/repo"]
+    assert data["octo/repo"] == {"release_prefix": "octo-repo"}
+    # Leftovers are reported, never deleted here.
+    assert result.leftovers
+    assert any("mirror left in place" in line for line in result.leftovers)
+
+
+def test_remove_repo_dry_run_changes_nothing(iso_env):  # noqa: ANN001, ANN201
+    reg = _two_repo_registry(iso_env / ".prismatic" / "deploy-repos.json")
+    before = reg.read_text(encoding="utf-8")
+    result = onboard.remove_repo("octo/repo", dry_run=True, registry_file=str(reg))
+    assert result.ok
+    assert any(s.status == "would-do" for s in result.steps)
+    assert reg.read_text(encoding="utf-8") == before
+
+
+def test_remove_repo_invalid_name_rejected(iso_env):  # noqa: ANN001, ANN201
+    with pytest.raises(OnboardError):
+        onboard.remove_repo("not-a-repo")
