@@ -5,6 +5,7 @@ The adapter bridges the daily shadow-agreement JSON (an object with a
 wiring-only: the tick files requests, never executes — ``execute()`` stays
 behind the master switch + Michael's approval.
 """
+
 from __future__ import annotations
 
 import importlib.util
