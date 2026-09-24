@@ -40,6 +40,26 @@ SHIPPED_BANDS = SPEC_DIR / "auto_merge_bands_v1.yaml"
 SHIPPED_NOVELTY_POLICY = SPEC_DIR / "novelty_policy_v1.yaml"
 
 
+def _stub_autonomy_allowed(monkeypatch):
+    """Stub the phase-2 earned-autonomy module as allowing.
+
+    Phase-3 wiring gates MergeStage.process() on the autonomy consult,
+    which fails closed while the phase-2 module is absent. This test
+    exercises the novelty screen downstream of the consult, so it opts
+    into an allowing stub.
+    """
+    import sys
+    import types
+    from types import SimpleNamespace
+
+    autonomy = types.ModuleType("prismatic.review_factory.autonomy")
+    autonomy.brake_status = lambda: {"engaged": False}
+    autonomy.can_auto_merge = lambda **kwargs: SimpleNamespace(
+        allowed=True, reason="auto_merge_allowed"
+    )
+    monkeypatch.setitem(sys.modules, "prismatic.review_factory.autonomy", autonomy)
+
+
 # ── helpers ──────────────────────────────────────────────────────────
 
 
@@ -428,6 +448,7 @@ def test_screen_off_when_detector_none(tmp_path):
 def test_process_continues_past_trip(tmp_path, monkeypatch):
     """End to end through process(): a tripping candidate still reaches the
     dry-run authorization — the pipeline is not halted."""
+    _stub_autonomy_allowed(monkeypatch)
     monkeypatch.setattr(
         "prismatic.review_factory.merge_executor.MergeExecutor", _StubExecutor
     )
