@@ -420,6 +420,20 @@ def test_execute_uses_injected_trust_ledger(monkeypatch):
     assert module_ledger.merge_outcomes == []
 
 
+def test_execute_failure_records_no_trust_outcome(monkeypatch):
+    """The success+sha guard: a failed merge must not record an outcome."""
+    _, _, ledger, _ = _install_phase12(monkeypatch)
+    executor = _succeeding_executor(monkeypatch, _exec_job(), _exec_auth())
+
+    def fake_execute_merge(job, manifest, auth):
+        return MergeResult(job_id=job.review_job_id, success=False, error="boom")
+
+    monkeypatch.setattr(executor, "_execute_merge", fake_execute_merge)
+    result = executor.execute("job-1", manifest=SimpleNamespace())
+    assert not result.success
+    assert ledger.merge_outcomes == []
+
+
 def test_execute_unknown_change_class_records_sensitive(monkeypatch):
     _, _, ledger, _ = _install_phase12(monkeypatch)
     executor = _succeeding_executor(monkeypatch, _exec_job(), _exec_auth())
@@ -652,6 +666,18 @@ def test_review_tier_promotions_prefers_injected_ledger(monkeypatch, tmp_path):
     proposals = _learn_loop(tmp_path).review_tier_promotions(ledger=injected)
     assert len(proposals) == 1
     assert (proposals[0].from_tier, proposals[0].to_tier) == (0, 1)
+
+
+def test_review_tier_promotions_uses_injected_ledger_when_trust_absent(
+    monkeypatch, tmp_path
+):
+    """An injected ledger must work even with the phase-1 module absent —
+    the trust import happens only when no ledger is supplied."""
+    _remove_phase12(monkeypatch)
+    injected = _FakeTrustLedger(graduation={"from_tier": 2, "to_tier": 3})
+    proposals = _learn_loop(tmp_path).review_tier_promotions(ledger=injected)
+    assert len(proposals) == 1
+    assert (proposals[0].from_tier, proposals[0].to_tier) == (2, 3)
 
 
 def test_review_tier_promotions_empty_when_no_graduation(monkeypatch, tmp_path):
