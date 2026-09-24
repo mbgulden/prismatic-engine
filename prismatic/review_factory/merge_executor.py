@@ -16,7 +16,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from prismatic.core.merge_factory import MergeFactoryStore, Principal
 from prismatic.integrate import (
@@ -53,6 +53,19 @@ def _record_learn_loop_rollback_outcome(job_id: str) -> None:
         logger.warning("learn loop record_outcome failed", exc_info=True)
 
 
+def classify_change_class(job: Any) -> str:
+    """Best-effort change class for the earned-autonomy tier engine.
+
+    Returns ``job.change_class`` when it is a non-empty string; otherwise
+    "sensitive". Fail-closed: "sensitive" sits in no auto-merge tier, so
+    unknown work can never auto-merge under the phase-2 rules.
+    """
+    value = getattr(job, "change_class", None)
+    if isinstance(value, str) and value.strip():
+        return value
+    return "sensitive"
+
+
 @dataclass
 class MergeResult:
     """Outcome of a merge execution."""
@@ -75,12 +88,17 @@ class MergeExecutor:
         repo_path: Optional[Path] = None,
         mf_store: Optional[MergeFactoryStore] = None,
         verification_receipt_store: Optional[VerificationReceiptStore] = None,
+        trust_ledger: Optional[Any] = None,
     ):
         self.queue = queue or ReviewQueue()
         self.dry_run = dry_run
         self.repo_path = repo_path
         self.mf_store = mf_store or MergeFactoryStore()
         self.verification_receipt_store = verification_receipt_store
+        # Earned-autonomy trust ledger (phase 1). Optional injection for
+        # tests; when None the phase-1 TrustLedger is built lazily at
+        # record time and skipped silently while phase 1 is unmerged.
+        self.trust_ledger = trust_ledger
 
     def execute(
         self,
@@ -194,7 +212,61 @@ class MergeExecutor:
             logger.error("Merge failed for %s: %s", job_id, exc)
             return MergeResult(job_id=job_id, success=False, error=str(exc))
 
+        # _execute_merge succeeded (the dry-run path returned above): best-effort
+        # record successful real merges in the earned-autonomy trust ledger.
+        # Guarded on success + a real merge SHA; this block must never change
+        # the result — the merge already happened, and failing the result
+        # would misreport a completed merge.
+        if result.success and result.merge_sha:
+            self._record_trust_merge_outcome(job, result.merge_sha)
+
         return result
+
+    def _record_trust_merge_outcome(self, job: ReviewJob, merge_sha: str) -> None:
+        """Best-effort trust-ledger outcome recording (lazy phase-1 boundary).
+
+        Activates once phase 1 merges; until then the trust module is
+        absent and this is a silent no-op. Never raises: the merge already
+        happened, and a recording failure must not rewrite the result.
+        """
+        try:
+            from prismatic.review_factory import trust
+        except Exception:
+            logger.debug("trust ledger unavailable; skipping outcome recording")
+            return
+        try:
+            ledger = self.trust_ledger or trust.TrustLedger()
+            ledger.record_merge_outcome(
+                artifact_id=job.review_job_id,
+                change_class=classify_change_class(job),
+                merged_by="auto",
+                deterministic_verdict="CLEAN",
+                notes=f"merge_sha={merge_sha}",
+            )
+        except Exception:
+            logger.debug("trust ledger record_merge_outcome failed", exc_info=True)
+
+    def _record_trust_rollback(self, job: ReviewJob) -> None:
+        """Best-effort trust-ledger rollback recording (lazy phase-1 boundary).
+
+        Same contract as _record_trust_merge_outcome: silent no-op while
+        phase 1 is unmerged, never raises.
+        """
+        try:
+            from prismatic.review_factory import trust
+        except Exception:
+            logger.debug("trust ledger unavailable; skipping rollback recording")
+            return
+        try:
+            ledger = self.trust_ledger or trust.TrustLedger()
+            ledger.record_rollback(
+                artifact_id=job.review_job_id,
+                change_class=classify_change_class(job),
+                auto_merged=True,
+                notes="executor rollback",
+            )
+        except Exception:
+            logger.debug("trust ledger record_rollback failed", exc_info=True)
 
     def _git_rev_parse(self, ref: str) -> str:
         import subprocess
@@ -533,6 +605,9 @@ class MergeExecutor:
                         # guard as the metrics feed above — a learn-loop
                         # failure must never break the hot path.
                         _record_learn_loop_rollback_outcome(job.review_job_id)
+                        # Earned-autonomy trust-ledger rollback record
+                        # (lazy phase-1 boundary; best-effort, never raises).
+                        self._record_trust_rollback(job)
                 except Exception as rollback_exc:
                     rollback_error = rollback_exc
                     logger.error(
