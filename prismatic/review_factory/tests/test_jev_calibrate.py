@@ -58,8 +58,11 @@ def _fixture_rows():
             101,
             "2026-09-01T12:00:00Z",
             "repair loop fix (#101)",
-            [("tests", "success"), ("ruff-lint", "failure"),
-             ("cancelled-runs", "cancelled")],
+            [
+                ("tests", "success"),
+                ("ruff-lint", "failure"),
+                ("cancelled-runs", "cancelled"),
+            ],
         ),
         _row(
             102,
@@ -154,8 +157,7 @@ def test_loader_refuses_proposed_status():
 def test_loader_refuses_wrong_version_and_missing_file(tmp_path):
     bad = tmp_path / "cal.yaml"
     bad.write_text(
-        yaml.safe_dump({"version": "merge_bar_calibration_v0",
-                        "status": "approved"}),
+        yaml.safe_dump({"version": "merge_bar_calibration_v0", "status": "approved"}),
         encoding="utf-8",
     )
     with pytest.raises(CalibrationNotApproved):
