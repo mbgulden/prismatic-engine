@@ -491,6 +491,47 @@ class BandProposal:
 
 
 @dataclass(frozen=True)
+class TierPromotionProposal:
+    """One proposed earned-autonomy tier promotion. Data only — mirrors
+    BandProposal: this module never applies tier changes, never writes
+    tier policy files, and never mutates the trust ledger's stored tier.
+    Graduations are applied by Michael's word only."""
+
+    from_tier: int
+    to_tier: int
+    evidence: dict[str, Any] = field(default_factory=dict)
+    requires_michael: bool = True
+    rationale: str = ""
+    proposed_spec_text: str = ""
+
+
+def _wrap_tier_promotion(proposal: dict[str, Any]) -> TierPromotionProposal:
+    """Coerce a phase-1 graduation dict into a TierPromotionProposal.
+
+    Defensive: a malformed dict degrades to a 0->0 proposal rather than
+    raising — review_tier_promotions must never raise.
+    """
+
+    def _as_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    evidence = proposal.get("evidence") or {}
+    if not isinstance(evidence, dict):
+        evidence = {"raw": evidence}
+    return TierPromotionProposal(
+        from_tier=_as_int(proposal.get("from_tier")),
+        to_tier=_as_int(proposal.get("to_tier")),
+        evidence=dict(evidence),
+        requires_michael=True,
+        rationale=str(proposal.get("rationale") or ""),
+        proposed_spec_text=str(proposal.get("proposed_spec_text") or ""),
+    )
+
+
+@dataclass(frozen=True)
 class LearnReport:
     """The self-review's answer: aggregates, evidence, proposals, words."""
 
@@ -1019,6 +1060,31 @@ class LearnLoop:
             },
         )
         return {"status": "ok", "proposal": proposal}
+
+    # -- earned-autonomy tier promotions (propose-only) -------------------
+
+    def review_tier_promotions(
+        self, ledger: Any = None
+    ) -> tuple[TierPromotionProposal, ...]:
+        """Read-only tier-promotion proposals from the phase-1 trust ledger.
+
+        Propose-only: wraps the ledger's ``check_graduation()`` into
+        TierPromotionProposal rows. Never writes tier changes, never
+        touches policy files, and runs regardless of the learn loop's
+        disabled flag — it reads only. An absent trust module (phase 1
+        unmerged), a failing ledger, or no graduation proposal all read
+        as an empty tuple; this method never raises.
+        """
+        try:
+            from prismatic.review_factory import trust
+
+            active = ledger if ledger is not None else trust.TrustLedger()
+            proposal = active.check_graduation()
+            if not proposal:
+                return ()
+            return (_wrap_tier_promotion(proposal),)
+        except Exception:
+            return ()
 
     # -- the application path ------------------------------------------
 
