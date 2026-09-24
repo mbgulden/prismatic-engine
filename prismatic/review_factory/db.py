@@ -86,7 +86,7 @@ def default_db_path() -> Path:
 # Schema DDL
 # ─────────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _CREATE_TABLES = """
 -- Schema version tracking
@@ -201,6 +201,23 @@ CREATE TABLE IF NOT EXISTS repair_packets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_repair_candidate ON repair_packets(candidate_tree);
+
+-- §5.6: trust_ledger_events (earned-autonomy trust ledger, Phase 1)
+CREATE TABLE IF NOT EXISTS trust_ledger_events (
+    event_id TEXT PRIMARY KEY,
+    ts TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    artifact_id TEXT,
+    change_class TEXT,
+    tier_at_event INTEGER,
+    merged_by TEXT,
+    deterministic_verdict TEXT,
+    judgment TEXT,
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_trust_ledger_ts ON trust_ledger_events(ts);
+CREATE INDEX IF NOT EXISTS idx_trust_ledger_event_type ON trust_ledger_events(event_type);
 
 -- Enterprise Audit Log: append-only table for operator actions
 CREATE TABLE IF NOT EXISTS review_factory_audit_log (
@@ -325,6 +342,33 @@ class ReviewFactoryDB:
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_review_jobs_task_candidate "
                 "ON review_jobs(task_id, candidate_commit)"
+            )
+        # Migration v3: trust_ledger_events table for the earned-autonomy
+        # trust ledger (Phase 1). The CREATE TABLE IF NOT EXISTS in
+        # _CREATE_TABLES covers fresh databases; this covers databases
+        # created at schema v2.
+        if recorded_version < 3:
+            self.conn.execute(
+                """CREATE TABLE IF NOT EXISTS trust_ledger_events (
+                    event_id TEXT PRIMARY KEY,
+                    ts TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    artifact_id TEXT,
+                    change_class TEXT,
+                    tier_at_event INTEGER,
+                    merged_by TEXT,
+                    deterministic_verdict TEXT,
+                    judgment TEXT,
+                    notes TEXT
+                )"""
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trust_ledger_ts "
+                "ON trust_ledger_events(ts)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trust_ledger_event_type "
+                "ON trust_ledger_events(event_type)"
             )
         # Record schema version if not already present
         cur = self.conn.execute(
