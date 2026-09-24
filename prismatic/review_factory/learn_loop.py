@@ -98,7 +98,24 @@ MODE_PROPOSE = "propose"
 OUTCOME_CLEAN = "clean"
 OUTCOME_ROLLED_BACK = "rolled_back"
 OUTCOME_ESCALATED = "escalated"
-OUTCOMES = frozenset({OUTCOME_CLEAN, OUTCOME_ROLLED_BACK, OUTCOME_ESCALATED})
+# Jev validation-loop outcomes (plan §6): drift-correction signals for the
+# weekly self-review. Recording them changes nothing about the disabled
+# policy posture — they are data only, proposals only, human-approved only.
+OUTCOME_MERGED = "merged"
+OUTCOME_HUMAN_OVERRRODE_PAUSE = "human_overrode_pause"
+OUTCOME_HUMAN_OVERRRODE_DETERMINISTIC = "human_overrode_deterministic"
+OUTCOME_JEV_PAUSE_PRECISION = "jev_pause_precision"
+OUTCOMES = frozenset(
+    {
+        OUTCOME_CLEAN,
+        OUTCOME_ROLLED_BACK,
+        OUTCOME_ESCALATED,
+        OUTCOME_MERGED,
+        OUTCOME_HUMAN_OVERRRODE_PAUSE,
+        OUTCOME_HUMAN_OVERRRODE_DETERMINISTIC,
+        OUTCOME_JEV_PAUSE_PRECISION,
+    }
+)
 
 DIRECTION_TIGHTEN = "tighten"
 DIRECTION_LOOSEN = "loosen"
@@ -696,6 +713,22 @@ class LearnLoop:
 
     def record_outcome(self, job_id: str, outcome: str) -> dict[str, Any]:
         """Record one outcome for a decided merge. Event-path entry point.
+
+        Outcome types (plan §6):
+        - ``clean`` / ``rolled_back`` / ``escalated`` — mechanical ground
+          truth from the merge/rollback path (rolled back = bad merge, an
+          explicit clean outcome after ``good_after_days`` = good merge).
+        - ``merged`` — the merge completed and stayed merged through the
+          review window; the dogfood clean-merge signal (Michael's review
+          outcome on a Jimmy-subagent PR).
+        - ``human_overrode_pause`` — a human merged through a Jev pause
+          (ESCALATE). Disagreement with the pause.
+        - ``human_overrode_deterministic`` — a human merged through a
+          deterministic REPAIR/REJECT verdict.
+        - ``jev_pause_precision`` — a human resolved an ESCALATE and agreed
+          with the pause. Pause precision (agreement vs override) is read
+          from which outcome row was recorded, not from a flag on this call —
+          the signature stays ``(job_id, outcome)``.
 
         Fail-closed: refuses while disabled or misconfigured, on an unknown
         job_id, on a duplicate (append-only — no silent overwrites), and
