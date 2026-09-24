@@ -1,0 +1,36 @@
+# Merge-bar calibration — PROPOSAL ONLY.
+#
+# status: proposed. The deterministic bar must NOT read this file until a
+# human flips `status` to `approved` (see load_calibration() in
+# prismatic/review_factory/calibrate.py, which refuses any other status).
+# Nothing here is applied automatically: disagreements are resolved by
+# editing this proposal, not by waiting for more data.
+#
+# This committed file is the initial proposal with safe defaults (plan §5):
+# strict on tests/verification, advisory on lint/style, tier ceiling 1 —
+# the current shadow-v3 posture. Run
+# `python -m prismatic.review_factory.calibrate` to regenerate it from
+# real merged-PR history; the regenerated proposal still requires human
+# approval before the live bar may read it.
+#
+# The never_red set is NOT calibratable — hardcoded in calibrate.py
+# (plan §10).
+
+version: merge_bar_calibration_v1
+status: proposed
+demonstrated_bar:
+  checks_tolerated_red:
+    - ruff-lint
+    - cancelled-runs
+  checks_never_red:
+    - tests
+    - verification-receipt
+  tier_ceiling_without_human: 1
+rollback_signals: []
+evidence:
+  merged_prs_scanned: 0
+  prs_with_check_data: 0
+  history_thin: true
+  per_check: []
+generated_by: initial proposal (safe defaults; no history scan yet)
+generated_at: 2026-09-23T00:00:00+00:00
