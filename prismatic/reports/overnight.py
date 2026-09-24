@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from prismatic.run_records import AgentRunRecordStore
+from prismatic.review_factory.digest import (
+    build_autonomy_section,
+    collect_autonomy_inputs,
+)
 
 DEFAULT_REPORT_DIR = Path("~/.prismatic/reports").expanduser()
 DEFAULT_STATE_DIR = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
@@ -48,6 +52,7 @@ class OvernightReport:
     })
     cost_by_agent: dict[str, float] = field(default_factory=dict)
     data_quality: list[str] = field(default_factory=list)
+    autonomy: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -129,6 +134,24 @@ def _classify_deliverable(output_path: str | None) -> dict[str, str] | None:
     return None
 
 
+def _load_autonomy() -> dict:
+    """Load the bounded autonomy digest; never breaks report generation."""
+    try:
+        inputs = collect_autonomy_inputs()
+        if inputs.get("unavailable"):
+            return {
+                "status": "unavailable",
+                "reason": inputs.get("reason", "unknown"),
+            }
+        return build_autonomy_section(
+            tier_status=inputs.get("tier_status"),
+            revocations=inputs.get("revocations"),
+            brake_engaged=inputs.get("brake_engaged", False),
+        )
+    except Exception as exc:  # fail closed: degrade, never break the report
+        return {"status": "unavailable", "reason": str(exc)[:200]}
+
+
 def generate_report(hours: int = 12, report_dir: Path = DEFAULT_REPORT_DIR) -> OvernightReport:
     now = _utc_now()
     window_start = now - timedelta(hours=hours)
@@ -174,6 +197,11 @@ def generate_report(hours: int = 12, report_dir: Path = DEFAULT_REPORT_DIR) -> O
     report.horizon_activity["coding"] = sum(agent_counts.values())
 
     _load_costs(report, report_dir)
+    report.autonomy = _load_autonomy()
+    if report.autonomy.get("status") == "unavailable":
+        report.data_quality.append(
+            f"autonomy section unavailable: {report.autonomy.get('reason', 'unknown')}"
+        )
     return report
 
 
@@ -188,13 +216,50 @@ def render_html(report: OvernightReport) -> str:
         for item in report.deliverables
     ) or "<li>No deliverables discovered in run records.</li>"
     quality = "".join(f"<li>{html.escape(msg)}</li>" for msg in report.data_quality) or "<li>All configured data sources loaded.</li>"
+
+    autonomy = report.autonomy or {}
+    if autonomy.get("status") == "unavailable":
+        autonomy_block = (
+            "<p>Autonomy ledger unavailable: "
+            f"{html.escape(str(autonomy.get('reason', 'unknown')))}.</p>"
+        )
+    else:
+        progress = (
+            "".join(
+                f"<li>{html.escape(str(line))}</li>"
+                for line in autonomy.get("progress") or []
+            )
+            or "<li>No progress data.</li>"
+        )
+        pauses = autonomy.get("jev_pauses") or {}
+        precision = pauses.get("precision")
+        precision_text = (
+            f"{precision:.2f}" if isinstance(precision, (int, float)) else "n/a"
+        )
+        brake_engaged = (autonomy.get("brake") or {}).get("engaged", False)
+        revocations = autonomy.get("revocations") or []
+        truncated = autonomy.get("revocations_truncated_away", 0)
+        revocation_text = f"{len(revocations)}" + (
+            f" (+{truncated} truncated)" if truncated else ""
+        )
+        janitor = autonomy.get("janitor") or {}
+        autonomy_block = (
+            f"<p>Tier <strong>{html.escape(str(autonomy.get('tier')))}</strong> · "
+            f"brake {'<strong>engaged</strong>' if brake_engaged else 'disengaged'} · "
+            f"jev pauses {html.escape(str(pauses.get('total')))} "
+            f"(precision {html.escape(precision_text)}) · "
+            f"revocations {html.escape(revocation_text)} · "
+            f"janitor removed {html.escape(str(janitor.get('removed', 0)))}</p>"
+            f"<ul>{progress}</ul>"
+        )
+
     return f"""<!doctype html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><title>Prismatic Overnight Briefing</title>
 <style>body{{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;padding:2rem}}.card{{max-width:880px;margin:auto;border:1px solid #30363d;border-radius:14px;padding:1.5rem;background:#161b22}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem}}.metric{{border:1px solid #30363d;border-radius:10px;padding:1rem}}.metric strong{{display:block;font-size:1.7rem;color:#58a6ff}}code{{color:#7ee787}}</style></head>
 <body><main class=\"card\"><h1>Overnight Factory Briefing</h1><p>Generated <code>{html.escape(report.generated_at)}</code> over <code>{html.escape(report.factory_duration)}</code>.</p>
 <div class=\"grid\"><div class=\"metric\">Processed<strong>{data['tasks_processed']}</strong></div><div class=\"metric\">Autonomous<strong>{data['tasks_autonomous']}</strong></div><div class=\"metric\">Needs hand<strong>{data['tasks_need_human']}</strong></div><div class=\"metric\">Cost<strong>${data['cost_dollars']:.2f}</strong></div></div>
-<h2>Needs hand</h2><ul>{needs}</ul><h2>Deliverables</h2><ul>{deliverables}</ul><h2>Data quality</h2><ul>{quality}</ul></main></body></html>"""
+<h2>Needs hand</h2><ul>{needs}</ul><h2>Deliverables</h2><ul>{deliverables}</ul><h2>Autonomy</h2>{autonomy_block}<h2>Data quality</h2><ul>{quality}</ul></main></body></html>"""
 
 
 def write_report(report: OvernightReport, report_dir: Path = DEFAULT_REPORT_DIR) -> tuple[Path, Path]:

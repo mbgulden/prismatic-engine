@@ -44,6 +44,26 @@ from prismatic.review_factory.policy import PolicyEngine
 from prismatic.review_factory.queue import ReviewQueue
 
 
+def _stub_autonomy_allowed(monkeypatch):
+    """Stub the phase-2 earned-autonomy module as allowing.
+
+    Phase-3 wiring gates MergeStage.process() on the autonomy consult,
+    which fails closed while the phase-2 module is absent. Tests that
+    exercise behavior downstream of the consult (executor paths, daemon
+    wiring) opt into an allowing stub; the consult's own fail-closed
+    posture is covered in test_earned_autonomy_wiring.py.
+    """
+    import sys
+    import types
+
+    autonomy = types.ModuleType("prismatic.review_factory.autonomy")
+    autonomy.brake_status = lambda: {"engaged": False}
+    autonomy.can_auto_merge = lambda **kwargs: SimpleNamespace(
+        allowed=True, reason="auto_merge_allowed"
+    )
+    monkeypatch.setitem(sys.modules, "prismatic.review_factory.autonomy", autonomy)
+
+
 # ── fixtures & helpers ─────────────────────────────────────────────
 
 
@@ -292,7 +312,11 @@ class TestMergeStage:
         assert "repo_path" in result.error
         assert queue.db.get_authorization_for_job(job_id) is None
 
-    def test_dry_run_passes_validation_without_mutation(self, queue, tmp_path):
+    def test_dry_run_passes_validation_without_mutation(
+        self, queue, tmp_path, monkeypatch
+    ):
+        job_id = _merge_ready_job(queue, tier=0)
+        _stub_autonomy_allowed(monkeypatch)
         job_id = _merge_ready_job(queue, tier=0)
         # The dry-run executor validates against the durable manifest the
         # daemon persisted; mirror that here.
@@ -357,6 +381,7 @@ class TestMergeStage:
     ):
         job_id = _merge_ready_job(queue, tier=0, task_id="GRO-1234")
         hooks, provider = _hooks(queue.db)
+        _stub_autonomy_allowed(monkeypatch)
 
         seen = {}
 
@@ -392,6 +417,7 @@ class TestMergeStage:
 
     def test_live_merge_failure_is_audited(self, queue, tmp_path, monkeypatch):
         job_id = _merge_ready_job(queue, tier=0)
+        _stub_autonomy_allowed(monkeypatch)
 
         class BoomExecutor:
             def __init__(self, **kwargs):
@@ -1249,6 +1275,7 @@ class TestDaemonMergeWiring:
 
         job_id = _merge_ready_job(queue, tier=0)
         calls = []
+        _stub_autonomy_allowed(monkeypatch)
 
         def _refuse(*args, **kwargs):
             calls.append(1)

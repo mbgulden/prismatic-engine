@@ -111,8 +111,9 @@ class MergeStageResult:
     """Outcome of one merge-stage decision."""
 
     job_id: str
-    action: str  # skipped_disabled | refused_tier | authorize_failed |
-    #            # dry_run_ok | merged | failed | judgment_escalated
+    action: str  # skipped_disabled | refused_tier | refused_autonomy |
+    #            # authorize_failed | dry_run_ok | merged | failed |
+    #            # judgment_escalated
     merge_sha: str = ""
     authorization_id: str = ""
     error: str = ""
@@ -220,6 +221,36 @@ class MergeStage:
         # escalates via apply_jev_advice and the merge is never authorized.
         if self._judgment_holds_for_human(job, job_id, tier):
             return MergeStageResult(job_id=job_id, action="judgment_escalated")
+
+        # Earned-autonomy tier consult (Phase 3 wiring): the phase-2 policy
+        # engine decides whether this tier/change-class may auto-merge.
+        # Fail-closed: any consult failure refuses. The consult runs in
+        # dry-run mode too — dry_run_ok means "would have merged under
+        # autonomy".
+        autonomy_allowed, autonomy_reason = self._autonomy_consult(job)
+        if not autonomy_allowed:
+            self._audit(
+                job_id,
+                "auto_merge_refused_autonomy",
+                {
+                    "risk_tier": tier,
+                    "reason": autonomy_reason,
+                    "note": (
+                        "earned-autonomy policy engine refused the merge; "
+                        "no authorization was created"
+                    ),
+                },
+            )
+            logger.info(
+                "auto-merge refused by autonomy consult for job %s: %s",
+                job_id,
+                autonomy_reason,
+            )
+            return MergeStageResult(
+                job_id=job_id,
+                action="refused_autonomy",
+                error=autonomy_reason,
+            )
 
         auth_id = self.queue.authorize_merge(job_id, actor=actor)
         if not auth_id:
@@ -534,6 +565,51 @@ class MergeStage:
                 exc,
             )
             return False
+
+    # ── earned-autonomy consult (lazy phase-2 boundary) ────────────
+
+    def _autonomy_consult(self, job: Any, judgment: Any = None) -> tuple[bool, str]:
+        """Consult the earned-autonomy tier engine for one merge candidate.
+
+        Returns (allowed, reason). Fail-closed: the merge is refused
+        whenever the phase-2 module is absent, the trust tier cannot be
+        read, or any part of the consult raises. While phases 1/2 are
+        unmerged every consult refuses with "autonomy_module_absent" —
+        the stage stays green and inert on the phase-1/2 boundary.
+        """
+        try:
+            from prismatic.review_factory import autonomy
+        except Exception:
+            logger.debug("earned-autonomy autonomy module absent; merge withheld")
+            return False, "autonomy_module_absent"
+        # The current earned tier comes from the phase-1 trust ledger (lazy
+        # boundary). On ANY failure treat the tier as 0: tier 0 never
+        # auto-merges, so the consult fails closed through can_auto_merge's
+        # own rules.
+        try:
+            from prismatic.review_factory import trust
+
+            ledger = trust.TrustLedger()
+            tier = int(ledger.tier_status())
+        except Exception as exc:
+            logger.debug("trust tier lookup failed (%s); treating tier as 0", exc)
+            tier = 0
+        try:
+            from prismatic.review_factory.merge_executor import classify_change_class
+
+            brake = autonomy.brake_status()
+            brake_engaged = bool(brake.get("engaged", True))
+            decision = autonomy.can_auto_merge(
+                tier=tier,
+                change_class=classify_change_class(job),
+                deterministic_verdict=getattr(job, "deterministic_verdict", "UNKNOWN"),
+                judgment=judgment,
+                brake_engaged=brake_engaged,
+            )
+            return bool(decision.allowed), str(decision.reason)
+        except Exception as exc:
+            logger.warning("earned-autonomy consult failed: %s", exc)
+            return False, "autonomy_consult_error"
 
     # ── audit helpers ────────────────────────────────────────────
 
