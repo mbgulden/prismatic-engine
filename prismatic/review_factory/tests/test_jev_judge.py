@@ -394,12 +394,45 @@ def stub_merge_executor(monkeypatch):
         def execute(self, job_id):
             return _FakeMergeResult()
 
+    def _classify_change_class(job):
+        value = getattr(job, "change_class", None)
+        if isinstance(value, str) and value.strip():
+            return value
+        return "sensitive"
+
     stub.MergeExecutor = _FakeExecutor
+    # Phase-3 wiring: MergeStage._autonomy_consult lazy-imports
+    # classify_change_class from this module; the stub must carry it.
+    stub.classify_change_class = _classify_change_class
     monkeypatch.setitem(sys.modules, "prismatic.review_factory.merge_executor", stub)
     return stub
 
 
-def test_merge_stage_proceeds_on_clear(monkeypatch, clear_jev_env, stub_merge_executor):
+@pytest.fixture
+def stub_autonomy_allowed(monkeypatch):
+    """Stub the phase-2 earned-autonomy module as allowing.
+
+    Phase-3 wiring gates MergeStage.process() on the autonomy consult,
+    which fails closed while the phase-2 module is absent. Tests that
+    exercise behavior downstream of the consult opt into an allowing
+    stub; the consult's own fail-closed posture is covered in
+    test_earned_autonomy_wiring.py.
+    """
+    import sys
+    import types
+
+    autonomy = types.ModuleType("prismatic.review_factory.autonomy")
+    autonomy.brake_status = lambda: {"engaged": False}
+    autonomy.can_auto_merge = lambda **kwargs: SimpleNamespace(
+        allowed=True, reason="auto_merge_allowed"
+    )
+    monkeypatch.setitem(sys.modules, "prismatic.review_factory.autonomy", autonomy)
+    return autonomy
+
+
+def test_merge_stage_proceeds_on_clear(
+    monkeypatch, clear_jev_env, stub_merge_executor, stub_autonomy_allowed
+):
     from prismatic.review_factory.merge_stage import MergeStage, MergeStageConfig
 
     _with_judgment_env(monkeypatch)
@@ -426,7 +459,7 @@ def test_merge_stage_proceeds_on_clear(monkeypatch, clear_jev_env, stub_merge_ex
 
 
 def test_merge_stage_judgment_fail_open(
-    monkeypatch, clear_jev_env, stub_merge_executor
+    monkeypatch, clear_jev_env, stub_merge_executor, stub_autonomy_allowed
 ):
     # A judge failure must never break the hot path: the deterministic
     # verdict stands and the merge proceeds.
