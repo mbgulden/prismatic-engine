@@ -112,7 +112,7 @@ class MergeStageResult:
 
     job_id: str
     action: str  # skipped_disabled | refused_tier | authorize_failed |
-    #            # dry_run_ok | merged | failed
+    #            # dry_run_ok | merged | failed | judgment_escalated
     merge_sha: str = ""
     authorization_id: str = ""
     error: str = ""
@@ -210,6 +210,16 @@ class MergeStage:
         # only — the pipeline is NEVER halted and nothing is quarantined
         # by this path. Inert while the novelty policy is disabled.
         self._novelty_screen(job, job_id)
+
+        # L2 judgment layer (Jev validation-loop plan section 8): Jev judges
+        # only what the deterministic floor cannot decide. CLEAN-only (jobs
+        # reach MERGE_READY only on a deterministic CLEAN; evaluate() asserts
+        # it), behind the default-off CallSiteGate("review_judgment") and the
+        # tiering rule (tier-0 trivial diffs skip). Fail-open: any judgment
+        # failure leaves the deterministic verdict standing. PAUSE on CLEAN
+        # escalates via apply_jev_advice and the merge is never authorized.
+        if self._judgment_holds_for_human(job, job_id, tier):
+            return MergeStageResult(job_id=job_id, action="judgment_escalated")
 
         auth_id = self.queue.authorize_merge(job_id, actor=actor)
         if not auth_id:
@@ -435,6 +445,95 @@ class MergeStage:
                 ),
             },
         )
+
+    # ── L2 judgment screen ─────────────────────────────────────────
+
+    def _judgment_holds_for_human(self, job: Any, job_id: str, tier: int) -> bool:
+        """Run the L2 Jev judgment screen on a merge-ready job.
+
+        Returns True only when Jev escalated CLEAN -> human review is
+        required (the caller must not authorize the merge). Everything else
+        -- gate closed, tier-0 skip, null judgment, CLEAR, any failure --
+        returns False: fail-open toward the deterministic result, since Jev
+        can only escalate.
+
+        Guarded like the #547 wiring: a judgment failure must never break
+        the hot path.
+
+        Note: on ESCALATE the job stays MERGE_READY (the human-wait state)
+        with merge authorization withheld -- that IS the pause-for-human the
+        plan's L3 describes. MERGE_READY has no ->QUARANTINED edge in the
+        state graph and quarantine_routing.py is explicitly shadow-only, so
+        no state transition is attempted here.
+        """
+        try:
+            from prismatic.jev.gates import CallSiteGate, apply_jev_advice
+            from prismatic.review_factory.judge import (
+                JUDGMENT_CALL_SITE,
+                artifact_from_review_job,
+                build_judge,
+                judgment_advice,
+                maybe_evaluate,
+            )
+        except Exception as exc:
+            logger.warning("judgment layer unavailable for %s: %s", job_id, exc)
+            return False
+        try:
+            if not CallSiteGate(JUDGMENT_CALL_SITE).allow():
+                return False
+            artifact = artifact_from_review_job(job)
+            judgment = maybe_evaluate(
+                build_judge(),
+                artifact,
+                "CLEAN",  # MERGE_READY is only reachable on deterministic CLEAN
+                tier=tier,
+                novelty_flagged=bool(artifact.get("novelty_flagged", False)),
+                first_time_author=bool(artifact.get("first_time_author", False)),
+            )
+            if judgment.skipped is not None:
+                self._audit(
+                    job_id,
+                    "merge_stage_judgment_skipped",
+                    {
+                        "judgment_skipped": judgment.skipped,
+                        "risk_tier": tier,
+                        "explicit_non_claims": list(judgment.explicit_non_claims),
+                    },
+                )
+                return False
+            self._audit(job_id, "merge_stage_judgment", judgment.to_audit_dict())
+            # The judge speaks {CLEAR, PAUSE}; the enforcer speaks
+            # {CLEAN, REPAIR, REJECT, ESCALATE} -- judgment_advice bridges
+            # the two vocabularies (PAUSE -> ESCALATE advice).
+            final = apply_jev_advice("CLEAN", judgment_advice(judgment))
+            if final == "ESCALATE":
+                self._audit(
+                    job_id,
+                    "merge_stage_judgment_escalated",
+                    {
+                        "decision": judgment.decision,
+                        "confidence": judgment.confidence,
+                        "trace_id": judgment.trace_id,
+                        "note": (
+                            "Jev escalated a deterministic-CLEAN job; merge "
+                            "authorization withheld for human review"
+                        ),
+                    },
+                )
+                logger.info(
+                    "judgment escalated job %s (trace %s); merge withheld",
+                    job_id,
+                    judgment.trace_id,
+                )
+                return True
+            return False
+        except Exception as exc:
+            logger.warning(
+                "judgment screen failed for %s (deterministic stands): %s",
+                job_id,
+                exc,
+            )
+            return False
 
     # ── audit helpers ────────────────────────────────────────────
 
