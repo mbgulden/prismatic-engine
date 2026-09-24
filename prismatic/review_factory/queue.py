@@ -1067,9 +1067,7 @@ class ReviewQueue:
         # carries it (F2): resolve_assigned_agent reads agent/agent_name/
         # target_agent keys from the payload.
         agent = (
-            (target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred"))
-            .strip()
-            .lower()
+            (target_agent or os.environ.get(_REPAIR_AGENT_ENV, "fred")).strip().lower()
         )
         if agent not in _REPAIR_DISPATCH_AGENTS:
             logger.warning("unknown repair agent %r; falling back to fred", agent)

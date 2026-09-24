@@ -88,13 +88,9 @@ def load_calibration(path: str | Path) -> dict[str, Any]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise CalibrationNotApproved(
-            f"cannot load calibration {path}: {exc}"
-        ) from exc
+        raise CalibrationNotApproved(f"cannot load calibration {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise CalibrationNotApproved(
-            f"refusing calibration {path}: not a mapping"
-        )
+        raise CalibrationNotApproved(f"refusing calibration {path}: not a mapping")
     if data.get("version") != PROPOSAL_VERSION:
         raise CalibrationNotApproved(
             f"refusing calibration {path}: version {data.get('version')!r} "
@@ -206,9 +202,7 @@ _REVERT_TITLE = re.compile(r"^\s*revert\b", re.IGNORECASE)
 _PR_REF = re.compile(r"#(\d+)")
 
 
-def scan_git_history(
-    repo: str | Path, limit: int = 200
-) -> list[dict[str, Any]]:
+def scan_git_history(repo: str | Path, limit: int = 200) -> list[dict[str, Any]]:
     """Read-only scan of merged-PR history.
 
     Returns one row per merged PR: ``number``, ``merged_at``, ``title``,
@@ -446,9 +440,7 @@ def main(argv: list[str] | None = None) -> int:
                 "checks_tolerated_red": proposal["demonstrated_bar"][
                     "checks_tolerated_red"
                 ],
-                "checks_never_red": proposal["demonstrated_bar"][
-                    "checks_never_red"
-                ],
+                "checks_never_red": proposal["demonstrated_bar"]["checks_never_red"],
                 "note": "status: proposed — not read by the live bar until "
                 "a human approves",
             },
