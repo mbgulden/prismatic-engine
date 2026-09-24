@@ -46,9 +46,7 @@ def test_rollback_site_invokes_record_outcome(monkeypatch):
             calls.append((job_id, outcome))
             return {"status": "ok"}
 
-    monkeypatch.setattr(
-        "prismatic.review_factory.learn_loop.LearnLoop", StubLoop
-    )
+    monkeypatch.setattr("prismatic.review_factory.learn_loop.LearnLoop", StubLoop)
     merge_executor._record_learn_loop_rollback_outcome("job-abc")
     assert calls == [("job-abc", "rolled_back")]
 
@@ -58,9 +56,7 @@ def test_rollback_site_swallows_learn_loop_failures(monkeypatch):
         def record_outcome(self, job_id, outcome):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(
-        "prismatic.review_factory.learn_loop.LearnLoop", FailingLoop
-    )
+    monkeypatch.setattr("prismatic.review_factory.learn_loop.LearnLoop", FailingLoop)
     # Must not raise: the hot path never breaks on a learn-loop failure.
     assert merge_executor._record_learn_loop_rollback_outcome("job-abc") is None
 
