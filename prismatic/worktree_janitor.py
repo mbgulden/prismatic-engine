@@ -9,10 +9,10 @@ and mutate only when explicitly asked.
 from __future__ import annotations
 
 import dataclasses
+import enum
 import json
 import os
 import re
-import shutil
 import subprocess
 import tarfile
 from datetime import datetime, timezone
@@ -558,6 +558,26 @@ def cli(argv: Sequence[str] | None = None) -> int:
     janitor.add_argument("--confirm-dirty-token", default=None, help="Exact token printed in manifest; required to delete dirty worktrees")
     janitor.add_argument("--stale-hours", type=float, default=24.0)
     janitor.add_argument("--quiet", action="store_true", help="Emit nothing when no removal occurred")
+    gc = sub.add_parser("janitor-gc", help="Branch GC: delete merged, aged local branches (Phase 5)")
+    gc.add_argument("--repo", default=None)
+    gc.add_argument(
+        "--mode",
+        default=Mode.ReportOnly.value,
+        choices=[m.value for m in Mode],
+        help="report-only (default): decide and log, never delete; apply: delete eligible branches",
+    )
+    gc.add_argument("--grace-days", type=int, default=7, help="Merged branches younger than this are kept")
+    gc.add_argument(
+        "--ledger",
+        action="store_true",
+        help="Enable the trust-ledger gate (lazy import; degrades to git-only checks when unavailable)",
+    )
+    gc.add_argument(
+        "--protect",
+        action="append",
+        default=[],
+        help="Extra protected branch name (repeatable)",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.command == "status":
@@ -581,5 +601,502 @@ def cli(argv: Sequence[str] | None = None) -> int:
             return 0
         print(json.dumps(payload, indent=2))
         return 0
+    if args.command == "janitor-gc":
+        # Earned-autonomy Phase 5: branch GC. Runs janitor_main and exits 0.
+        return janitor_main(
+            [
+                "--mode", args.mode,
+                "--grace-days", str(args.grace_days),
+            ]
+            + (["--ledger"] if args.ledger else [])
+            + [p for protect in (args.protect or []) for p in ("--protect", protect)]
+            + ((["--repo", args.repo] if args.repo else [])),
+        )
     parser.print_help()
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Earned-autonomy Phase 5: branch GC
+# ─────────────────────────────────────────────────────────────────────────────
+# Deletes *local branches* (not worktrees) that are fully merged into
+# origin/main and older than a grace period. Two modes:
+#   - report-only (default): classify every branch, log decisions, delete nothing
+#   - apply: really delete eligible branches with `git branch -d` (never -D)
+#
+# Safety properties (fail-closed throughout):
+#   - main, the current HEAD branch, and release/* branches are never eligible
+#   - branches with an open PR are never eligible
+#   - if open-PR status cannot be determined (no gh / no auth / API failure),
+#     NO branch is eligible ("open-PR status unknown (fail-closed)")
+#   - a branch whose tip is not an ancestor of origin/main is never eligible
+#   - a branch checked out in a dirty worktree is never eligible
+#   - when a trust ledger is supplied, a branch with no clean-merge ledger
+#     record is never eligible
+#   - deletion uses `git branch -d` only: the merge check already passed, and
+#     -d is the second guard (git refuses -d for unmerged branches)
+#
+# The trust ledger is an optional, lazy dependency: any trust-ledger reference
+# is imported inside functions, and every import failure degrades to the
+# git-only checks (documented below). This keeps Phase 5 independent of the
+# open earned-autonomy PRs #550-#553.
+#
+# NO cron/scheduler wiring is installed here. The janitor cron block is
+# Gate B / T1 activation and requires Michael's explicit approval.
+
+
+class Mode(enum.Enum):
+    """Janitor GC operating mode."""
+
+    ReportOnly = "report-only"
+    Apply = "apply"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BranchCandidate:
+    """One local branch classified for branch GC."""
+
+    branch: str
+    eligible: bool
+    reason: str
+    tip_sha: str = ""
+    tip_age_days: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+class JanitorManifestStore:
+    """Append-only JSONL decision log for branch GC.
+
+    Path: ``<repo>/.prismatic/janitor/<repo-name>-<mode>.jsonl``.
+
+    Entry schema (required keys, stable): ``ts``, ``repo``, ``branch``,
+    ``action``, ``mode``. ``action`` is ``"gc-deleted"`` or ``"gc-skipped"``.
+    Additive optional keys: ``reason``, ``tip_sha``, ``tip_age_days``,
+    ``delete_returncode``, ``delete_stderr``. Readers must tolerate unknown
+    keys; writers must keep the required keys.
+    """
+
+    def __init__(self, repo_root: str | os.PathLike[str]) -> None:
+        self.repo_root = Path(repo_root).resolve()
+        self.dir = self.repo_root / ".prismatic" / "janitor"
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    def path_for(self, mode: Mode) -> Path:
+        slug = _safe_slug(self.repo_root.name)
+        return self.dir / f"{slug}-{mode.value}.jsonl"
+
+    def record(
+        self,
+        *,
+        repo: str,
+        branch: str,
+        action: str,
+        mode: str,
+        reason: str = "",
+        **extra: Any,
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "repo": repo,
+            "branch": branch,
+            "action": action,
+            "mode": mode,
+            "reason": reason,
+        }
+        entry.update(extra)
+        target = self.path_for(Mode(mode))
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+        return entry
+
+
+def _load_ignored_branches(repo_root: str | os.PathLike[str]) -> set[str]:
+    """Branch names the janitor must never touch.
+
+    Sources (unioned, best-effort):
+      - ``<repo>/.prismatic/janitor/ignored-branches.txt`` — one branch per
+        line; blank lines and ``#`` comments are ignored.
+      - ``PRISMATIC_JANITOR_IGNORED`` env var — comma-separated branch names.
+    A missing/unreadable file yields an empty set (documented, not an error).
+    """
+    ignored: set[str] = set()
+    root = Path(repo_root)
+    ignore_file = root / ".prismatic" / "janitor" / "ignored-branches.txt"
+    try:
+        text = ignore_file.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            ignored.add(line)
+    for name in os.environ.get("PRISMATIC_JANITOR_IGNORED", "").split(","):
+        name = name.strip()
+        if name:
+            ignored.add(name)
+    return ignored
+
+
+def is_release_branch(branch: str) -> bool:
+    """True for the release line: ``release`` or ``release/*``."""
+    return branch == "release" or branch.startswith("release/")
+
+
+def _open_pr_branch_names(repo_root: str | os.PathLike[str]) -> set[str] | None:
+    """Head branch names with an open PR, or None when unknown (fail-closed).
+
+    Best-effort ``gh pr list``. Returns None on ANY failure — missing ``gh``,
+    no auth, non-zero exit, unparseable output — so callers treat every
+    branch as ineligible rather than risk deleting a branch under review.
+    """
+    try:
+        result = _run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--json",
+                "headRefName",
+                "--state",
+                "open",
+                "--limit",
+                "100",
+            ],
+            cwd=repo_root,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        items = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    try:
+        return {str(item["headRefName"]) for item in items if item.get("headRefName")}
+    except (TypeError, AttributeError):
+        return None
+
+
+def _worktree_branch_map(repo_root: str | os.PathLike[str]) -> dict[str, str] | None:
+    """Map branch name -> worktree path, or None if the listing is unusable.
+
+    A None return is fail-closed: callers skip branches rather than guess.
+    """
+    result = _run(["git", "worktree", "list", "--porcelain"], cwd=repo_root)
+    if result.returncode != 0:
+        return None
+    try:
+        mapping: dict[str, str] = {}
+        current_path: str | None = None
+        for line in result.stdout.splitlines():
+            if line.startswith("worktree "):
+                current_path = line[len("worktree ") :].strip()
+            elif line.startswith("branch ") and current_path is not None:
+                ref = line[len("branch ") :].strip()
+                name = (
+                    ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
+                )
+                mapping[name] = current_path
+            elif not line.strip():
+                current_path = None
+        return mapping
+    except Exception:
+        return None
+
+
+def _open_default_trust_ledger() -> Any | None:
+    """Best-effort handle to the review-factory trust ledger.
+
+    The ``prismatic.review_factory`` import happens lazily INSIDE this
+    function. Any failure (module absent because phases 1-3 are unmerged,
+    missing opener, constructor error) returns None: the GC then runs the
+    git-only checks. Documented degradation, never an exception.
+    """
+    try:
+        from prismatic.review_factory import trust as trust_mod
+    except Exception:
+        return None
+    opener = (
+        getattr(trust_mod, "open_ledger", None)
+        or getattr(trust_mod, "get_ledger", None)
+        or getattr(trust_mod, "TrustLedger", None)
+    )
+    if opener is None:
+        return None
+    try:
+        return opener()
+    except Exception:
+        return None
+
+
+def _ledger_has_clean_merge(trust_ledger: Any, branch: str) -> bool:
+    """True when the ledger records a clean merge of ``branch``.
+
+    Primary rule: an event with ``event_type == "merge"`` whose
+    ``event_data.artifact_id`` equals the branch name. Lenient fallback:
+    any event whose ``event_data`` mentions the branch name (covers
+    phase-3 ``record_merge_outcome`` shapes). Works with dict- or
+    object-shaped events; any ``events()`` failure counts as no record.
+    """
+    try:
+        events = trust_ledger.events()
+    except Exception:
+        return False
+    for event in events or []:
+        if isinstance(event, dict):
+            event_type = event.get("event_type")
+            data = event.get("event_data")
+        else:
+            event_type = getattr(event, "event_type", None)
+            data = getattr(event, "event_data", None)
+        if event_type == "merge":
+            artifact = (
+                data.get("artifact_id")
+                if isinstance(data, dict)
+                else getattr(data, "artifact_id", None)
+            )
+            if artifact == branch:
+                return True
+        try:
+            if branch and branch in json.dumps(data, default=str):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _tip_info(repo_root: Path, branch: str) -> tuple[str, float] | None:
+    """(tip_sha, tip_age_days) for a branch, or None when undeterminable."""
+    sha = _run(["git", "rev-parse", branch], cwd=repo_root)
+    ts = _run(["git", "log", "-1", "--format=%ct", branch], cwd=repo_root)
+    if sha.returncode != 0 or ts.returncode != 0:
+        return None
+    try:
+        age_days = (
+            datetime.now(timezone.utc).timestamp() - int(ts.stdout.strip())
+        ) / 86400.0
+    except (ValueError, OverflowError):
+        return None
+    return sha.stdout.strip(), max(0.0, age_days)
+
+
+def collect_gc_candidates(
+    repo_root: str | os.PathLike[str],
+    *,
+    grace_days: int = 7,
+    trust_ledger: Any | None = None,
+    protected_branches: frozenset[str] = frozenset(),
+) -> list[BranchCandidate]:
+    """Classify every local branch for branch GC. Pure collection: no deletions.
+
+    Skip reasons are evaluated in order; the first match wins and the branch
+    is ineligible. ``trust_ledger`` may be a ledger-like object with
+    ``events()``, the string ``"auto"`` (open the default ledger lazily),
+    or None (skip the ledger gate: git-only checks).
+    """
+    root = resolve_repo(repo_root)
+    branches = [
+        line
+        for line in _run(
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+            cwd=root,
+            check=True,
+        ).stdout.splitlines()
+        if line.strip()
+    ]
+    current = _run(["git", "branch", "--show-current"], cwd=root).stdout.strip()
+    ignored = set(_load_ignored_branches(root)) | set(protected_branches)
+    open_prs = _open_pr_branch_names(root)
+    # Best-effort refresh of origin/main. Failure degrades to the local
+    # origin/main ref; if that is missing/unrelated, merge-base fails and the
+    # branch is skipped as unmerged — never treated as eligible.
+    _run(["git", "fetch", "origin", "main", "--quiet"], cwd=root)
+    worktree_map = _worktree_branch_map(root)
+
+    ledger: Any | None = None
+    if trust_ledger is not None:
+        ledger = (
+            _open_default_trust_ledger() if trust_ledger == "auto" else trust_ledger
+        )
+
+    candidates: list[BranchCandidate] = []
+    for branch in branches:
+        tip = _tip_info(root, branch)
+        tip_sha = tip[0] if tip else ""
+        tip_age = tip[1] if tip else 0.0
+        reason: str | None = None
+        if branch == "main":
+            reason = "protected: main"
+        elif branch == current:
+            reason = "protected: current branch"
+        elif is_release_branch(branch):
+            reason = "protected: release branch"
+        elif branch in ignored:
+            reason = "protected: ignored"
+        elif open_prs is None:
+            reason = "open-PR status unknown (fail-closed)"
+        elif branch in open_prs:
+            reason = "protected: open PR"
+        elif (
+            _run(
+                ["git", "merge-base", "--is-ancestor", branch, "origin/main"],
+                cwd=root,
+            ).returncode
+            != 0
+        ):
+            reason = "unmerged into origin/main"
+        elif tip is None:
+            reason = "tip age unknown (fail-closed)"
+        elif tip_age < grace_days:
+            reason = f"merged but inside {grace_days}-day grace"
+        elif worktree_map is None:
+            reason = "worktree status unknown"
+        elif branch in worktree_map:
+            wt_status = _run(
+                ["git", "-C", worktree_map[branch], "status", "--porcelain"],
+                cwd=root,
+            )
+            if wt_status.returncode != 0:
+                reason = "worktree status unknown"
+            elif wt_status.stdout.strip():
+                reason = "dirty worktree"
+        if (
+            reason is None
+            and ledger is not None
+            and not _ledger_has_clean_merge(ledger, branch)
+        ):
+            reason = "no ledger record of clean merge"
+        candidates.append(
+            BranchCandidate(
+                branch=branch,
+                eligible=reason is None,
+                reason=reason or "eligible: merged, aged, clean",
+                tip_sha=tip_sha,
+                tip_age_days=tip_age,
+            )
+        )
+    return candidates
+
+
+def _delete_gc_branch(repo_root: Path, branch: str) -> tuple[bool, str]:
+    """Really delete one branch with `git branch -d`. Never -D.
+
+    -d is the second guard: git refuses to delete a branch whose tip is not
+    merged into its upstream/HEAD. Returns (ok, detail).
+    """
+    result = _run(["git", "branch", "-d", branch], cwd=repo_root)
+    detail = (result.stderr.strip() or result.stdout.strip())[:500]
+    return result.returncode == 0, detail
+
+
+def execute_janitor(
+    mode: Mode | str,
+    repo_root: str | os.PathLike[str] | None = None,
+    *,
+    grace_days: int = 7,
+    trust_ledger: Any | None = None,
+    protected_branches: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Run branch GC in ``mode`` and log every decision to the manifest.
+
+    Report-only: classify + log, never delete. Apply: delete branches with
+    ``eligible=True`` via ``git branch -d``; every other branch is logged as
+    ``gc-skipped`` with its reason. Returns a JSON-serializable summary.
+    """
+    mode = Mode(mode)
+    root = resolve_repo(repo_root)
+    candidates = collect_gc_candidates(
+        root,
+        grace_days=grace_days,
+        trust_ledger=trust_ledger,
+        protected_branches=protected_branches,
+    )
+    store = JanitorManifestStore(root)
+    deleted: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for candidate in candidates:
+        if mode is Mode.Apply and candidate.eligible:
+            ok, detail = _delete_gc_branch(root, candidate.branch)
+            if ok:
+                action = "gc-deleted"
+                reason = f"deleted via git branch -d ({detail})"
+                deleted.append(candidate.branch)
+            else:
+                action = "gc-skipped"
+                reason = f"delete failed: {detail}"
+                skipped.append({"branch": candidate.branch, "reason": reason})
+        else:
+            action = "gc-skipped"
+            reason = (
+                candidate.reason
+                if not candidate.eligible
+                else "report-only mode: no deletions"
+            )
+            skipped.append({"branch": candidate.branch, "reason": reason})
+        store.record(
+            repo=str(root),
+            branch=candidate.branch,
+            action=action,
+            mode=mode.value,
+            reason=reason,
+            tip_sha=candidate.tip_sha,
+            tip_age_days=round(candidate.tip_age_days, 2),
+        )
+    return {
+        "mode": mode.value,
+        "repo": str(root),
+        "grace_days": grace_days,
+        "manifest_path": str(store.path_for(mode)),
+        "deleted": deleted,
+        "skipped": skipped,
+        "candidates": [c.to_dict() for c in candidates],
+    }
+
+
+def janitor_main(
+    args: Sequence[str] | None = None,
+    repo_root: str | os.PathLike[str] | None = None,
+) -> int:
+    """CLI-style entry point for branch GC. Returns a process exit code."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="prismatic janitor gc")
+    parser.add_argument(
+        "--mode",
+        default=Mode.ReportOnly.value,
+        choices=[m.value for m in Mode],
+        help="report-only (default): decide and log, never delete; apply: delete eligible branches",
+    )
+    parser.add_argument("--repo", default=None)
+    parser.add_argument(
+        "--grace-days",
+        type=int,
+        default=7,
+        help="Merged branches younger than this many days are kept",
+    )
+    parser.add_argument(
+        "--ledger",
+        action="store_true",
+        help="Enable the trust-ledger gate (lazy import; degrades to git-only when unavailable)",
+    )
+    parser.add_argument(
+        "--protect",
+        action="append",
+        default=[],
+        help="Extra protected branch name (repeatable)",
+    )
+    ns = parser.parse_args(list(args) if args is not None else None)
+    root = resolve_repo(repo_root or ns.repo)
+    ledger = _open_default_trust_ledger() if ns.ledger else None
+    result = execute_janitor(
+        Mode(ns.mode),
+        root,
+        grace_days=ns.grace_days,
+        trust_ledger=ledger,
+        protected_branches=frozenset(ns.protect),
+    )
+    print(json.dumps(result, indent=2))
     return 0
