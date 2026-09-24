@@ -1076,9 +1076,12 @@ class LearnLoop:
         as an empty tuple; this method never raises.
         """
         try:
-            from prismatic.review_factory import trust
+            if ledger is None:
+                from prismatic.review_factory import trust
 
-            active = ledger if ledger is not None else trust.TrustLedger()
+                active = trust.TrustLedger()
+            else:
+                active = ledger
             proposal = active.check_graduation()
             if not proposal:
                 return ()
