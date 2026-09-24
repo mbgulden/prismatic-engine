@@ -212,12 +212,13 @@ class MergeExecutor:
             logger.error("Merge failed for %s: %s", job_id, exc)
             return MergeResult(job_id=job_id, success=False, error=str(exc))
 
-        # _execute_merge succeeded with a real merge SHA (the dry-run path
-        # returned above, so success here is a real merge): best-effort
-        # record the outcome in the earned-autonomy trust ledger. This block
-        # must never change the result — the merge already happened, and
-        # failing the result would misreport a completed merge.
-        self._record_trust_merge_outcome(job, result.merge_sha)
+        # _execute_merge succeeded (the dry-run path returned above): best-effort
+        # record successful real merges in the earned-autonomy trust ledger.
+        # Guarded on success + a real merge SHA; this block must never change
+        # the result — the merge already happened, and failing the result
+        # would misreport a completed merge.
+        if result.success and result.merge_sha:
+            self._record_trust_merge_outcome(job, result.merge_sha)
 
         return result
 
