@@ -75,6 +75,56 @@ jobs:
             tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
 
+
+  signal:
+    name: "signal (suite minus quarantine — must be green)"
+    # WS2 true-green signal. Blocking: the suite minus tests/quarantine.yaml
+    # must be 100% green. Self-hosted webtop-hermes runner (free minutes).
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package and release dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[release]"
+
+      - name: Run signal suite
+        run: python -m pytest tests --quarantine-mode=signal -q -p no:cacheprovider
+
+  extended:
+    name: "extended (full suite — informational)"
+    # WS2: the full 3,213-test suite including quarantined tests.
+    # Informational only — never blocks merge.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package and release dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[release]"
+
+      - name: Run extended suite
+        run: python -m pytest tests --quarantine-mode=extended -q -p no:cacheprovider
+
   review-factory-gate:
     name: "review factory gate (tier A)"
     # Self-hosted webtop-hermes runner — minutes are free. If the runner is
