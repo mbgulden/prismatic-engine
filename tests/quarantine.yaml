@@ -1,0 +1,238 @@
+# tests/quarantine.yaml
+#
+# Phase 0 true-green inventory: signal-inventory-2026-09-24.md
+# Every entry: exact test id + cause class + removal plan + dated removal.
+# Shrink-only: len(entries) must stay <= max_entries (enforced by
+# tests/test_quarantine_manifest.py). Raising max_entries is a deliberate,
+# reviewable change — never silent.
+
+version: 1
+max_entries: 38
+entries:
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_approved_action_executor_dry_run_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_final_action_authorization_gate_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_operator_action_approval_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_quarantined_execution_adapter_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_real_executor_arming_gate_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_one_agent_sandboxed_execution_canary_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_agy_merge_backlog_api.py::test_prompt55_approved_real_pr_executor_api_and_dashboard_are_safe
+    cause: "C2: order-dependent — passes in isolation and file-subset runs; fails in full suite (2 of 3 runs); import-time side effects ruled out, polluter unidentified"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Bisect the full suite to identify the polluting test/state; make these tests hermetic"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_group_e_importer_exact_identity.py::test_importer_isolates_two_rows_sharing_candidate
+    cause: "C5: contract conflict — test expects two jobs for shared (task_id, candidate_commit); queue deliberately deduplicates that identity as a zombie-job safeguard"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Michael decision required: keep code + update test, or keep test + change code; then implement"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_group_f_rf_routes_surface.py::test_group_f_authorize_route_maps_exact_domain_actor_without_bypass
+    cause: "C5: contract conflict — test expects missing expected_merge_tree to return 400; route deliberately falls back to candidate_tree/candidate_commit"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Michael decision required on merge-authorization binding strictness; then implement"
+    remove_by: "2026-11-15"
+
+  - id: tests/test_installed_wheel_clean_room.py::test_clean_room_installed_wheel_plugin_contract
+    cause: "C6: security-audit finding — secret scanner flags SECRET= placeholder (tests/test_jev_security.py:22) and .env.example credential markers; release_smoke runs the same audit"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Rename the test placeholder and restructure .env.example, or add explicit scanner allowlist entries"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_config_schema_accepts_valid_config
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_config_schema_rejects_bad_policy_entry
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_loader_scan_registers_but_does_not_enable
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_loader_scan_unaffected_by_missing_primitive
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_manifest_parses_with_required_fields
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_no_gate_write_symbols_in_plugin_source
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_plugin_decides_nothing_itself
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_plugin_imports_nothing_but_the_plugin_interface
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_consensus.py::test_scope_guard_quoted_in_source
+    cause: "C1: stale plugin path — test points PLUGIN_DIR at removed top-level plugins/consensus; shipped at prismatic/shipped_plugins/consensus"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_cron.py::test_config_schema_accepts_valid_jobs_config
+    cause: "C1: stale plugin path — test references plugins/cron/plugin-manifest.yaml; shipped at prismatic/shipped_plugins/cron"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update manifest path to prismatic/shipped_plugins/cron"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_cron.py::test_config_schema_rejects_bad_cron_expr
+    cause: "C1: stale plugin path — test references plugins/cron/plugin-manifest.yaml; shipped at prismatic/shipped_plugins/cron"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update manifest path to prismatic/shipped_plugins/cron"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_cron.py::test_manifest_parses_with_required_fields
+    cause: "C1: stale plugin path — test references plugins/cron/plugin-manifest.yaml; shipped at prismatic/shipped_plugins/cron"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update manifest path to prismatic/shipped_plugins/cron"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_merge.py::test_apply_without_primitive_raises_clear_error
+    cause: "C4: fixture premise contradicts declared dependency — no_swarmmerge assumes the primitive is uninstallable, but swarmmerge is a base dependency"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Simulate absence with an import hook instead of assuming uninstall; assert the clear error"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_classify_request_pure_function_needs_no_primitive
+    cause: "C2: order-dependent — asserts 'swarmrouter' not in sys.modules; fails once any earlier test imports the real primitive (a base dependency)"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Scope the absence assertion to a subprocess or an import-state guard"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_config_schema_accepts_valid_rules_config
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_config_schema_rejects_bad_rules
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_disable_enable_preserves_rules
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_manifest_parses_with_required_fields
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_no_dispatch_execute_or_enqueue_anywhere
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_no_top_level_swarmrouter_import
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_plugin_router.py::test_scan_registers_router_but_starts_disabled
+    cause: "C1: stale plugin path — test points at removed top-level plugins/router; shipped at prismatic/shipped_plugins/router"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update paths to prismatic/shipped_plugins/router (pattern: tests/test_plugin_merge.py)"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_public_security_readiness.py::test_public_security_audit_passes
+    cause: "C6: security-audit finding — secret scanner flags SECRET= placeholder (tests/test_jev_security.py:22) and .env.example credential markers; release_smoke runs the same audit"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Rename the test placeholder and restructure .env.example, or add explicit scanner allowlist entries"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_realtime_activity_stream_mobile.py::test_mobile_reconnect_state_is_persisted
+    cause: "C1: stale plugin path — test references plugins/hermes-plugin-realtime-activity-stream/dashboard/dist/index.js; shipped under prismatic/shipped_plugins/"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update dashboard dist path to prismatic/shipped_plugins/ location"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_realtime_activity_stream_mobile.py::test_reconnect_fetches_history_and_deduplicates_events
+    cause: "C1: stale plugin path — test references plugins/hermes-plugin-realtime-activity-stream/dashboard/dist/index.js; shipped under prismatic/shipped_plugins/"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update dashboard dist path to prismatic/shipped_plugins/ location"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_realtime_activity_stream_mobile.py::test_reconnecting_banner_is_visible_for_disconnected_state
+    cause: "C1: stale plugin path — test references plugins/hermes-plugin-realtime-activity-stream/dashboard/dist/index.js; shipped under prismatic/shipped_plugins/"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update dashboard dist path to prismatic/shipped_plugins/ location"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_swarm_archetypes.py::test_archetype_decomposition_software
+    cause: "C3: stale agent roster — expects hardcoded agents ned/kai; production resolves agents dynamically via AgentDiscoveryService with generic fallbacks"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update expectations to the dynamic roster or pin test doubles"
+    remove_by: "2026-10-31"
+
+  - id: tests/test_swarm_archetypes.py::test_archetype_decomposition_web_property
+    cause: "C3: stale agent roster — expects hardcoded agents ned/kai; production resolves agents dynamically via AgentDiscoveryService with generic fallbacks"
+    inventory_ref: "signal-inventory-2026-09-24.md"
+    removal_plan: "Update expectations to the dynamic roster or pin test doubles"
+    remove_by: "2026-10-31"

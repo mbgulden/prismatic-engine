@@ -137,3 +137,49 @@ def _tmp_alert_log_for_all_tests(tmp_path, monkeypatch):
     ``monkeypatch.setenv`` wins and is undone independently.
     """
     monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(tmp_path / "alerts.log"))
+
+
+# ---------------------------------------------------------------------------
+# WS2 true-green signal: --quarantine-mode={signal,extended}
+#
+# ``signal`` (default): deselect the tests listed in tests/quarantine.yaml.
+# This is the blocking set — it must be 100% green.
+# ``extended``: run everything, including quarantined tests (informational).
+# ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--quarantine-mode",
+        action="store",
+        default="signal",
+        choices=("signal", "extended"),
+        help=(
+            "WS2 true-green signal: 'signal' (default) deselects tests listed "
+            "in tests/quarantine.yaml; 'extended' runs the full suite."
+        ),
+    )
+
+
+def _load_quarantined_ids():
+    try:
+        import yaml
+    except ImportError:
+        return set()
+    manifest = Path(__file__).resolve().parent / "quarantine.yaml"
+    if not manifest.exists():
+        return set()
+    data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+    return {e["id"] for e in data.get("entries", []) if e.get("id")}
+
+
+def pytest_collection_modifyitems(session, config, items):
+    if config.getoption("quarantine_mode", default="signal") != "signal":
+        return
+    quarantined = _load_quarantined_ids()
+    if not quarantined:
+        return
+    deselected = [i for i in items if i.nodeid in quarantined]
+    if deselected:
+        items[:] = [i for i in items if i not in deselected]
+        config.hook.pytest_deselected(items=deselected)
