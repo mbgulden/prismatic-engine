@@ -338,3 +338,75 @@ def test_revocation_triggers_healthy_no_triggers():
         "pauses_trailing_30": 25,
     }
     assert autonomy.revocation_triggers(status) == []
+
+
+# ─────────────────────────────────────────────────────────────────────
+# autonomy_tiers_v2 — deterministic T1 entry (spec-only; loader unwired)
+# ─────────────────────────────────────────────────────────────────────
+
+_V2_PATH = autonomy._DEFAULT_SPEC_PATH.parent / "autonomy_tiers_v2.yaml"
+_V1_PATH = autonomy._DEFAULT_SPEC_PATH
+
+
+def _load_v2():
+    return autonomy.load_tier_policy(_V2_PATH)
+
+
+def test_v2_spec_loads_and_is_disabled_by_default():
+    spec = _load_v2()
+    assert spec["version"] == "autonomy-v2"
+    assert spec["enabled"] is False
+    assert spec["supersedes"] == "autonomy-v1"
+
+
+def test_v2_t1_has_deterministic_entry_criteria():
+    spec = _load_v2()
+    t1 = spec["tiers"][1]
+    assert t1["entry_criteria"] == "deterministic"
+    conds = t1["deterministic_conditions"]
+    assert conds == [
+        "ci_green",
+        "novelty_clean",
+        "no_policy_exclusions",
+        "deterministic_clean",
+        "receipt_emitted",
+    ]
+    assert set(t1["policy_exclusions"]) == {
+        "production_deploys",
+        "auth_security_paths",
+        "jev_paused",
+        "calibration_required_human",
+    }
+
+
+def test_v2_agreement_metric_scoped_to_gray_area():
+    spec = _load_v2()
+    assert spec["agreement_metric_scope"] == "gray_area_only"
+    # T2 (agent_standard and up) stays judgment-gated.
+    assert spec["tiers"][2]["entry_criteria"] == "agreement_gated"
+
+
+def test_v2_t3_stays_unbuilt_and_brake_fail_closed():
+    spec = _load_v2()
+    assert spec["tiers"][3]["auto_merge"] is False
+    assert spec["tiers"][3]["label"] == "unbuilt"
+    assert spec["brake"]["env_var"] == "PRISMATIC_AUTONOMY_ENABLED"
+    assert spec["brake"]["dashboard_switch"] is True
+    # T0 unchanged: PRs only, Michael merges.
+    assert spec["tiers"][0]["auto_merge"] is False
+    assert spec["tiers"][0]["classes"] == []
+
+
+def test_v1_spec_untouched_by_v2():
+    v1 = autonomy.load_tier_policy(_V1_PATH)
+    assert v1["version"] == "autonomy-v1"
+    assert "entry_criteria" not in v1["tiers"][1]
+    assert "agreement_metric_scope" not in v1
+
+
+def test_default_loader_still_points_at_v1():
+    # Until Gate B wiring, the engine must keep loading v1 (T0 active).
+    assert autonomy._DEFAULT_SPEC_PATH.name == "autonomy_tiers_v1.yaml"
+    assert _V2_PATH.exists()
+    default = autonomy.load_tier_policy()
+    assert default["version"] == "autonomy-v1"
