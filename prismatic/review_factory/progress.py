@@ -640,6 +640,243 @@ def _phase2_rows(
     ]
 
 
+# ─────────────────────────────────────────────────────────────────────
+# T1 deterministic "what blocks the next level" rows (item 5)
+# ─────────────────────────────────────────────────────────────────────
+# Display-only: mirrors the approved T1 conditions
+# (spec/autonomy_tiers_v2.yaml, item 2). ``met`` flags are copied from
+# ExitResult.checks — never computed here. Read-only: this view never
+# activates T1 and never writes state.
+
+T1_DETERMINISTIC_CLASSES = ("docs", "chore", "dep_bump")
+
+T1_DETERMINISTIC_CONDITIONS = (
+    ("ci_green", "CI green (incl. Review Factory)"),
+    ("novelty_clean", "Novelty-clean"),
+    ("no_policy_exclusions", "No policy exclusions"),
+    ("deterministic_clean", "Deterministic verdict CLEAN"),
+    ("receipt_emitted", "Signed receipt emitted"),
+)
+
+T1_STREAK_TARGET = 20
+
+
+def _t1_decision_clean(decision: Any) -> bool:
+    """Display mirror of the T1 clean rule: right class + all five conditions."""
+    if not isinstance(decision, dict):
+        return False
+    if decision.get("change_class") not in T1_DETERMINISTIC_CLASSES:
+        return False
+    return all(bool(decision.get(key)) for key, _ in T1_DETERMINISTIC_CONDITIONS)
+
+
+def _t1_clean_streak(decisions: list[Any]) -> int:
+    """Trailing consecutive run of clean T1 decisions, newest last."""
+    ordered = sorted(
+        (d for d in decisions if isinstance(d, dict)),
+        key=lambda d: str(d.get("timestamp", "")),
+    )
+    streak = 0
+    for decision in reversed(ordered):
+        if _t1_decision_clean(decision):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def _t1_streak_breaker(decisions: list[Any]) -> dict[str, Any] | None:
+    """Newest decision that is NOT clean — the one that broke (or blocks) the run."""
+    ordered = sorted(
+        (d for d in decisions if isinstance(d, dict)),
+        key=lambda d: str(d.get("timestamp", "")),
+    )
+    for decision in reversed(ordered):
+        if not _t1_decision_clean(decision):
+            return decision
+    return None
+
+
+def _t1_newest(decisions: list[Any]) -> dict[str, Any] | None:
+    dicts = [d for d in decisions if isinstance(d, dict)]
+    if not dicts:
+        return None
+    return max(dicts, key=lambda d: str(d.get("timestamp", "")))
+
+
+def _t1_checklist_line(decision: dict[str, Any]) -> str:
+    parts = [
+        ("✓ " if decision.get(key) else "✗ ") + key
+        for key, _ in T1_DETERMINISTIC_CONDITIONS
+    ]
+    return " · ".join(parts)
+
+
+def _t1_failed_labels(decision: dict[str, Any]) -> list[str]:
+    return [
+        label for key, label in T1_DETERMINISTIC_CONDITIONS if not decision.get(key)
+    ]
+
+
+def _phase0_deterministic_rows(
+    evidence: dict[str, Any], result: ExitResult
+) -> list[GateRow]:
+    """Phase 0→1 rows when the policy selects the deterministic exit path.
+
+    Shows the T1 activation state (read-only), the consecutive-clean streak,
+    the latest T1 PR's five-condition checklist with the exact failing
+    conditions named, plus the shared bad-merge / watchdog / signal rows.
+    """
+    decisions = evidence.get("deterministic_decisions", []) or []
+    signals = evidence.get("shadow_signals", []) or []
+    bad = evidence.get("bad_merge_calls", 0) or 0
+    checks = result.checks or {}
+
+    streak = _t1_clean_streak(decisions)
+    breaker = _t1_streak_breaker(decisions)
+    newest = _t1_newest(decisions)
+    t1_enabled = bool(evidence.get("t1_enabled", False))
+
+    rows: list[GateRow] = [
+        GateRow(
+            key="t1_activation",
+            label="T1 auto-merge",
+            current="on" if t1_enabled else "off — Gate B not activated",
+            target="Michael's Gate B approval",
+            met=t1_enabled,
+            fraction=None,
+            detail=(
+                ""
+                if t1_enabled
+                else "Read-only: this meter never activates T1. Activation is "
+                "Michael's explicit Gate B decision."
+            ),
+        ),
+    ]
+
+    streak_met = bool(
+        checks.get("min_consecutive_deterministic_clean", streak >= T1_STREAK_TARGET)
+    )
+    if streak_met:
+        streak_detail = ""
+    elif breaker is not None:
+        failed = _t1_failed_labels(breaker)
+        pr_ref = f"#{breaker.get('pr')}" if breaker.get("pr") is not None else "a PR"
+        if failed:
+            streak_detail = (
+                f"PR {pr_ref} broke the run — failed: {', '.join(failed)}. "
+                "The streak restarts with the next clean T1 PR."
+            )
+        else:
+            streak_detail = (
+                f"PR {pr_ref} is not a qualifying T1 decision "
+                f"(class: {breaker.get('change_class')}). "
+                "Only docs/chore/dep_bump PRs count toward the streak."
+            )
+    else:
+        streak_detail = (
+            "No T1 evidence yet — the streak starts with the first clean "
+            "docs/chore/dep_bump PR."
+        )
+    rows.append(
+        GateRow(
+            key="min_consecutive_deterministic_clean",
+            label="Consecutive clean T1 PRs",
+            current=f"{streak}/{T1_STREAK_TARGET}",
+            target=str(T1_STREAK_TARGET),
+            met=streak_met,
+            fraction=min(streak / T1_STREAK_TARGET, 1.0),
+            detail=streak_detail,
+        )
+    )
+
+    if newest is not None:
+        pr_ref = f"#{newest.get('pr')}" if newest.get("pr") is not None else ""
+        newest_clean = _t1_decision_clean(newest)
+        rows.append(
+            GateRow(
+                key="latest_t1_checklist",
+                label=f"Latest T1 PR {pr_ref}".rstrip(),
+                current=_t1_checklist_line(newest),
+                target="all five ✓",
+                met=newest_clean,
+                fraction=None,
+                detail=(
+                    ""
+                    if newest_clean
+                    else f"Blocking PR {pr_ref}: "
+                    f"{', '.join(_t1_failed_labels(newest))} failed."
+                ),
+            )
+        )
+    else:
+        rows.append(
+            GateRow(
+                key="latest_t1_checklist",
+                label="Latest T1 PR",
+                current="none yet",
+                target="all five ✓",
+                met=False,
+                fraction=None,
+                detail="",
+            )
+        )
+
+    bad_met = bool(checks.get("zero_bad_merge_calls", bad == 0))
+    rows.append(
+        GateRow(
+            key="zero_bad_merge_calls",
+            label="Bad merge calls",
+            current=str(bad),
+            target="0",
+            met=bad_met,
+            fraction=1.0 if bad == 0 else 0.0,
+            detail=(
+                ""
+                if bad_met
+                else f"{bad} PR(s) called 'merge' later needed repair, "
+                "rollback, or human revert."
+            ),
+        )
+    )
+
+    watchdog_met = bool(checks.get("watchdog_armed_monitor_only"))
+    rows.append(
+        GateRow(
+            key="watchdog_armed_monitor_only",
+            label="Watchdog",
+            current="armed (monitor-only)" if watchdog_met else "not armed",
+            target="armed",
+            met=watchdog_met,
+            fraction=None,
+            detail=(
+                ""
+                if watchdog_met
+                else "Arm the watchdog in monitor-only mode to unlock this gate."
+            ),
+        )
+    )
+
+    signals_met = bool(checks.get("all_shadow_signals_complete"))
+    rows.append(
+        GateRow(
+            key="all_shadow_signals_complete",
+            label="Shadow signals complete",
+            current=f"{len(signals)} emitted",
+            target="all complete",
+            met=signals_met,
+            fraction=None,
+            detail=(
+                ""
+                if signals_met
+                else "Some shadow signals are incomplete — the observer only "
+                "counts complete audit signals."
+            ),
+        )
+    )
+    return rows
+
+
 _ROW_BUILDERS = {
     0: _phase0_rows,
     1: _phase1_rows,
@@ -691,6 +928,11 @@ def build_report(
     to_phase = phase + 1
     result = evaluate_exit_criteria(phase, to_phase, evidence)
     builder = _ROW_BUILDERS.get(phase)
+    if phase == 0 and str(evidence.get("exit_path", "agreement")) in (
+        "deterministic",
+        "either",
+    ):
+        builder = _phase0_deterministic_rows
     if builder is None:
         rows: tuple[GateRow, ...] = ()
     elif phase == 2:
