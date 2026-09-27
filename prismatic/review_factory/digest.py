@@ -165,6 +165,55 @@ def _normalize_waivers(
     return items[:cap], truncated_away
 
 
+def _normalize_stranded(
+    stranded: Any, max_exceptions: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Bounded stranded-work lists for the no-strand pipeline (item 4).
+
+    Input is caller-supplied plain data — the digest never fetches PRs
+    itself (same discipline as contract_waivers):
+      {"approaching": [{"pr", "title", "age_days", "author"}],
+       "verdicts_issued": [{"pr", "verdict", "reason", "ts"}]}
+    "approaching" = fleet PRs nearing the 7-day verdict line, oldest first.
+    Returns (approaching[:cap], verdicts[:cap], truncated_away).
+    """
+    approaching: list[dict[str, Any]] = []
+    verdicts: list[dict[str, Any]] = []
+    if isinstance(stranded, dict):
+        raw_approaching = stranded.get("approaching")
+        if isinstance(raw_approaching, list):
+            for entry in raw_approaching:
+                if not isinstance(entry, dict):
+                    continue
+                approaching.append(
+                    {
+                        "pr": entry.get("pr"),
+                        "title": entry.get("title"),
+                        "age_days": entry.get("age_days"),
+                        "author": entry.get("author"),
+                    }
+                )
+        raw_verdicts = stranded.get("verdicts_issued")
+        if isinstance(raw_verdicts, list):
+            for entry in raw_verdicts:
+                if not isinstance(entry, dict):
+                    continue
+                verdicts.append(
+                    {
+                        "pr": entry.get("pr"),
+                        "verdict": entry.get("verdict"),
+                        "reason": entry.get("reason"),
+                        "ts": entry.get("ts") or entry.get("timestamp"),
+                    }
+                )
+    try:
+        cap = max(0, int(max_exceptions))
+    except (TypeError, ValueError):
+        cap = MAX_EXCEPTIONS
+    truncated_away = max(0, len(approaching) - cap) + max(0, len(verdicts) - cap)
+    return approaching[:cap], verdicts[:cap], truncated_away
+
+
 def build_autonomy_section(
     *,
     tier_status: dict | None = None,
@@ -174,13 +223,19 @@ def build_autonomy_section(
     max_exceptions: int = MAX_EXCEPTIONS,
     auto_merges: dict | None = None,
     contract_waivers: list | None = None,
+    stranded: dict | None = None,
 ) -> dict:
     """Build the bounded autonomy section dict. Never raises on None/empty inputs.
 
     Keys: tier, progress, auto_merges_by_tier, jev_pauses, revocations,
     revocations_truncated_away, contract_waivers,
-    contract_waivers_truncated_away, brake, janitor, frozen. Counts and
+    contract_waivers_truncated_away, stranded_work,
+    stranded_work_truncated_away, brake, janitor, frozen. Counts and
     bounded exception lists only — never raw event logs.
+
+    stranded: caller-supplied {"approaching": [...], "verdicts_issued": [...]}
+    for the no-strand pipeline — fleet PRs nearing the 7-day verdict line
+    and verdicts the janitor issued. The digest never fetches PRs itself.
 
     contract_waivers: plain-data list of {"pr", "title", "ts"} dicts for PRs
     carrying the contract-waiver label — the audited escape hatch. The
@@ -198,6 +253,9 @@ def build_autonomy_section(
         waiver_list, waivers_truncated_away = _normalize_waivers(
             contract_waivers, max_exceptions
         )
+        stranded_approaching, stranded_verdicts, stranded_truncated = (
+            _normalize_stranded(stranded, max_exceptions)
+        )
         return {
             "tier": status.get("current_tier") if status else None,
             "progress": summarize_progress(status),
@@ -213,6 +271,14 @@ def build_autonomy_section(
             "revocations_truncated_away": truncated_away,
             "contract_waivers": waiver_list,
             "contract_waivers_truncated_away": waivers_truncated_away,
+            "stranded_work": {
+                "approaching": stranded_approaching,
+                "verdicts_issued": stranded_verdicts,
+                "note": "no stranded work"
+                if not stranded_approaching and not stranded_verdicts
+                else None,
+            },
+            "stranded_work_truncated_away": stranded_truncated,
             "brake": {"engaged": bool(brake_engaged)},
             "janitor": dict(janitor)
             if isinstance(janitor, dict)

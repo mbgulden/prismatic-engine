@@ -302,3 +302,66 @@ def test_contract_waivers_garbage_never_raises():
         contract_waivers=[{"pr": "#1"}, "junk", None],
     )
     assert len(section["contract_waivers"]) == 1
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Stranded-work section (no-strand pipeline, item 4)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _stranded_input():
+    return {
+        "approaching": [
+            {"pr": 557, "title": "autonomy_tiers_v2 spec", "age_days": 6, "author": "muse"},
+            {"pr": 558, "title": "phase deterministic path", "age_days": 5, "author": "muse"},
+        ],
+        "verdicts_issued": [
+            {"pr": 550, "verdict": "merged", "reason": "deterministic-green", "ts": "2026-09-27T18:00:00Z"},
+        ],
+    }
+
+
+def test_stranded_work_renders_approaching_and_verdicts():
+    section = build_autonomy_section(stranded=_stranded_input())
+    sw = section["stranded_work"]
+    assert len(sw["approaching"]) == 2
+    assert sw["approaching"][0]["pr"] == 557
+    assert sw["approaching"][0]["age_days"] == 6
+    assert len(sw["verdicts_issued"]) == 1
+    assert sw["verdicts_issued"][0]["verdict"] == "merged"
+    assert sw["note"] is None
+    assert section["stranded_work_truncated_away"] == 0
+
+
+def test_stranded_work_empty_state():
+    section = build_autonomy_section()
+    sw = section["stranded_work"]
+    assert sw["approaching"] == []
+    assert sw["verdicts_issued"] == []
+    assert sw["note"] == "no stranded work"
+    assert section["stranded_work_truncated_away"] == 0
+
+
+def test_stranded_work_truncates_with_count():
+    big = {
+        "approaching": [
+            {"pr": i, "title": f"t{i}", "age_days": 6, "author": "muse"}
+            for i in range(MAX_EXCEPTIONS + 3)
+        ],
+        "verdicts_issued": [],
+    }
+    section = build_autonomy_section(stranded=big)
+    sw = section["stranded_work"]
+    assert len(sw["approaching"]) == MAX_EXCEPTIONS
+    assert section["stranded_work_truncated_away"] == 3
+
+
+def test_stranded_work_never_raises_on_garbage():
+    section = build_autonomy_section(stranded={"approaching": "nope", "verdicts_issued": [None, 42]})
+    sw = section["stranded_work"]
+    assert sw["approaching"] == []
+    assert sw["verdicts_issued"] == []
+    assert sw["note"] == "no stranded work"
+    # And the whole section still builds on total garbage.
+    section = build_autonomy_section(stranded=object())
+    assert section["stranded_work"]["note"] == "no stranded work"
