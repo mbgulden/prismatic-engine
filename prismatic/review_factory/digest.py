@@ -141,6 +141,30 @@ def _normalize_revocations(
     return items[:cap], truncated_away
 
 
+def _normalize_waivers(
+    waivers: Any, max_exceptions: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Bounded contract-waiver list, same shape discipline as revocations."""
+    items: list[dict[str, Any]] = []
+    if isinstance(waivers, list):
+        for entry in waivers:
+            if not isinstance(entry, dict):
+                continue
+            items.append(
+                {
+                    "pr": entry.get("pr"),
+                    "title": entry.get("title"),
+                    "ts": entry.get("ts") or entry.get("timestamp"),
+                }
+            )
+    try:
+        cap = max(0, int(max_exceptions))
+    except (TypeError, ValueError):
+        cap = MAX_EXCEPTIONS
+    truncated_away = max(0, len(items) - cap)
+    return items[:cap], truncated_away
+
+
 def build_autonomy_section(
     *,
     tier_status: dict | None = None,
@@ -149,12 +173,19 @@ def build_autonomy_section(
     janitor: dict | None = None,
     max_exceptions: int = MAX_EXCEPTIONS,
     auto_merges: dict | None = None,
+    contract_waivers: list | None = None,
 ) -> dict:
     """Build the bounded autonomy section dict. Never raises on None/empty inputs.
 
     Keys: tier, progress, auto_merges_by_tier, jev_pauses, revocations,
-    revocations_truncated_away, brake, janitor, frozen. Counts and bounded
-    exception lists only — never raw event logs.
+    revocations_truncated_away, contract_waivers,
+    contract_waivers_truncated_away, brake, janitor, frozen. Counts and
+    bounded exception lists only — never raw event logs.
+
+    contract_waivers: plain-data list of {"pr", "title", "ts"} dicts for PRs
+    carrying the contract-waiver label — the audited escape hatch. The
+    digest never fetches labels itself; callers supply the data (a GitHub
+    collector feeding this is a follow-up).
 
     janitor: full janitor totals arrive with phase 5; until then callers may
     pass their own dict or accept the "janitor phase pending" placeholder.
@@ -163,6 +194,9 @@ def build_autonomy_section(
         status = tier_status if isinstance(tier_status, dict) else None
         revocation_list, truncated_away = _normalize_revocations(
             revocations, max_exceptions
+        )
+        waiver_list, waivers_truncated_away = _normalize_waivers(
+            contract_waivers, max_exceptions
         )
         return {
             "tier": status.get("current_tier") if status else None,
@@ -177,6 +211,8 @@ def build_autonomy_section(
             },
             "revocations": revocation_list,
             "revocations_truncated_away": truncated_away,
+            "contract_waivers": waiver_list,
+            "contract_waivers_truncated_away": waivers_truncated_away,
             "brake": {"engaged": bool(brake_engaged)},
             "janitor": dict(janitor)
             if isinstance(janitor, dict)

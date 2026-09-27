@@ -55,10 +55,12 @@ jobs:
             prismatic/review_factory/ \
             scripts/release_check.py \
             scripts/release_smoke.py \
+            scripts/pr_contract_lint.py \
             scripts/public_launch_smoke.py \
             scripts/public_security_readiness_audit.py \
             scripts/dashboard_visual_qa.py \
             tests/test_plugin_load_gate.py \
+            tests/test_pr_contract_lint.py \
             tests/test_public_security_readiness.py \
             tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
@@ -67,14 +69,41 @@ jobs:
             prismatic/review_factory/ \
             scripts/release_check.py \
             scripts/release_smoke.py \
+            scripts/pr_contract_lint.py \
             scripts/public_launch_smoke.py \
             scripts/public_security_readiness_audit.py \
             scripts/dashboard_visual_qa.py \
             tests/test_plugin_load_gate.py \
+            tests/test_pr_contract_lint.py \
             tests/test_public_security_readiness.py \
             tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
 
+  contract-lint:
+    name: "PR contract lint (structure only)"
+    # WS3: every PR body must carry the contract sections (what changed /
+    # proof / negative paths / risk & rollback / local verification
+    # attestation). Mechanical structure check only — never judges quality.
+    # The `contract-waiver` label + a `## Waiver reason` section is the
+    # audited escape hatch (waiver use is surfaced in the autonomy digest).
+    # pull_request-only: push events have no PR body to check.
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lint PR body against the contract
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: printf '%s' "$PR_BODY" | python3 scripts/pr_contract_lint.py - --labels "$PR_LABELS"
 
   signal:
     name: "signal (suite minus quarantine — must be green)"
