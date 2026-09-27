@@ -1,0 +1,112 @@
+# Earned-autonomy tier policy — T1 deterministic entry (autonomy-v2).
+#
+# Versioned: v1 is frozen and untouched. This file supersedes v1 ONLY when
+# the loader is pointed at it (Gate B — Michael's explicit decision).
+# Until then, v1 remains the loaded spec and T0 stays the active behavior.
+#
+# What changed vs v1 (approved 2026-09-27):
+#   T1 entry is DETERMINISTIC. A PR in a T1 class (docs, chore, dep_bump)
+#   may auto-merge when ALL of these hold — no "agreement with Michael"
+#   metric is involved; there is nothing to agree about on a green docs PR:
+#     1. ci_green            — CI green, including the Review Factory gate
+#                              as a required check.
+#     2. novelty_clean       — the novelty detector raised no flags.
+#     3. no_policy_exclusions — none of: production_deploys,
+#                              auth_security_paths, jev_paused,
+#                              calibration_required_human.
+#     4. deterministic_clean — the factory's deterministic verdict is
+#                              CLEAN (Red is repair, never merge).
+#     5. receipt_emitted     — a signed merge receipt is emitted for the
+#                              merge (proof on every merge).
+#   The shadow-agreement metric is repurposed to gray-area calls only
+#   (agent_standard class and up) and gates T2 consideration, not T1.
+#
+# Unchanged from v1: T0 manual-only default; twofold brake (env var +
+# dashboard switch), fail-closed; T3 UNBUILT by Michael's decision —
+# the policy engine refuses tier 3 before the class table is consulted;
+# graduation counting (union streaks); revocation advisory;
+# promotion/demotion stay Michael's explicit decisions; zero-AI rule.
+
+version: autonomy-v2
+enabled: false
+supersedes: autonomy-v1
+activation: "Gate B — Michael's explicit decision. Until activated, the loader keeps v1."
+
+tiers:
+  0:
+    label: manual-only
+    classes: []
+    auto_merge: false
+    notes: "Active today. PRs only; Michael merges."
+  1:
+    label: docs-chore-deps
+    classes: [docs, chore, dep_bump]
+    auto_merge: true   # behind the brake (env var + dashboard switch)
+    entry_criteria: deterministic
+    deterministic_conditions:
+      - ci_green
+      - novelty_clean
+      - no_policy_exclusions
+      - deterministic_clean
+      - receipt_emitted
+    policy_exclusions:
+      - production_deploys
+      - auth_security_paths
+      - jev_paused
+      - calibration_required_human
+    graduation:
+      consecutive_clean: 20
+      pause_precision_floor: 0.80
+    notes: "T1 entry is deterministic: no shadow-agreement metric involved."
+  2:
+    label: agent-standard
+    classes: [docs, chore, dep_bump, agent_standard]
+    auto_merge: true   # behind the brake (env var + dashboard switch)
+    entry_criteria: agreement_gated
+    graduation:
+      consecutive_clean: 30
+      pause_precision_floor: 0.85
+    notes: "agent_standard and up stay judgment-gated; agreement metric applies here."
+  3:
+    label: unbuilt
+    classes: [docs, chore, dep_bump, agent_standard]
+    auto_merge: false  # UNBUILT by Michael's decision — never activates
+    graduation:
+      consecutive_clean: 50
+      pause_precision_floor: 0.85
+    excluded_classes:
+      - production_deploys
+      - auth_security_paths
+      - jev_paused
+      - calibration_required_human
+
+agreement_metric_scope: gray_area_only
+agreement_metric_notes: "The shadow-agreement metric measures gray-area calls
+  (agent_standard class and up) and gates T2 consideration. It no longer gates
+  T1. Deterministic work is judged by deterministic evidence, not by
+  agreement with Michael."
+
+revocation:
+  triggers: [rollback_in_30d, precision_collapse]
+  rollback_in_30d:
+    condition: "rollback_count_30d > 0"
+    action: "propose demotion to the prior tier (Michael's call)"
+  precision_collapse:
+    condition: "pause_precision < 0.50 with pauses_trailing_30 >= 20"
+    action: "propose demotion to the prior tier (Michael's call)"
+  notes: "Revocation is advisory. The mechanical revoke lives in the
+    phase-1 trust ledger; promotion and demotion stay Michael's explicit
+    decisions."
+
+brake:
+  env_var: PRISMATIC_AUTONOMY_ENABLED
+  engaged_values: ["0", "false", "no"]  # case-insensitive; unset = not engaged
+  dashboard_switch: true
+  notes: "Either the env var or the dashboard switch pulled refuses every
+    auto-merge. Default (unset): brake not engaged, T0 still refuses."
+
+zero_ai:
+  rule: docs_only_clean
+  notes: "Zero-AI runs are conservative by design: only docs changes with
+    a CLEAN deterministic verdict may auto-merge (note zero_ai_docs_only).
+    Everything else refuses zero_ai_conservative."
