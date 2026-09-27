@@ -1108,7 +1108,10 @@ class PhaseAdvancement:
         #    comes from the active policy unless the caller set it.
         evidence = dict(evidence)
         evidence.setdefault("agreement_metric", policy.agreement_metric)
-        evidence.setdefault("exit_path", policy.exit_path)
+        # exit_path selects WHICH gate runs, so the versioned policy is
+        # authoritative: a caller-supplied exit_path must not override it.
+        # (Independent safety review, item 2.)
+        evidence["exit_path"] = policy.exit_path
         exit_result = evaluate_exit_criteria(
             request.from_phase, request.to_phase, evidence
         )
