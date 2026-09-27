@@ -1,0 +1,50 @@
+# Phase policy — versioned config for the phase-advancement machinery (chunk 8).
+#
+# Versioned: never edit in place to change behavior — add a new versioned
+# file and let the machinery's discovery pick the highest version.
+#
+# v3 vs v2: identical ladder state (Phase 0, machinery HARD-DISABLED),
+# plus the `exit_path` flag for the Phase 0 exit gate (approved 2026-09-27):
+#   "agreement"     — legacy shadow-agreement gate (gray-area classes, T2).
+#   "deterministic" — T1 classes (docs/chore/dep_bump) enter Phase 1 on
+#                     deterministic evidence alone; no agreement metric.
+#   "either"        — transition aid: met when either path is met.
+# This file selects "deterministic". The agreement path remains available
+# via a future versioned file. With no deterministic-decisions evidence on
+# disk yet, the gate correctly reports not-met (fail-closed).
+#
+# Status: Phase 0 (shadow), machinery HARD-DISABLED. `advancements_enabled:
+# false` means PhaseAdvancement.execute() refuses every transition on the
+# master switch before any approval or evidence is examined. Enabling the
+# machinery is itself a versioned-file change that goes through the normal
+# review pipeline; advancing a phase additionally needs Michael's explicit
+# approval artifact (phase-advancement-approval/v1, approver below) AND the
+# mechanical exit criteria for that step.
+#
+# Revert: any phase reverts to a previous one by adding a newer versioned
+# file with the lower phase value — a config change, no code deploy.
+
+version: phase-v3
+phase: 0  # 0=shadow | 1=verify | 2=bounded-live | 3=tier23-human
+
+advancements_enabled: false
+
+# The ONLY identity whose approval artifact the machinery accepts.
+# Mirrors the watchdog policy's rearm_principal convention.
+approver: mbgulden
+
+# Agreement metric for the Phase 0 exit gate: "v1" | "v2".
+agreement_metric: "v1"
+
+# Phase 0 exit path: "agreement" | "deterministic" | "either".
+exit_path: "deterministic"
+
+# Per-chunk enablement states. Each chunk's own policy file is the
+# fine-grained switch; this section records the ladder's view of them.
+chunks:
+  shadow_observer: enabled_observe_only      # shadow_merge_policy_v2.yaml
+  merge_authority: hard_disabled             # auto_merge_policy_v1.yaml
+  watchdog: hard_disabled                    # watchdog_policy_v1.yaml (arm: monitor-only on Phase 0 exit)
+  novelty_quarantine: monitor_only
+  learn_loop: report_only
+  mirror_piggyback: enabled

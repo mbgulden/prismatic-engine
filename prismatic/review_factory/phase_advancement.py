@@ -90,6 +90,28 @@ PHASE_NAMES = {
     PHASE_3_TIER23_HUMAN: "tier23-human",
 }
 
+# Phase 0 -> 1 exit paths (approved 2026-09-27: T1 deterministic entry).
+# "agreement"     — legacy: shadow-agreement gate (gray-area classes, T2).
+# "deterministic" — T1 classes (docs/chore/dep_bump) enter Phase 1 on
+#                   deterministic evidence alone; no agreement metric involved.
+# "either"        — transition aid: met when either path is met.
+EXIT_PATH_AGREEMENT = "agreement"
+EXIT_PATH_DETERMINISTIC = "deterministic"
+EXIT_PATH_EITHER = "either"
+EXIT_PATHS = (EXIT_PATH_AGREEMENT, EXIT_PATH_DETERMINISTIC, EXIT_PATH_EITHER)
+
+# T1 change classes eligible for the deterministic exit path, and the five
+# deterministic conditions (mirrors spec/autonomy_tiers_v2.yaml).
+T1_DETERMINISTIC_CLASSES = ("docs", "chore", "dep_bump")
+DETERMINISTIC_CONDITIONS = (
+    "ci_green",
+    "novelty_clean",
+    "no_policy_exclusions",
+    "deterministic_clean",
+    "receipt_emitted",
+)
+DETERMINISTIC_CONSECUTIVE_CLEAN = 20
+
 REQUEST_SCHEMA = "phase-advancement-request/v1"
 APPROVAL_SCHEMA = "phase-advancement-approval/v1"
 
@@ -176,6 +198,11 @@ class PhasePolicy:
     # rate) or "v2" (decayed, outcome-classified). Default "v1": flipping
     # the flag is a versioned config change on Michael's word.
     agreement_metric: str = AGREEMENT_METRIC_V1
+    # Which Phase 0 exit path the gate evaluates: "agreement" (legacy),
+    # "deterministic" (T1 classes on deterministic evidence), or "either".
+    # Default "agreement": flipping the flag is a versioned config change
+    # on Michael's word. Unknown values raise (fail-closed).
+    exit_path: str = EXIT_PATH_AGREEMENT
     source_file: str = ""
 
     @classmethod
@@ -195,6 +222,11 @@ class PhasePolicy:
             raise PhaseAdvancementError(
                 f"phase policy has unknown agreement_metric {metric!r}: {source_file}"
             )
+        exit_path = str(data.get("exit_path", EXIT_PATH_AGREEMENT))
+        if exit_path not in EXIT_PATHS:
+            raise PhaseAdvancementError(
+                f"phase policy has unknown exit_path {exit_path!r}: {source_file}"
+            )
         return cls(
             version=str(data.get("version", "unknown")),
             phase=phase,
@@ -202,6 +234,7 @@ class PhasePolicy:
             approver=str(data.get("approver", "")),
             chunks=dict(data.get("chunks", {}) or {}),
             agreement_metric=metric,
+            exit_path=exit_path,
             source_file=source_file,
         )
 
@@ -249,6 +282,7 @@ def render_policy_yaml(policy: PhasePolicy) -> str:
         "advancements_enabled": policy.advancements_enabled,
         "approver": policy.approver,
         "agreement_metric": policy.agreement_metric,
+        "exit_path": policy.exit_path,
         "chunks": policy.chunks,
     }
     return yaml.safe_dump(data, sort_keys=False)
@@ -357,6 +391,74 @@ def check_phase0_exit(
         f"n_decided={stats['n_decided']} n_agreed={stats['n_agreed']} "
         f"rate={'%.3f' % rate if rate is not None else 'n/a'} "
         f"bad_merge_calls={bad_merge_calls} "
+        f"watchdog={watchdog.get('enabled')}/{watchdog.get('mode')} "
+        f"shadow_signals={len(signals)} complete={complete}"
+    )
+    return ExitResult(met=all(checks.values()), checks=checks, detail=detail)
+
+
+def _deterministic_decision_clean(decision: dict[str, Any]) -> bool:
+    """One T1-class PR decision is clean iff its class qualifies and all five
+    deterministic conditions hold (mirrors spec/autonomy_tiers_v2.yaml)."""
+    if not isinstance(decision, dict):
+        return False
+    if decision.get("change_class") not in T1_DETERMINISTIC_CLASSES:
+        return False
+    return all(bool(decision.get(cond)) for cond in DETERMINISTIC_CONDITIONS)
+
+
+def deterministic_clean_streak(decisions: list[dict[str, Any]]) -> int:
+    """Trailing consecutive run of clean T1-class deterministic decisions
+    (newest last). Any non-qualifying or unclean decision breaks the streak."""
+    ordered = sorted(decisions, key=lambda d: str(d.get("timestamp", "")))
+    streak = 0
+    for decision in reversed(ordered):
+        if _deterministic_decision_clean(decision):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def check_phase0_exit_deterministic(evidence: dict[str, Any]) -> ExitResult:
+    """Phase 0 -> 1 exit via the deterministic path (T1 classes only).
+
+    Approved 2026-09-27: T1 entry is deterministic — no shadow-agreement
+    metric involved. Enters Phase 1 (verify) for the T1 change classes when
+    the trailing DETERMINISTIC_CONSECUTIVE_CLEAN qualifying PRs each met all
+    five deterministic conditions. The agreement path remains for
+    agent_standard+ classes (T2 consideration).
+
+    Pure: evidence is already-parsed data, never fetched here.
+    Expected keys:
+      - deterministic_decisions: [{change_class, timestamp, ci_green,
+        novelty_clean, no_policy_exclusions, deterministic_clean,
+        receipt_emitted}] (newest last; missing -> empty -> not met)
+      - bad_merge_calls: int
+      - shadow_signals: list of emitted shadow audit-signal dicts
+      - watchdog: {enabled: bool, mode: str} parsed from the watchdog policy
+    """
+    decisions = evidence.get("deterministic_decisions", []) or []
+    bad_merge_calls = int(evidence.get("bad_merge_calls", 0))
+    signals = evidence.get("shadow_signals", [])
+    watchdog = evidence.get("watchdog", {}) or {}
+
+    watchdog_ok = (
+        bool(watchdog.get("enabled")) and watchdog.get("mode") == "monitor-only"
+    )
+    complete = all(_shadow_signal_complete(s) for s in signals) if signals else False
+    streak = deterministic_clean_streak(decisions)
+
+    checks = {
+        "min_consecutive_deterministic_clean": streak
+        >= DETERMINISTIC_CONSECUTIVE_CLEAN,
+        "zero_bad_merge_calls": bad_merge_calls == 0,
+        "watchdog_armed_monitor_only": watchdog_ok,
+        "all_shadow_signals_complete": complete,
+    }
+    detail = (
+        f"exit_path=deterministic streak={streak}/{DETERMINISTIC_CONSECUTIVE_CLEAN} "
+        f"n_decisions={len(decisions)} bad_merge_calls={bad_merge_calls} "
         f"watchdog={watchdog.get('enabled')}/{watchdog.get('mode')} "
         f"shadow_signals={len(signals)} complete={complete}"
     )
@@ -496,9 +598,48 @@ def evaluate_exit_criteria(
             detail=f"no exit criteria defined for {from_phase} -> {to_phase}",
         )
     if (from_phase, to_phase) == (PHASE_0_SHADOW, PHASE_1_VERIFY):
-        # The agreement metric version rides in the evidence bundle; the
-        # heartbeat (main()) sets it from the active phase policy.
-        # Default "v1": callers that predate the flag get legacy behavior.
+        # The exit path and agreement metric version ride in the evidence
+        # bundle; the heartbeat (main()) sets them from the active phase
+        # policy. Defaults preserve legacy behavior; unknown values fail
+        # closed.
+        exit_path = str(evidence.get("exit_path", EXIT_PATH_AGREEMENT))
+        if exit_path == EXIT_PATH_DETERMINISTIC:
+            return check_phase0_exit_deterministic(evidence)
+        if exit_path == EXIT_PATH_EITHER:
+            agreement_result = check_phase0_exit(
+                evidence,
+                agreement_metric=str(
+                    evidence.get("agreement_metric", AGREEMENT_METRIC_V1)
+                ),
+            )
+            deterministic_result = check_phase0_exit_deterministic(evidence)
+            checks = {
+                f"agreement_{k}": v
+                for k, v in agreement_result.checks.items()
+            }
+            checks.update(
+                {
+                    f"deterministic_{k}": v
+                    for k, v in deterministic_result.checks.items()
+                }
+            )
+            met = agreement_result.met or deterministic_result.met
+            detail = (
+                f"exit_path=either agreement_met={agreement_result.met} "
+                f"deterministic_met={deterministic_result.met} | "
+                f"agreement: {agreement_result.detail} | "
+                f"deterministic: {deterministic_result.detail}"
+            )
+            return ExitResult(met=met, checks=checks, detail=detail)
+        if exit_path != EXIT_PATH_AGREEMENT:
+            return ExitResult(
+                met=False,
+                checks={"known_exit_path": False},
+                detail=(
+                    f"unknown exit_path {exit_path!r}; refusing (expected "
+                    "'agreement', 'deterministic', or 'either')"
+                ),
+            )
         return check_phase0_exit(
             evidence,
             agreement_metric=str(evidence.get("agreement_metric", AGREEMENT_METRIC_V1)),
@@ -967,6 +1108,7 @@ class PhaseAdvancement:
         #    comes from the active policy unless the caller set it.
         evidence = dict(evidence)
         evidence.setdefault("agreement_metric", policy.agreement_metric)
+        evidence.setdefault("exit_path", policy.exit_path)
         exit_result = evaluate_exit_criteria(
             request.from_phase, request.to_phase, evidence
         )
@@ -990,6 +1132,7 @@ class PhaseAdvancement:
             approver=policy.approver,
             chunks=dict(policy.chunks),
             agreement_metric=policy.agreement_metric,
+            exit_path=policy.exit_path,
         )
         policy_file = self.spec_dir / f"phase_policy_v{next_version}.yaml"
         policy_file.write_text(render_policy_yaml(new_policy), encoding="utf-8")
@@ -1179,6 +1322,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     # bundle; the heartbeat stamps the active policy's flag in. Callers that
     # build evidence by hand get the legacy default ("v1").
     evidence["agreement_metric"] = policy.agreement_metric
+    evidence["exit_path"] = policy.exit_path
 
     result = evaluate_exit_criteria(from_phase, to_phase, evidence)
     state: dict[str, Any] = {
