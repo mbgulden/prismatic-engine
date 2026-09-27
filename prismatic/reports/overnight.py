@@ -243,6 +243,23 @@ def render_html(report: OvernightReport) -> str:
             f" (+{truncated} truncated)" if truncated else ""
         )
         janitor = autonomy.get("janitor") or {}
+        waivers = autonomy.get("contract_waivers") or []
+        waivers_truncated = autonomy.get("contract_waivers_truncated_away", 0)
+        waiver_text = f"{len(waivers)}" + (
+            f" (+{waivers_truncated} truncated)" if waivers_truncated else ""
+        )
+        waiver_items = "".join(
+            f"<li>{html.escape(str(item.get('pr') or '?'))} — "
+            f"{html.escape(str(item.get('title') or ''))}</li>"
+            for item in waivers
+            if isinstance(item, dict)
+        )
+        waiver_block = (
+            f"<p>Contract waivers (audited): {html.escape(waiver_text)}</p>"
+            f"<ul>{waiver_items}</ul>"
+            if waivers
+            else "<p>Contract waivers (audited): 0</p>"
+        )
         autonomy_block = (
             f"<p>Tier <strong>{html.escape(str(autonomy.get('tier')))}</strong> · "
             f"brake {'<strong>engaged</strong>' if brake_engaged else 'disengaged'} · "
@@ -251,6 +268,7 @@ def render_html(report: OvernightReport) -> str:
             f"revocations {html.escape(revocation_text)} · "
             f"janitor removed {html.escape(str(janitor.get('removed', 0)))}</p>"
             f"<ul>{progress}</ul>"
+            f"{waiver_block}"
         )
 
     return f"""<!doctype html>
