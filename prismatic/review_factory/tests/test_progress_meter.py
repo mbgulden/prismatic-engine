@@ -304,3 +304,133 @@ def test_cli_main_json_is_valid(tmp_path, capsys):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert "gates" in payload and "ready" in payload
+
+
+# ─────────────────────────────────────────────────────────────────────
+# T1 deterministic "what blocks the next level" rows (item 5)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _t1_decision(pr: int, day: int, cls: str = "docs", **over) -> dict:
+    decision = {
+        "pr": pr,
+        "timestamp": f"2026-09-{day:02d}T10:00:00Z",
+        "change_class": cls,
+        "ci_green": True,
+        "novelty_clean": True,
+        "no_policy_exclusions": True,
+        "deterministic_clean": True,
+        "receipt_emitted": True,
+    }
+    decision.update(over)
+    return decision
+
+
+def _det_evidence(*decisions, **over) -> dict:
+    evidence = {"exit_path": "deterministic", "deterministic_decisions": list(decisions)}
+    evidence.update(over)
+    return evidence
+
+
+def _rows_by_key(report):
+    return {row.key: row for row in report.rows}
+
+
+def test_deterministic_rows_render_streak_activation_and_checklist():
+    evidence = _det_evidence(
+        _t1_decision(557, 25), _t1_decision(558, 26), _t1_decision(559, 27)
+    )
+    report = build_report(0, True, evidence)
+    rows = _rows_by_key(report)
+    # T1 activation state is read-only and off.
+    assert rows["t1_activation"].current == "off — Gate B not activated"
+    assert rows["t1_activation"].met is False
+    assert "never activates T1" in rows["t1_activation"].detail
+    # Streak bar.
+    assert rows["min_consecutive_deterministic_clean"].current == "3/20"
+    assert rows["min_consecutive_deterministic_clean"].met is False
+    # Latest PR checklist: all five pass.
+    latest = rows["latest_t1_checklist"]
+    assert latest.label == "Latest T1 PR #559"
+    assert latest.current.count("✓") == 5
+    assert latest.current.count("✗") == 0
+    assert latest.met is True
+    assert latest.detail == ""
+
+
+def test_deterministic_rows_name_exact_failing_conditions():
+    evidence = _det_evidence(
+        _t1_decision(557, 25),
+        _t1_decision(558, 26, ci_green=False, receipt_emitted=False),
+    )
+    report = build_report(0, True, evidence)
+    rows = _rows_by_key(report)
+    latest = rows["latest_t1_checklist"]
+    assert latest.met is False
+    assert latest.current.count("✗") == 2
+    assert "ci_green" in latest.current and "receipt_emitted" in latest.current
+    # The exact failed conditions are named, not a generic "blocked".
+    assert "CI green (incl. Review Factory)" in latest.detail
+    assert "Signed receipt emitted" in latest.detail
+    assert "Novelty-clean" not in latest.detail
+    streak = rows["min_consecutive_deterministic_clean"]
+    assert streak.current == "0/20"  # newest decision is the breaker
+    assert "#558" in streak.detail
+    assert "CI green (incl. Review Factory)" in streak.detail
+
+
+def test_deterministic_rows_streak_counts_only_trailing_run():
+    evidence = _det_evidence(
+        _t1_decision(555, 23, ci_green=False),  # old breaker
+        _t1_decision(556, 24),
+        _t1_decision(557, 25),
+        _t1_decision(558, 26, cls="agent_standard"),  # non-T1 breaks the run
+        _t1_decision(559, 27),
+    )
+    report = build_report(0, True, evidence)
+    rows = _rows_by_key(report)
+    assert rows["min_consecutive_deterministic_clean"].current == "1/20"
+    assert "#558" in rows["min_consecutive_deterministic_clean"].detail
+
+
+def test_deterministic_rows_empty_evidence_renders_zeros():
+    report = build_report(0, True, _det_evidence())
+    rows = _rows_by_key(report)
+    assert rows["min_consecutive_deterministic_clean"].current == "0/20"
+    assert rows["latest_t1_checklist"].current == "none yet"
+    assert "No T1 evidence yet" in rows["min_consecutive_deterministic_clean"].detail
+
+
+def test_agreement_path_rows_unchanged_without_exit_path():
+    evidence = {"shadow_records": _agreed_records(30)}
+    report = build_report(0, True, evidence)
+    rows = _rows_by_key(report)
+    assert "t1_activation" not in rows
+    assert "min_prs_resolved" in rows  # legacy agreement row still there
+
+
+def test_deterministic_report_never_mutates_evidence():
+    evidence = _det_evidence(_t1_decision(557, 25), _t1_decision(558, 26))
+    snapshot = json.dumps(evidence, sort_keys=True)
+    build_report(0, True, evidence)
+    render_status(build_report(0, True, evidence))
+    status_json(build_report(0, True, evidence))
+    assert json.dumps(evidence, sort_keys=True) == snapshot
+
+
+def test_deterministic_status_json_contract():
+    evidence = _det_evidence(_t1_decision(558, 26, novelty_clean=False))
+    payload = status_json(build_report(0, True, evidence))
+    keys = {gate["key"] for gate in payload["gates"]}
+    assert {"t1_activation", "min_consecutive_deterministic_clean", "latest_t1_checklist"} <= keys
+    by_key = {gate["key"]: gate for gate in payload["gates"]}
+    assert by_key["latest_t1_checklist"]["detail"] != ""
+    assert "Novelty-clean" in by_key["latest_t1_checklist"]["detail"]
+
+
+def test_deterministic_render_smoke():
+    evidence = _det_evidence(_t1_decision(558, 26, ci_green=False))
+    text = render_status(build_report(0, True, evidence))
+    assert "T1 auto-merge" in text
+    assert "Consecutive clean T1 PRs" in text
+    assert "Latest T1 PR #558" in text
