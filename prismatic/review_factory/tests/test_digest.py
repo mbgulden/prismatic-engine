@@ -262,3 +262,43 @@ def test_load_autonomy_when_collect_raises(monkeypatch):
     result = overnight_mod._load_autonomy()
     assert result["status"] == "unavailable"
     assert "ledger on fire" in result["reason"]
+
+
+def test_contract_waivers_default_empty():
+    section = build_autonomy_section(tier_status=_tier_status())
+    assert section["contract_waivers"] == []
+    assert section["contract_waivers_truncated_away"] == 0
+
+
+def test_contract_waivers_listed_bounded():
+    waivers = [
+        {"pr": f"#{100 + i}", "title": f"waiver {i}", "ts": "2026-09-25T00:00:00Z"}
+        for i in range(3)
+    ]
+    section = build_autonomy_section(
+        tier_status=_tier_status(), contract_waivers=waivers
+    )
+    assert len(section["contract_waivers"]) == 3
+    assert section["contract_waivers"][0]["pr"] == "#100"
+    assert section["contract_waivers_truncated_away"] == 0
+
+
+def test_contract_waivers_truncated_with_count():
+    waivers = [{"pr": f"#{i}", "title": "w"} for i in range(MAX_EXCEPTIONS + 4)]
+    section = build_autonomy_section(
+        tier_status=_tier_status(), contract_waivers=waivers
+    )
+    assert len(section["contract_waivers"]) == MAX_EXCEPTIONS
+    assert section["contract_waivers_truncated_away"] == 4
+
+
+def test_contract_waivers_garbage_never_raises():
+    section = build_autonomy_section(
+        tier_status=_tier_status(), contract_waivers="not-a-list"
+    )
+    assert section["contract_waivers"] == []
+    section = build_autonomy_section(
+        tier_status=_tier_status(),
+        contract_waivers=[{"pr": "#1"}, "junk", None],
+    )
+    assert len(section["contract_waivers"]) == 1
