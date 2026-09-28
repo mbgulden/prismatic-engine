@@ -4420,6 +4420,68 @@ class EventRouterDedup:
             ).fetchone()
             return row[0] if row else 0
 
+    def acquire_dispatch_slot(self, issue_id: str) -> tuple[int, bool]:
+        """Atomically check the dispatch cap and reserve a slot.
+
+        Cross-process atomic check-and-increment for the dispatch cap
+        (GRO-2979): the read, the cap decision, and the conditional
+        increment happen inside a single ``BEGIN IMMEDIATE`` write
+        transaction, so two processes can never both pass the check for
+        the last slot. (``self._lock`` only serializes threads within
+        this process; the IMMEDIATE transaction serializes processes.)
+
+        Returns ``(count, over_cap)``. When over cap, the count is left
+        unchanged and no slot is consumed. Otherwise the counter is
+        incremented and ``stuck_notified_at`` is cleared (like
+        ``record_dispatch``) so a fresh storm re-notifies.
+
+        This is the commit-point primitive: call it immediately before
+        launching, not as a separate check-then-act pair.
+        """
+        with self._lock:
+            self._ensure_dispatch_counts_table()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT count, last_dispatched_at FROM dispatch_counts "
+                    "WHERE issue_id = ?",
+                    (issue_id,),
+                ).fetchone()
+                count = row[0] if row else 0
+                last_at = (row[1] if row else None) or 0.0
+                window_seconds = self.MAX_DISPATCH_WINDOW_HOURS * 3600
+                over_cap = (
+                    count >= self.MAX_DISPATCH_COUNT_PER_ISSUE
+                    and (time.time() - last_at) <= window_seconds
+                )
+                if over_cap:
+                    self._conn.execute("ROLLBACK")
+                    return count, True
+                now = time.time()
+                self._conn.execute(
+                    """INSERT INTO dispatch_counts
+                           (issue_id, count, last_dispatched_at,
+                            first_dispatched_at)
+                       VALUES (?, 1, ?, ?)
+                       ON CONFLICT(issue_id) DO UPDATE SET
+                           count = count + 1,
+                           last_dispatched_at = ?,
+                           stuck_notified_at = NULL""",
+                    (issue_id, now, now, now),
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            row = self._conn.execute(
+                "SELECT count FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            return (row[0] if row else 0), False
+
     def is_over_dispatch_cap(
         self, issue_id: str, *, window_hours: int | None = None
     ) -> bool:
@@ -4448,6 +4510,37 @@ class EventRouterDedup:
             return False
         window_seconds = window_hours * 3600
         return (time.time() - last_at) <= window_seconds
+
+    def reset_dispatch_cap(self, issue_id: str) -> dict:
+        """Operator recovery: clear the dispatch-cap episode for *issue_id*.
+
+        Deletes the ``dispatch_counts`` row, resetting the count, the
+        sliding window, and the stuck-notification state, so dispatch can
+        resume immediately without waiting for window expiry. Returns a
+        before/after dict for the operator to inspect.
+        """
+        with self._lock:
+            self._ensure_dispatch_counts_table()
+            row = self._conn.execute(
+                "SELECT count, last_dispatched_at, first_dispatched_at, "
+                "stuck_notified_at FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            before = (
+                {
+                    "count": row[0],
+                    "last_dispatched_at": row[1],
+                    "first_dispatched_at": row[2],
+                    "stuck_notified_at": row[3],
+                }
+                if row
+                else None
+            )
+            self._conn.execute(
+                "DELETE FROM dispatch_counts WHERE issue_id = ?", (issue_id,)
+            )
+            self._conn.commit()
+            return {"issue_id": issue_id, "reset": True, "before": before}
 
     def close(self) -> None:
         self._conn.close()
@@ -5123,6 +5216,29 @@ def dispatch_once(
                             "cycle_id": cycle_id,
                         }
                     )
+                # ── Dispatch cap: atomic acquire (GRO-2979) ──────
+                # The advisory is_over_dispatch_cap check above can race
+                # across processes (check-then-act). Re-check and reserve
+                # the slot atomically at the commit point — the last
+                # statement before the launch — so the counter can never
+                # overshoot the cap.
+                try:
+                    _slot_count, _slot_over_cap = dedup.acquire_dispatch_slot(issue_id)
+                except Exception as exc:
+                    # Cap telemetry is best-effort; never block dispatch.
+                    print(f"[dispatcher] dispatch-cap acquire failed: {exc}")
+                    _slot_over_cap = False
+                if _slot_over_cap:
+                    print(
+                        f"[dispatcher] \u26a0\ufe0f  STUCK {agent_name} \u2192 "
+                        f"{identifier}: cap reached at commit point; "
+                        "skipping launch."
+                    )
+                    counts.setdefault("stuck", 0)
+                    counts["stuck"] += 1
+                    continue
+                # ── End dispatch cap ─────────────────────────────
+
                 result = launcher(issue_id, **launch_kwargs)
                 if result:
                     dedup.mark_processed(issue_id, label, cycle_id)
@@ -5167,11 +5283,8 @@ def dispatch_once(
                         )
                     # ── End process observer/token drain ───────────────
                     # ── Dispatch counter (GRO-2979) ──────────────────
-                    # Bump per-issue counter so the cap can detect storms.
-                    try:
-                        dedup.record_dispatch(issue_id)
-                    except Exception as exc:
-                        print(f"[dispatcher] record_dispatch failed: {exc}")
+                    # Slot was reserved atomically at the commit point above
+                    # (acquire_dispatch_slot); no post-launch increment.
                     # ── End dispatch counter ──────────────────────────
                     # Emit agent_launched event to IPC bridge
                     _emit_agent_event(
@@ -5488,6 +5601,34 @@ def cmd_doctor(args: Any) -> int:
     return _doctor_run(args)
 
 
+def cmd_reset_dispatch_cap(args: Any) -> int:
+    """Operator recovery after a dispatch-cap episode.
+
+    Clears the dispatch counter / stuck state for one issue so dispatch can
+    resume immediately without waiting for the sliding window to expire.
+    Defaults to the production dedup DB; --db targets a different one.
+    """
+    dedup = EventRouterDedup(db_path=args.db) if args.db else EventRouterDedup()
+    try:
+        state = dedup.reset_dispatch_cap(args.issue_id)
+    finally:
+        dedup.close()
+    if args.json:
+        print(json.dumps(state, indent=2, default=str))
+        return 0
+    before = state["before"]
+    if before is None:
+        print(f"No dispatch-cap record for {args.issue_id}; nothing to reset.")
+        return 0
+    print(f"Dispatch-cap episode cleared for {args.issue_id}:")
+    print(f"  count was:            {before['count']}")
+    print(f"  first dispatched at:  {before['first_dispatched_at']}")
+    print(f"  last dispatched at:   {before['last_dispatched_at']}")
+    print(f"  stuck notified at:    {before['stuck_notified_at']}")
+    print("Dispatch may now resume for this issue.")
+    return 0
+
+
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
@@ -5626,6 +5767,16 @@ def main() -> None:
     )
     doctor_parser.add_argument("--provider", default=None)
 
+    cap_parser = subparsers.add_parser(
+        "reset-dispatch-cap",
+        help="Operator recovery: clear a dispatch-cap episode for one issue",
+    )
+    cap_parser.add_argument("issue_id", help="Issue ID, e.g. GRO-1234")
+    cap_parser.add_argument(
+        "--db", default=None, help="Dedup DB path (default: production)"
+    )
+    cap_parser.add_argument("--json", action="store_true", help="Emit JSON")
+
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
         parser.print_help()
@@ -5664,6 +5815,8 @@ def main() -> None:
         cmd_billing_report(args)
     elif args.command == "doctor":
         sys.exit(cmd_doctor(args))
+    elif args.command == "reset-dispatch-cap":
+        sys.exit(cmd_reset_dispatch_cap(args))
     elif args.command == "serve":
         if args.setup_pipelines:
             issues = setup_pipeline_issues()
