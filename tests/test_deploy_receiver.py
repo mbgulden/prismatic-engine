@@ -534,3 +534,41 @@ class TestDeploySourceDecoupling:
         # appended, not substituted (Sep 22, 2026 incident).
         assert "rsync died: No space left on device" in record.failure_reason
         assert "Post-deploy health check failed" in record.failure_reason
+class TestDeployReceiverAuthLogging:
+    """2026-09-28: failed HMAC auth must be visible in the receiver log."""
+
+    def _client(self, monkeypatch):
+        import json
+        monkeypatch.setenv("DEPLOY_HMAC_SECRET", "test-secret-for-auth-logging")
+        # Keep the app build hermetic: no real source repo, no strict secrets.
+        monkeypatch.setenv("PRISMATIC_ALLOW_DEFAULT_HMAC", "1")
+        from fastapi.testclient import TestClient
+        from pe.deploy.receiver import create_deploy_receiver_app
+        return TestClient(create_deploy_receiver_app())
+
+    def test_bad_signature_returns_401_and_logs_warning(self, monkeypatch, caplog):
+        import logging
+        client = self._client(monkeypatch)
+        with caplog.at_level(logging.WARNING, logger="pe.deploy.receiver"):
+            resp = client.post(
+                "/deploy",
+                json={"repository": "mbgulden/prismatic-engine", "pr_sha": "deadbeef"},
+                headers={"X-Hub-Signature-256": "sha256=wrong"},
+            )
+        assert resp.status_code == 401
+        assert any(
+            "bad HMAC signature" in rec.getMessage() for rec in caplog.records
+        ), "expected a warning log for the rejected trigger"
+
+    def test_missing_signature_returns_401_and_logs_warning(self, monkeypatch, caplog):
+        import logging
+        client = self._client(monkeypatch)
+        with caplog.at_level(logging.WARNING, logger="pe.deploy.receiver"):
+            resp = client.post(
+                "/deploy",
+                json={"repository": "mbgulden/prismatic-engine", "pr_sha": "deadbeef"},
+            )
+        assert resp.status_code == 401
+        assert any(
+            "bad HMAC signature" in rec.getMessage() for rec in caplog.records
+        ), "expected a warning log for the rejected trigger"

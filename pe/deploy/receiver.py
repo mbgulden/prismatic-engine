@@ -1451,6 +1451,15 @@ def create_deploy_receiver_app() -> Any:
         if not verify_hmac_signature(
             body_bytes, x_hub_signature_256, secret=hmac_secret
         ):
+            # 2026-09-28: failed auth was silent -- log the source so probing
+            # is visible in the receiver log. Observability only (no blocking):
+            # the receiver listens on localhost/tailnet, not the open internet.
+            client = request.client.host if request.client else "unknown"
+            logger.warning(
+                "deploy trigger rejected: bad HMAC signature from %s (repo %s)",
+                client,
+                repository,
+            )
             raise HTTPException(
                 status_code=401, detail="Invalid or missing HMAC signature"
             )
