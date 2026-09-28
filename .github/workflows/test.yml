@@ -105,6 +105,40 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: printf '%s' "$PR_BODY" | python3 scripts/pr_contract_lint.py - --labels "$PR_LABELS"
 
+  triage-unit-tests:
+    name: "triage unit tests (failure classifier + retry executor)"
+    # 2026-09-28: prismatic/review_factory/tests/ was never executed in CI
+    # (testpaths=["tests"] and no workflow ran it), so the retry executor's
+    # own tests shipped un-gated -- including 3 tests red on main since #496.
+    # This job runs them. Blocking: the active-retry safety logic must stay
+    # green. Self-hosted webtop-hermes runner (free minutes).
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install pyyaml pytest
+
+      - name: Run triage unit tests
+        # Scoped to the triage files (not the whole tests/ dir): the dir also
+        # holds unrelated suites, e.g. test_jev_artifact_verdict.py is broken
+        # at collection on main (imports a VerdictValidationError that does
+        # not exist in verdict.py) -- out of scope for this job, flagged
+        # separately. This job gates exactly the active-retry safety logic.
+        run: >-
+          python -m pytest
+          prismatic/review_factory/tests/test_failure_triage.py
+          prismatic/review_factory/tests/test_triage_actions.py
+          prismatic/review_factory/tests/test_failure_triage_shadow_driver.py
+          -q -p no:cacheprovider
+
   signal:
     name: "signal (suite minus quarantine — must be green)"
     # WS2 true-green signal. Blocking: the suite minus tests/quarantine.yaml
