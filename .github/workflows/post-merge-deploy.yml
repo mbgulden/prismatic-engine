@@ -12,6 +12,15 @@ on:
         type: boolean
         default: true
 
+# Latest-wins: a newer main push cancels a stale queued/running older
+# deploy trigger (observed 2026-09-28: a queue-lagged #568 hook
+# redeployed an older SHA over the live release). The receiver-side
+# monotonicity guard is the choke point; this stops stale runs at
+# the source. Safe: the real deploy runs in the receiver, not here.
+concurrency:
+  group: post-merge-deploy-main
+  cancel-in-progress: true
+
 jobs:
   post-merge-deploy:
     # Self-hosted webtop-hermes runner (free minutes; GitHub-hosted
