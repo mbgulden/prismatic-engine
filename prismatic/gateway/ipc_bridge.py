@@ -61,6 +61,10 @@ VALID_TYPES = {
     "deploy.started", "deploy.succeeded", "deploy.failed", "deploy.rolled_back",
     # Review Factory: repair redispatch budget exhausted (Phase A fix).
     "review_factory.repair_exhausted",
+    # Cron overhaul WI-4: native cron registry mutations (dashboard actions,
+    # CLI) and scheduled-run writebacks (crontab wrapper) — drive the live
+    # crons tab.
+    "cron.mutated", "cron.run_recorded",
 }
 
 
@@ -391,6 +395,39 @@ def deploy_event_ws_forwarder(broadcast):
         except Exception:
             logger.warning(
                 "deploy-event forwarder: broadcast of %s failed",
+                event_type,
+                exc_info=True,
+            )
+
+    return _forward
+
+
+def cron_event_ws_forwarder(broadcast):
+    """Build an EventBus handler relaying cron.* events to /ws clients.
+
+    Cron overhaul WI-4: the dashboard's crons tab goes live. ``mutate()``
+    and the run-recorder writeback publish ``cron.mutated`` /
+    ``cron.run_recorded`` to the EventBus (in-process from the gateway,
+    over the IPC bridge from crontab/CLI processes). Subscribing the
+    handler this returns in the server lifespan forwards those events to
+    the dashboard's /ws connection so the tab refreshes without a manual
+    reload. Only ``cron.*`` types are forwarded; a broadcast failure is
+    logged, never raised.
+
+    Args:
+        broadcast: async callable taking the event dict, e.g.
+            ``server.broadcast_ws_json``.
+    """
+
+    async def _forward(event) -> None:
+        event_type = getattr(event, "type", "")
+        if not isinstance(event_type, str) or not event_type.startswith("cron."):
+            return
+        try:
+            await broadcast(event.to_dict())
+        except Exception:
+            logger.warning(
+                "cron-event forwarder: broadcast of %s failed",
                 event_type,
                 exc_info=True,
             )

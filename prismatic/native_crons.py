@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -19,6 +20,55 @@ from pathlib import Path
 from typing import Any, Literal, Sequence
 
 logger = logging.getLogger(__name__)
+
+# ── Cron lifecycle event emission (WI-4) ─────────────────────
+# Best-effort fan-out of cron.mutated / cron.run_recorded to dashboard
+# clients. Mirrors prismatic/lock.py::_emit_lock_event: when called inside
+# a running asyncio loop (the gateway request path) the event is published
+# directly to the in-process EventBus — which the WebSocket broadcaster and
+# the /ws forwarder both consume; otherwise (CLI / crontab wrapper, a
+# separate process) it is pushed over the IPC bridge socket to the gateway.
+# Emission must never break cron operations, so it never raises.
+
+try:
+    from prismatic.gateway.ipc_bridge import send_event_via_socket
+
+    _HAS_IPC = True
+except ImportError:  # gateway extras not installed (bare worker)
+    _HAS_IPC = False
+
+
+def _emit_cron_event(event_type: str, payload: dict[str, Any]) -> None:
+    """Emit a cron lifecycle event to dashboard clients; never raises."""
+    if not _HAS_IPC:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+
+            bus = get_event_bus()
+            loop.create_task(
+                bus.publish(
+                    event_type=event_type,
+                    source="native-crons",
+                    payload=payload,
+                )
+            )
+            return
+        except Exception:
+            pass
+    try:
+        send_event_via_socket(
+            event_type=event_type,
+            source="native-crons",
+            payload=payload,
+        )
+    except Exception:
+        pass  # best-effort — emission must never break cron ops
 
 # Truncation policy for recorded stdout/stderr (shared by the `run` action
 # and the run-recorder wrapper).
@@ -337,6 +387,11 @@ def create_native_cron(
     st.save(existing)
     # A new schedulable cron must reach the system crontab (best-effort).
     refresh_system_crontab(st)
+    # WI-4: the registry changed — the crons tab goes live on this too.
+    _emit_cron_event(
+        "cron.mutated",
+        {"cron_id": cron.id, "action": "create", "state": cron.state},
+    )
     return cron.to_dict()
 
 
@@ -527,6 +582,16 @@ class NativeCronStore:
                 cron.last_duration_s = result.get("duration_s")
                 crons[index] = cron
                 self.save(crons)
+                _emit_cron_event(
+                    "cron.mutated",
+                    {
+                        "cron_id": cron_id,
+                        "action": "run",
+                        "state": cron.state,
+                        "status": result["status"],
+                        "exit_code": result["exit_code"],
+                    },
+                )
                 return {"success": result["status"] == "success", "cron": cron.to_dict(), "run": result}
             elif action == "recover":
                 # Replay up to 3 missed executions
@@ -545,6 +610,16 @@ class NativeCronStore:
                 cron.last_duration_s = last_res.get("duration_s")
                 crons[index] = cron
                 self.save(crons)
+                _emit_cron_event(
+                    "cron.mutated",
+                    {
+                        "cron_id": cron_id,
+                        "action": "recover",
+                        "state": cron.state,
+                        "status": last_res["status"],
+                        "replays_count": len(replays),
+                    },
+                )
                 return {"success": last_res["status"] == "success", "cron": cron.to_dict(), "replays_count": len(replays), "replays": replays}
             else:
                 raise ValueError(f"Unsupported native cron action: {action}")
@@ -562,6 +637,10 @@ class NativeCronStore:
                     logger.warning(
                         "native-crons: post-mutate crontab refresh failed: %s", exc
                     )
+            _emit_cron_event(
+                "cron.mutated",
+                {"cron_id": cron_id, "action": action, "state": cron.state},
+            )
             return {"success": True, "cron": cron.to_dict(), "action": action}
         raise KeyError(cron_id)
 
@@ -785,6 +864,20 @@ def record_cron_run(
             cron.last_duration_s = duration_s
             crons[index] = cron
             st.save(crons)
+            # WI-4: a scheduled run just landed — tell dashboard clients so
+            # the crons tab refreshes without a manual reload. Best-effort;
+            # this runs in a crontab-spawned process, so the event crosses to
+            # the gateway over the IPC bridge socket.
+            _emit_cron_event(
+                "cron.run_recorded",
+                {
+                    "cron_id": cron_id,
+                    "status": status,
+                    "exit_code": exit_code,
+                    "ran_at": ran_at,
+                    "duration_s": duration_s,
+                },
+            )
             break
         else:
             print(

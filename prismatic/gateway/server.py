@@ -190,6 +190,7 @@ from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import (
     UnixSocketListener,
     create_event_ingest_route,
+    cron_event_ws_forwarder,
     deploy_event_ws_forwarder,
 )
 from prismatic.gateway.workspace_tree import (
@@ -421,6 +422,10 @@ async def lifespan(app: FastAPI):
     # this forwards deploy.* on to the /ws subscribers so the portal
     # updates live instead of polling the alert log.
     await get_event_bus().subscribe(deploy_event_ws_forwarder(broadcast_ws_json))
+
+    # Cron overhaul WI-4: forward cron.mutated / cron.run_recorded to the
+    # dashboard's /ws clients so the crons tab goes live.
+    await get_event_bus().subscribe(cron_event_ws_forwarder(broadcast_ws_json))
 
     # Start Gateway HTTP Unix socket proxy
     port = int(os.environ.get("PRISMATIC_PORT", "9000"))
