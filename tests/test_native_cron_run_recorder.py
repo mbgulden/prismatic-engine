@@ -251,3 +251,156 @@ def test_rendered_block_lines_have_valid_schedule_fields(tmp_path: Path) -> None
     for line in lines:
         schedule = " ".join(line.split(" ", 5)[:5])
         validate_cron_schedule(schedule)  # raises on anything malformed
+
+
+# ── WI-9: signed run receipts ─────────────────────────────────────────
+"""The WI-1 recorder additionally appends a CronRunReceipt-shaped JSONL entry
+(per prismatic/cron_receipts/cron-run-receipt-v1.schema.json — reused in
+place) to ~/.prismatic/audit/cron-run-receipts.jsonl. v1 has no signature
+infra: signing_key_id is "unsigned-local" and the signature is the explicit
+"unsigned" placeholder (the schema requires signature minLength 1, so a
+truly empty string would not validate).
+"""
+
+
+def _receipt_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the receipt log at a tmp file; never touch real ~/.prismatic."""
+    log_path = tmp_path / "audit" / "cron-run-receipts.jsonl"
+    monkeypatch.setenv("PRISMATIC_CRON_RECEIPT_LOG", str(log_path))
+    return log_path
+
+
+def _read_receipts(log_path: Path) -> list[dict]:
+    import json as _json
+
+    assert log_path.exists(), f"no receipt log written at {log_path}"
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert lines, "receipt log is empty"
+    return [_json.loads(line) for line in lines]
+
+
+def test_record_run_appends_schema_valid_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail-first: pre-WI-9 record_cron_run writes no receipt log at all."""
+    import hashlib
+    from prismatic.cron_receipts.schema import validate_receipt_dict
+
+    log_path = _receipt_env(monkeypatch, tmp_path)
+    store, cron = _store_with_cron(tmp_path)
+
+    code = record_cron_run(cron.id, "echo receipt-ok", store=store)
+    assert code == 0
+
+    receipts = _read_receipts(log_path)
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    validate_receipt_dict(receipt)  # gate: schema validation green
+
+    assert receipt["schema_version"] == 1
+    assert receipt["cron_id"] == cron.id
+    assert receipt["receipt_id"], "receipt_id must be non-empty"
+    assert receipt["execution_id"], "execution_id must be non-empty"
+    assert receipt["outcome"] == "succeeded"
+    assert receipt["attempt"] == 1
+    assert receipt["error_classification"] is None
+    assert receipt["signing_key_id"] == "unsigned-local"
+    assert receipt["signature"] == "unsigned"
+    assert receipt["runner_id"], "runner_id must be non-empty"
+    assert len(receipt["runner_release_digest"]) == 64
+    # evidence digest covers the run's captured outputs (joined by newline)
+    expected_evidence = hashlib.sha256(b"receipt-ok\n\n").hexdigest()
+    assert receipt["evidence_digest"] == expected_evidence
+    # timestamps: RFC 3339 UTC with Z, started <= finished
+    assert receipt["started_at"].endswith("Z")
+    assert receipt["finished_at"].endswith("Z")
+    assert receipt["started_at"] <= receipt["finished_at"]
+
+
+def test_receipt_fields_match_failed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from prismatic.cron_receipts.schema import validate_receipt_dict
+
+    log_path = _receipt_env(monkeypatch, tmp_path)
+    store, cron = _store_with_cron(tmp_path)
+
+    code = record_cron_run(cron.id, "echo boom >&2; exit 3", store=store)
+    assert code == 3
+
+    receipt = _read_receipts(log_path)[0]
+    validate_receipt_dict(receipt)
+    assert receipt["outcome"] == "failed"
+    assert receipt["error_classification"] == "exit_code:3"
+    assert receipt["evidence_digest"] is not None
+
+
+def test_receipt_ids_unique_across_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log_path = _receipt_env(monkeypatch, tmp_path)
+    store, cron = _store_with_cron(tmp_path)
+
+    assert record_cron_run(cron.id, "true", store=store) == 0
+    assert record_cron_run(cron.id, "true", store=store) == 0
+
+    receipts = _read_receipts(log_path)
+    assert len(receipts) == 2
+    assert receipts[0]["receipt_id"] != receipts[1]["receipt_id"]
+    assert receipts[0]["execution_id"] != receipts[1]["execution_id"]
+
+
+def test_receipt_written_for_unknown_cron_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown id: the job ran, so the run still gets a receipt."""
+    log_path = _receipt_env(monkeypatch, tmp_path)
+    store, _ = _store_with_cron(tmp_path)
+
+    code = record_cron_run("no.such.cron", "exit 7", store=store)
+    assert code == 7
+
+    receipt = _read_receipts(log_path)[0]
+    assert receipt["cron_id"] == "no.such.cron"
+    assert receipt["outcome"] == "failed"
+    assert receipt["error_classification"] == "exit_code:7"
+
+
+def test_receipt_append_failure_never_masks_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """A receipt log that cannot be written must not change the job's status."""
+    # point the log at a directory: open(..., "a") raises IsADirectoryError
+    bad_dir = tmp_path / "unwritable"
+    bad_dir.mkdir()
+    monkeypatch.setenv("PRISMATIC_CRON_RECEIPT_LOG", str(bad_dir))
+    store, cron = _store_with_cron(tmp_path)
+
+    code = record_cron_run(cron.id, "exit 5", store=store)
+    assert code == 5
+    assert "receipt" in capsys.readouterr().err.lower()
+    # store writeback still happened
+    assert store.get(cron.id).last_exit_code == 5
+
+
+def test_receipt_still_written_when_store_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Broken store (run still executed): receipt is independent of store writeback."""
+    from prismatic.cron_receipts.schema import validate_receipt_dict
+
+    log_path = _receipt_env(monkeypatch, tmp_path)
+    store, cron = _store_with_cron(tmp_path)
+
+    def _boom(crons):
+        raise OSError("disk gone")
+
+    store.save = _boom  # type: ignore[method-assign]
+    code = record_cron_run(cron.id, "exit 5", store=store)
+    assert code == 5
+
+    receipt = _read_receipts(log_path)[0]
+    validate_receipt_dict(receipt)
+    assert receipt["cron_id"] == cron.id
+    assert receipt["outcome"] == "failed"
+
+
+def test_default_receipt_log_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default path is ~/.prismatic/audit/cron-run-receipts.jsonl; env overrides it."""
+    from prismatic.native_crons import default_cron_receipt_log_path
+
+    monkeypatch.delenv("PRISMATIC_CRON_RECEIPT_LOG", raising=False)
+    default = default_cron_receipt_log_path()
+    assert default == Path.home() / ".prismatic" / "audit" / "cron-run-receipts.jsonl"
+
+    custom = tmp_path / "custom.jsonl"
+    monkeypatch.setenv("PRISMATIC_CRON_RECEIPT_LOG", str(custom))
+    assert default_cron_receipt_log_path() == custom
