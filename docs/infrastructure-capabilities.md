@@ -63,13 +63,14 @@ Every capability plugin is a `PrismaticPlugin`
    from `register_tools()` unless a tool is genuinely part of the pipe
    (e.g. a mesh peer lookup).
 
-Reference implementation: `prismatic-cron`
-(`prismatic/shipped_plugins/cron/`). It fires jobs on 5-field cron
-schedules, keeps run receipts under
-`$PRISMATIC_HOME/plugin-state/prismatic-cron/runs.jsonl`, and its
-`prompt` handler only records a *prompt-dispatched* receipt — the harness
-picks the prompt up. The plugin never calls an LLM. That restraint is the
-whole contract in miniature.
+Reference implementation: `prismatic-cron` was removed (ADR-0004,
+2026-09-28) — it was disabled by default and its `swarmcron>=0.3.0`
+dependency 404s on PyPI. The native cron registry
+(`prismatic/native_crons.py`) plus the Schedule Observatory
+(`prismatic/schedules.py`) cover its use cases. The restraint described
+below remains the contract in miniature for future plugins: never call an
+LLM from an infrastructure plugin; record receipts and let the harness pick
+up the work.
 
 ## Classifier: capability plugin vs. harness
 
