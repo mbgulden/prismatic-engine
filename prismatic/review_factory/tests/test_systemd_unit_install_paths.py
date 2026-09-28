@@ -181,3 +181,39 @@ def test_stale_unit_text_is_rejected() -> None:
         "contract test accepted the stale release-pinned unit text; "
         "it would not have caught the 226/NAMESPACE outage"
     )
+
+def test_entry_module_is_runnable_as_script() -> None:
+    """The unit invokes `-m <module>`; the module must define a real entry point.
+
+    The R-1 unit pinned the module path but the module had neither a main()
+    nor an `__main__` guard, so `python3 -m` merely imported it: exit 0,
+    every CLI flag silently ignored, the drain never ran. This test parses
+    the module's AST (stdlib-only, like the rest of this contract) and
+    requires a top-level main() or an `if __name__ == "__main__":` guard —
+    it fails on the pre-fix module.
+    """
+    import ast
+
+    module_path = REPO_ROOT / (ENTRY_MODULE.replace(".", "/") + ".py")
+    assert module_path.is_file(), (
+        f"ExecStart= entry module {ENTRY_MODULE} has no source file at {module_path}"
+    )
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+
+    has_main = any(
+        isinstance(node, ast.FunctionDef) and node.name == "main"
+        for node in tree.body
+    )
+    has_main_guard = any(
+        isinstance(node, ast.If)
+        and any(
+            isinstance(child, ast.Constant) and child.value == "__main__"
+            for child in ast.walk(node.test)
+        )
+        for node in tree.body
+    )
+    assert has_main or has_main_guard, (
+        f"ExecStart= entry module {ENTRY_MODULE} defines no main() and no "
+        '`if __name__ == "__main__":` guard — `python3 -m` on it would be a '
+        "silent no-op (this was the R-1 follow-up finding)"
+    )
