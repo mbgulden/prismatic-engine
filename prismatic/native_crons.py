@@ -341,6 +341,27 @@ ENGINE_HEALTH_CRONS: list[NativeCron] = [
         tags=["engine-health", "merge-receipts", "coverage", "read-only"],
     ),
     NativeCron(
+        id="engine.receipt-backfill",
+        name="Engine health — Merge receipt backfill",
+        schedule="15 6 * * *",
+        command=[
+            "python3",
+            "scripts/receipt_coverage_watch.py",
+            "--emit-missing",
+            "--limit",
+            "500",
+        ],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "WR-3 backstop: daily emission of signed merge receipts for any "
+            "merged PR lacking one (covers GitHub-UI merges the webhook "
+            "emitter missed, plus the full historical backlog on first run). "
+            "Idempotent on merge SHA; the 06:30 coverage watch verifies after."
+        ),
+        tags=["engine-health", "merge-receipts", "backfill"],
+    ),
+    NativeCron(
         id="engine.doctor",
         name="Engine health — Weekly doctor",
         schedule="0 7 * * 1",
