@@ -23,11 +23,11 @@ from pathlib import Path
 
 import pytest
 
-from plugins.pwp.capabilities.publish_kpi_tracker import (
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import (
     cron_orchestrator as orch,
     publish_kpi_tracker as kpi_mod,
 )
-from plugins.pwp.capabilities.publish_kpi_tracker.pwp_kpi_site_registry import (
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.pwp_kpi_site_registry import (
     load_registry,
     site_override_enabled,
     iter_sites,
@@ -40,7 +40,7 @@ FIXTURES = HERE / "fixtures"
 
 def _patch_sites(monkeypatch, sites_dir: Path) -> None:
     """Patch both kpi_mod.SITES_DIR and inner module SITES_DIR."""
-    inner = sys.modules["plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker"]
+    inner = sys.modules["prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker"]
     monkeypatch.setattr(kpi_mod, "SITES_DIR", sites_dir, raising=True)
     monkeypatch.setattr(inner, "SITES_DIR", sites_dir, raising=True)
 
@@ -172,13 +172,13 @@ def test_run_walks_registry_and_dispatches_via_stub(
                "pwp_kpi_override": {"enabled": False},
                "ga4_measurement_env": "DISABLED_MEAS_ID"}
     monkeypatch.setattr(
-        "plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
+        "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
         _fake_iter_sites,
     )
     monkeypatch.setenv("AOT_KPI_SHEET_ID", "sheet-aot")
     monkeypatch.setenv("HDE_KPI_SHEET_ID", "sheet-hde")
     monkeypatch.setattr(
-        "plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.site_override_enabled",
+        "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.site_override_enabled",
         lambda reg, site: site.get("pwp_kpi_override", {}).get("enabled", True),
     )
 
@@ -222,11 +222,11 @@ def test_run_handles_resolve_collection_error(tmp_path: Path, monkeypatch) -> No
                "pwp_kpi_override": {"enabled": True},
                "ga4_measurement_env": "MISSING_MEAS_ID"}
     monkeypatch.setattr(
-        "plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
+        "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
         _fake_iter_sites,
     )
     monkeypatch.setattr(
-        "plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.site_override_enabled",
+        "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.site_override_enabled",
         lambda reg, site: True,
     )
     stub_launcher = tmp_path / "stub_launcher.py"
@@ -248,7 +248,7 @@ def test_run_coerces_string_publish_root(tmp_path: Path, monkeypatch) -> None:
     attribute 'mkdir'`. Regression test for the dispatch string/Path bug.
     """
     monkeypatch.setattr(
-        "plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
+        "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
         lambda reg: iter([]),
     )
     publish_root_str = str(tmp_path / "string-publish-root")

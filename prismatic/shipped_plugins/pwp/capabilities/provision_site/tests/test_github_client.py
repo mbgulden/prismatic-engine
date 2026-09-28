@@ -33,8 +33,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plugins.pwp.capabilities.provision_site import auth_loader
-from plugins.pwp.capabilities.provision_site.github_client import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site import auth_loader
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
     GitHubBranch,
     GitHubClient,
     GitHubCommit,
@@ -109,7 +109,7 @@ def test_from_env_falls_back_to_auth_loader(monkeypatch) -> None:
         redaction="ghp_fake...ken=",
     )
     with patch(
-        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=fake_result,
     ) as mock:
         c = GitHubClient.from_env()
@@ -121,7 +121,7 @@ def test_from_env_raises_when_no_token(monkeypatch) -> None:
     for k in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):
         monkeypatch.delenv(k, raising=False)
     with patch(
-        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=auth_loader.AuthResult(
             value=None, source="none", env_var="",
             hint="(test stub)", redaction="<missing>",

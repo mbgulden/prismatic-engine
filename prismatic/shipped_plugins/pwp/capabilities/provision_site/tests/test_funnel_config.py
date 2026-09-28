@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from plugins.pwp.capabilities.provision_site.funnel_config import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.funnel_config import (
     DEFAULT_TEAM_ID,
     DispatchResult,
     EPIC_TITLE_FRAGMENT,
@@ -33,7 +33,7 @@ from plugins.pwp.capabilities.provision_site.funnel_config import (
     find_parent_epic,
     validate_form,
 )
-from plugins.pwp.capabilities.provision_site.linear_client import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import (
     LinearClient,
     LinearIssue,
 )

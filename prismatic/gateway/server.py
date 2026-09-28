@@ -6502,7 +6502,7 @@ def main() -> None:
 @app.get("/api/pwp/kpi/sites")
 async def pwp_kpi_list_sites() -> dict[str, Any]:
     try:
-        from plugins.pwp.capabilities.publish_kpi_tracker import list_sites
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import list_sites
 
         return {"sites": list_sites()}
     except Exception as exc:
@@ -6512,7 +6512,7 @@ async def pwp_kpi_list_sites() -> dict[str, Any]:
 @app.get("/api/pwp/kpi/sites/{slug}")
 async def pwp_kpi_get_site(slug: str) -> dict[str, Any]:
     try:
-        from plugins.pwp.capabilities.publish_kpi_tracker import load_site
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import load_site
 
         return load_site(slug)
     except FileNotFoundError:
@@ -6526,7 +6526,7 @@ async def pwp_kpi_get_site(slug: str) -> dict[str, Any]:
 @app.post("/api/pwp/kpi/refresh")
 async def pwp_kpi_refresh() -> dict[str, Any]:
     try:
-        from plugins.pwp.capabilities.publish_kpi_tracker import list_sites
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import list_sites
 
         return {"status": "ok", "sites_refreshed": len(list_sites())}
     except Exception as exc:
@@ -6540,7 +6540,7 @@ async def pwp_kpi_publish_dashboard(request: Request) -> dict[str, Any]:
         publish_root = body.get("publish_root", "")
         if not publish_root:
             raise HTTPException(status_code=400, detail="publish_root required")
-        from plugins.pwp.capabilities.publish_kpi_tracker import (
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import (
             publish_publish_kpi_dashboard,
         )
 
@@ -6571,19 +6571,13 @@ def _kpi_dashboard_root() -> Path:
 
 
 def _kpi_dashboard_import():
-    # NOTE: the `plugins.pwp...` import path used by the /api/pwp/kpi/* cluster
-    # does not resolve in the deployed gateway (no top-level `plugins` package);
-    # the live, verified path is prismatic.shipped_plugins.pwp....
-    try:
-        from prismatic.shipped_plugins.pwp.capabilities import (
-            publish_kpi_tracker as _kpi,
-        )
+    # Single live path (the old `plugins.pwp...` namespace was removed in the
+    # #376 rescue; no top-level `plugins` package exists).
+    from prismatic.shipped_plugins.pwp.capabilities import (
+        publish_kpi_tracker as _kpi,
+    )
 
-        return _kpi
-    except Exception:
-        from plugins.pwp.capabilities import publish_kpi_tracker as _kpi  # type: ignore
-
-        return _kpi
+    return _kpi
 
 
 def _kpi_dashboard_ensure_fresh() -> None:

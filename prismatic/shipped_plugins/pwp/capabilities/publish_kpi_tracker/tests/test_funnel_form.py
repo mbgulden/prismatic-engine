@@ -7,15 +7,14 @@ import sys
 from pathlib import Path
 
 
-# Add the shipped_plugins directory to sys.path so the plugins.* namespace
-# resolves regardless of how the test harness is invoked.
+# Repo root on sys.path so prismatic.shipped_plugins.pwp.* resolves
+# regardless of how the test harness is invoked.
 HERE = Path(__file__).resolve()
-PKG_ROOT = HERE.parents[3]  # published_plugins/.../tests/test_funnel_form.py
-SHIP_ROOT = HERE.parents[4]  # prismatic/shipped_plugins
-if str(SHIP_ROOT) not in sys.path:
-    sys.path.insert(0, str(SHIP_ROOT))
+REPO_ROOT = HERE.parents[6]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402
     DATA_SOURCE_OPTIONS,
     DEFAULT_SUBMIT_ENDPOINT,
     FORM_VERSION,
@@ -26,7 +25,7 @@ from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: 
     site_row_buttons,
     write_prior_submission_json,
 )
-from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402,E501
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402,E501
     load_prior_submission,
 )
 
@@ -251,7 +250,7 @@ class TestSiteRowButtons:
     def test_no_prior_submission_shows_configure_label(self, tmp_path, monkeypatch):
         # Point the SUBMISSION_LOG_DIR at an empty tmp directory.
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path,
         )
         out = site_row_buttons({"slug": "ezshare", "domain": "ezshare.systems"})
@@ -268,7 +267,7 @@ class TestSiteRowButtons:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
         out = site_row_buttons({"slug": "ezshare", "domain": "ezshare.systems"})
@@ -302,7 +301,7 @@ class TestSiteRowButtons:
 class TestLoadPriorSubmission:
     def test_missing_file_returns_none(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path,
         )
         assert load_prior_submission("nope") is None
@@ -310,7 +309,7 @@ class TestLoadPriorSubmission:
     def test_corrupt_json_returns_none(self, tmp_path, monkeypatch):
         (tmp_path / "x.json").write_text("not json", encoding="utf-8")
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path,
         )
         assert load_prior_submission("x") is None
@@ -327,7 +326,7 @@ class TestLoadPriorSubmission:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path,
         )
         result = load_prior_submission("ezshare")
@@ -336,7 +335,7 @@ class TestLoadPriorSubmission:
     def test_non_dict_form_returns_none(self, tmp_path, monkeypatch):
         (tmp_path / "x.json").write_text(json.dumps({"form": "not a dict"}))
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path,
         )
         assert load_prior_submission("x") is None
@@ -345,7 +344,7 @@ class TestLoadPriorSubmission:
 # ── Integration: render_index uses the modal ─────────────────────────────
 class TestRenderIndexIntegration:
     def test_render_index_contains_modal_html(self):
-        from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
             render_index,
         )
 
@@ -382,10 +381,10 @@ class TestRenderIndexIntegration:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
-        from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
             render_index,
         )
 
@@ -423,7 +422,7 @@ class TestWritePriorSubmissionJson:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
         # Publish root is a separate dir.
@@ -445,7 +444,7 @@ class TestWritePriorSubmissionJson:
             """{"form": {"primary_goal": "g"}}""", encoding="utf-8"
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
         pub = tmp_path / "publish"
@@ -457,7 +456,7 @@ class TestWritePriorSubmissionJson:
 
     def test_skips_when_log_dir_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path / "does-not-exist",
         )
         pub = tmp_path / "publish"
@@ -469,7 +468,7 @@ class TestWritePriorSubmissionJson:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
         pub = tmp_path / "publish"
@@ -483,7 +482,7 @@ class TestWritePriorSubmissionJson:
         (log_dir / "x.json").write_text("""{"form": "not a dict"}""")
         (log_dir / "y.json").write_text("""{"no_form": true}""")
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
         pub = tmp_path / "publish"
@@ -507,7 +506,7 @@ class TestWritePriorSubmissionJson:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
         pub = tmp_path / "publish"
@@ -557,11 +556,11 @@ class TestBuildDashboardPriorSubmissions:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
 
-        from plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
 
         out_dir = tmp_path / "publish"
         manifest = build_dashboard(publish_root=str(out_dir))
@@ -580,10 +579,10 @@ class TestBuildDashboardPriorSubmissions:
             """{"form": {"primary_goal": "g"}}""", encoding="utf-8"
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             log_dir,
         )
-        from plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
 
         out_dir = tmp_path / "publish"
         manifest = build_dashboard(publish_root=str(out_dir))
@@ -594,10 +593,10 @@ class TestBuildDashboardPriorSubmissions:
     def test_build_dashboard_no_priors(self, tmp_path, monkeypatch):
         # Empty log dir.
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
             tmp_path / "missing",
         )
-        from plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
 
         out_dir = tmp_path / "publish"
         manifest = build_dashboard(publish_root=str(out_dir))
@@ -606,7 +605,7 @@ class TestBuildDashboardPriorSubmissions:
     def test_render_index_works_when_funnel_form_missing(self, monkeypatch):
         # Simulate funnel_form being uninstalled (the lazy import inside
         # render_index should swallow the ImportError).
-        import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as m
+        import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as m
 
         # Block the funnel_form import by making it fail.
         real_import = __import__

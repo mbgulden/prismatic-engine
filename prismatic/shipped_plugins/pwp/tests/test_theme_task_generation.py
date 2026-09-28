@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import plugins.pwp.theme_task_generation as theme_tasks
+import prismatic.shipped_plugins.pwp.theme_task_generation as theme_tasks
 import pytest
-from plugins.pwp.theme_task_generation import (
+from prismatic.shipped_plugins.pwp.theme_task_generation import (
     DispatchState,
     TaskPlanValidationError,
     ThemeTaskPlan,

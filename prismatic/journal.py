@@ -468,17 +468,48 @@ def read_text(path: Path, limit: int = 8000) -> str:
 
 
 def read_recent_text(path: Path, limit: int = 8000) -> str:
-    """Read newest complete log lines without re-indexing stale file heads."""
+    """Return the newest complete-line suffix that fits the character budget.
+
+    A trailing unterminated record is excluded *before* the newest complete-line
+    suffix is selected, so a partial tail can never hide earlier complete
+    telemetry. The byte window grows until the budget is met or the file head
+    is reached.
+    """
+    if limit <= 0:
+        return ""
     try:
         with path.open("rb") as handle:
             handle.seek(0, os.SEEK_END)
-            start = max(0, handle.tell() - (limit * 4))
-            handle.seek(start)
-            text = handle.read().decode("utf-8", errors="ignore")
-        if start:
-            newline = text.find("\n")
-            text = text[newline + 1 :] if newline >= 0 else ""
-        return text[-limit:]
+            size = handle.tell()
+            window = max(limit * 4, 1)
+            while True:
+                start = max(0, size - window)
+                while start:
+                    handle.seek(start - 1)
+                    if handle.read(1) == b"\n":
+                        break
+                    window = min(size, window * 2)
+                    start = max(0, size - window)
+                handle.seek(start)
+                data = handle.read()
+                if not data.endswith(b"\n"):
+                    data = data.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in data else b""
+                lines = data.decode("utf-8", errors="ignore").splitlines(keepends=True)
+                suffix: list[str] = []
+                length = 0
+                for line in reversed(lines):
+                    if length + len(line) > limit:
+                        break
+                    suffix.append(line)
+                    length += len(line)
+                result = "".join(reversed(suffix))
+                if start == 0 or length == limit:
+                    return result
+                if lines and len(lines[-1]) > limit:
+                    return ""
+                if len(suffix) < len(lines):
+                    return result
+                window = min(size, window * 2)
     except Exception:
         return ""
 
@@ -645,11 +676,16 @@ def _parse_log_timestamp(line: str) -> dt.datetime | None:
 
 def extract_log_signals(path: Path) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
+    now = dt.datetime.now(dt.timezone.utc)
+    cutoff = now - dt.timedelta(hours=24)
+    # Bounded skew tolerance: a log line timestamped more than 5 minutes in the
+    # future is clock skew or bad telemetry, not a fresh signal. Reject it.
+    upper_bound = now + dt.timedelta(minutes=5)
     recent_lines = [
         line
         for line in redact(read_recent_text(path, 15000)).splitlines()
-        if (seen := _parse_log_timestamp(line)) is not None and seen >= cutoff
+        if (seen := _parse_log_timestamp(line)) is not None
+        and cutoff <= seen <= upper_bound
     ]
     for line in recent_lines:
         if re.search(
