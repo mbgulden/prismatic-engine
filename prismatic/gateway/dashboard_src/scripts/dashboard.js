@@ -449,6 +449,7 @@
         let activeTab = 'dashboard';
         let loadedQueueItems = [];
         let loadedNativeCrons = [];
+        let loadedSchedules = [];
         let pendingCronDeleteId = null;
         let pollingInterval = null;
         let reviewFactoryToken = "";
@@ -664,6 +665,7 @@
             fetchData();
             if (tab === 'crons') {
                 loadNativeCrons();
+                loadSchedules();
             } else if (tab === 'settings') {
                 fetchSettingsData();
                 loadApiTokens();
@@ -1862,6 +1864,110 @@
             const cronId = pendingCronDeleteId;
             closeCronDeleteModal();
             await nativeCronAction(cronId, 'delete');
+        }
+
+        // Schedule Observatory — read-only unified view of GET /schedules.
+        // Mutation stays in the existing per-system actions; this renders only.
+        async function loadSchedules() {
+            const table = document.getElementById("schedules-table");
+            if (!table) return;
+            table.innerHTML = '<tr><td colspan="8" class="p-4 text-slate-500">Loading schedule observatory…</td></tr>';
+            try {
+                const res = await fetch('/schedules');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const payload = await res.json();
+                loadedSchedules = Array.isArray(payload) ? payload : [];
+                renderSchedules();
+            } catch (err) {
+                table.innerHTML = `<tr><td colspan="8" class="p-4 text-rose-300">Failed to load schedules: ${escapeHtml(err.message)}</td></tr>`;
+            }
+        }
+
+        function scheduleOwnerBadge(owner) {
+            const v = String(owner || "unknown");
+            const classes = {
+                prismatic: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
+                agy: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
+                jules: "bg-violet-500/10 text-violet-300 border-violet-500/20",
+                "task-manager": "bg-amber-500/10 text-amber-300 border-amber-500/20"
+            };
+            return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${classes[v] || "bg-slate-800 text-slate-400 border-slate-700"}">${escapeHtml(v)}</span>`;
+        }
+
+        function scheduleTypeBadge(scheduleType) {
+            const v = String(scheduleType || "unknown");
+            const classes = {
+                "cron": "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+                "systemd-timer": "bg-sky-500/10 text-sky-300 border-sky-500/20",
+                "one-shot": "bg-amber-500/10 text-amber-300 border-amber-500/20",
+                "interval": "bg-teal-500/10 text-teal-300 border-teal-500/20",
+                "remote-managed": "bg-violet-500/10 text-violet-300 border-violet-500/20"
+            };
+            return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${classes[v] || "bg-slate-800 text-slate-400 border-slate-700"}">${escapeHtml(v.replace(/[_-]/g, " "))}</span>`;
+        }
+
+        function scheduleSourceBadge(metadata) {
+            const adapter = (metadata || {}).adapter;
+            if (adapter === "live") {
+                return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border bg-emerald-500/10 text-emerald-300 border-emerald-500/20">live</span>`;
+            }
+            if (adapter === "fallback-mock") {
+                return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border bg-amber-500/10 text-amber-300 border-amber-500/20">mock</span>`;
+            }
+            return `<span class="text-slate-600">—</span>`;
+        }
+
+        function renderSchedules() {
+            const table = document.getElementById("schedules-table");
+            const summary = document.getElementById("schedules-summary");
+            if (!table || !summary) return;
+            const byOwner = loadedSchedules.reduce((acc, s) => {
+                const k = s.owner || "unknown";
+                acc[k] = (acc[k] || 0) + 1;
+                return acc;
+            }, {});
+            const enabledCount = loadedSchedules.filter(s => s.enabled).length;
+            const mockCount = loadedSchedules.filter(s => (s.metadata || {}).adapter === "fallback-mock").length;
+            const ownerList = Object.keys(byOwner).sort().map(k => `${k} ×${byOwner[k]}`).join(" · ") || "—";
+            summary.innerHTML = [
+                ["schedules", String(loadedSchedules.length)],
+                ["enabled", String(enabledCount)],
+                ["owners", escapeHtml(ownerList)],
+                ["mock sources", String(mockCount)],
+            ].map(([label, value]) => `
+                <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                    <div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div>
+                    <div class="text-xl font-bold text-slate-200 mt-1 truncate" title="${value}">${value}</div>
+                </div>
+            `).join("");
+            if (!loadedSchedules.length) {
+                table.innerHTML = '<tr><td colspan="8" class="p-4 text-slate-500">No schedules returned by GET /schedules.</td></tr>';
+                return;
+            }
+            table.innerHTML = loadedSchedules.map(s => {
+                const md = s.metadata || {};
+                const lastRun = s.last_run
+                    ? `${formatDate(s.last_run.fired_at)}<br><span class="text-slate-500">${escapeHtml(s.last_run.status || "unknown")}</span>`
+                    : '<span class="text-slate-500">Never</span>';
+                const enabled = s.enabled
+                    ? '<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border bg-emerald-500/10 text-emerald-300 border-emerald-500/20">on</span>'
+                    : '<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border bg-slate-800 text-slate-400 border-slate-700">off</span>';
+                const link = s.deep_link
+                    ? `<a href="${escapeHtml(s.deep_link)}" target="_blank" rel="noopener" class="text-cyan-300 hover:text-cyan-200 text-[10px] font-bold uppercase">open ↗</a>`
+                    : "";
+                return `
+                    <tr class="hover:bg-slate-900/40">
+                        <td class="p-3 align-top"><div class="font-bold text-slate-200">${escapeHtml(s.name || "unnamed")}</div><div class="text-slate-600 font-mono mt-1">${escapeHtml(s.id || "")}</div><div class="mt-1">${link}</div></td>
+                        <td class="p-3 align-top">${scheduleOwnerBadge(s.owner)}</td>
+                        <td class="p-3 align-top">${scheduleTypeBadge(s.schedule_type)}</td>
+                        <td class="p-3 align-top font-mono text-slate-300">${escapeHtml(s.schedule_expr || "—")}</td>
+                        <td class="p-3 align-top">${enabled}</td>
+                        <td class="p-3 align-top text-slate-400">${s.next_run_at ? formatDate(s.next_run_at) : '<span class="text-slate-600">—</span>'}</td>
+                        <td class="p-3 align-top text-slate-400">${lastRun}</td>
+                        <td class="p-3 align-top">${scheduleSourceBadge(md)}</td>
+                    </tr>
+                `;
+            }).join("");
         }
 
         // Control Hooks
