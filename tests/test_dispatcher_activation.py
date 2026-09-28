@@ -82,7 +82,7 @@ class TestDispatcherActivation(unittest.TestCase):
         mock_gql.return_value = _empty_comments()
 
         # One issue per agent label
-        def issues_for_label(label):
+        def issues_for_label(label, **_kwargs):
             agent_name = label.replace("agent:", "")
             return [
                 {
@@ -160,7 +160,7 @@ class TestDispatcherActivation(unittest.TestCase):
         mock_gql.return_value = _empty_comments()
 
         # Only AGY has an issue
-        def issues_for_label(label):
+        def issues_for_label(label, **_kwargs):
             if label == "agent:agy":
                 return [{"id": "agy_issue", "title": "AGY task", "identifier": "GRO-AGY", "labels": [label]}]
             return []
