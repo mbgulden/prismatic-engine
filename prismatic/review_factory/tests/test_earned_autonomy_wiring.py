@@ -52,7 +52,13 @@ class _FakeDecision:
 
 
 class _FakeTrustLedger:
-    """Recording fake standing in for the phase-1 TrustLedger."""
+    """Recording fake standing in for the phase-1 TrustLedger.
+
+    ``tier_status()`` returns the REAL contract shape (a dict with a
+    ``"current_tier"`` key -- see ``trust.TrustLedger.tier_status``).
+    An earlier version of this fake returned a bare int, which hid the
+    R-2 swallowed-TypeError bug (``int(ledger.tier_status())``).
+    """
 
     def __init__(self, tier=1, graduation=None):
         self.tier = tier
@@ -61,7 +67,7 @@ class _FakeTrustLedger:
         self.rollbacks = []
 
     def tier_status(self):
-        return self.tier
+        return {"current_tier": self.tier}
 
     def check_graduation(self):
         return self.graduation

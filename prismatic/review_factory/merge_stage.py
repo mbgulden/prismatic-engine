@@ -590,7 +590,7 @@ class MergeStage:
             from prismatic.review_factory import trust
 
             ledger = trust.TrustLedger()
-            tier = int(ledger.tier_status())
+            tier = int(ledger.tier_status().get("current_tier", 0))
         except Exception as exc:
             logger.debug("trust tier lookup failed (%s); treating tier as 0", exc)
             tier = 0
