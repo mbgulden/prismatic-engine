@@ -5753,6 +5753,14 @@
                         isFleetPaused = !!event.payload.fleet_paused;
                         updateFleetPauseUI();
                     }
+                    // WI-4: native cron registry changed (dashboard action /
+                    // CLI / scheduled run) — refresh the crons tab live when
+                    // it is the active tab.
+                    if (event.type === "cron.mutated" || event.type === "cron.run_recorded") {
+                        if (activeTab === "crons") {
+                            loadNativeCrons();
+                        }
+                    }
                 } catch (err) {}
             };
 
@@ -6515,6 +6523,12 @@
             pollingInterval = setInterval(() => {
                 fetchData();
                 loadCanonicalAgyActivity();
+                // WI-4: crons tab joins the 30s background safety refresh
+                // (the manual Refresh button stays for on-demand reloads).
+                if (activeTab === "crons") {
+                    loadNativeCrons();
+                    loadSchedules();
+                }
             }, 30000);
             
             // Close modal on click outside
