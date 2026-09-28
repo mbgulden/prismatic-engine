@@ -8,8 +8,11 @@ called by:
   - the event-driven watchdog (on anomalies)
   - ad-hoc CLI: python3 factory_monitor.py [--json] [--alerts-only]
 
-Exits 0 if everything is healthy, 1 if any check is CRITICAL, 2 if any
-check is WARN, 3 if any check is unknown. Stdlib only.
+Exit codes: 0 when severity is OK or WARN (alerts are still printed and
+logged; systemd records a clean run), 2 when any check is CRITICAL.
+Note: systemd labels exit code 2 "INVALIDARGUMENT" — that is its generic
+name for the code, not an argument-parsing error; here it is the
+CRITICAL health signal. Stdlib only.
 """
 from __future__ import annotations
 
@@ -89,9 +92,25 @@ def check_services() -> dict[str, Any]:
     return out
 
 
+def _failed_unit_name(line: str) -> str:
+    """Extract the unit name from a `systemctl --state=failed` output line.
+
+    Lines look like: `● session-c5874.scope  loaded failed failed <description>`
+    (the leading `●` bullet is present even with --no-legend).
+    """
+    parts = line.split()
+    if not parts:
+        return ""
+    return parts[1] if parts[0] == "●" else parts[0]
+
+
 def check_failed_units() -> dict[str, Any]:
     rc, stdout, _ = shell("systemctl --state=failed --no-pager --no-legend 2>&1 | head -20")
-    failed = [line for line in stdout.splitlines() if line.strip() and not line.startswith("UNIT")]
+    lines = [line for line in stdout.splitlines() if line.strip() and not line.startswith("UNIT")]
+    # Only .service units are factory components. Transient scopes/slices
+    # (e.g. a failed user login session `session-....scope`) are not health
+    # signals and must not page as CRITICAL on their own.
+    failed = [line for line in lines if _failed_unit_name(line).endswith(".service")]
     return {"count": len(failed), "units": failed}
 
 
@@ -262,6 +281,16 @@ def check_log_errors() -> dict[str, Any]:
 
 
 # === Severity assessment ===
+
+def severity_exit_code(severity: str) -> int:
+    """Map an assess() severity to the process exit code.
+
+    Contract: 2 for CRITICAL, 0 for WARN/OK. systemd's label for exit
+    code 2 ("INVALIDARGUMENT") is its generic name for the code — it is
+    not an argument-parsing error in this script.
+    """
+    return 2 if severity == "CRITICAL" else 0
+
 
 def assess(checks: dict[str, Any]) -> tuple[str, list[str]]:
     """Return ('CRITICAL'|'WARN'|'OK', list_of_alerts)."""
@@ -452,15 +481,10 @@ def main():
 
         print("=" * 70)
 
-    # systemd considers non-zero exit = failure. We use:
-    #   0 = OK
-    #   1 = WARN (the timer/alert should continue, but tell systemd "ok")
-    #   2 = CRITICAL (real failure, surface to journal)
-    # We always return 0 from systemd's perspective so the timer doesn't
-    # log a "failed" entry. The real signal is in the log file.
-    if severity == "CRITICAL":
-        sys.exit(2)
-    sys.exit(0)
+    # Exit contract (see module docstring): systemd treats any non-zero
+    # exit as a unit failure, so only CRITICAL exits non-zero (2). WARN
+    # and OK both exit 0; alert detail is in the report and log output.
+    sys.exit(severity_exit_code(severity))
 
 
 if __name__ == "__main__":
