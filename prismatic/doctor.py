@@ -492,6 +492,13 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
     if len(consumers) != 1:
         return False, "runtime service inventory must contain exactly one consumer"
     consumer = consumers[0]
+    # Canonical paths derive from PRISMATIC_HOME so `engine.doctor` works on any
+    # machine, not just the original /home/ubuntu install.
+    _prismatic_base = str(
+        Path(os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"))
+        / ".prismatic"
+    )
+    _rel = _prismatic_base + "/releases/{release_id}"
     expected_consumer = {
         "id": "consumer",
         "owner": "prismatic-engine",
@@ -499,18 +506,18 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
         "deployment_mode": "immutable-release",
         "release_binding": "engine",
         "separately_versioned": False,
-        "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
-        "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
-        "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+        "release_path_template": _rel,
+        "virtualenv_path_template": _rel + "/.venv",
+        "executable_path": _rel + "/.venv/bin/python3",
         "module_path": "prismatic.task_admission_consumer",
-        "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/task_admission_consumer.py",
-        "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
-        "import_paths": ["/home/ubuntu/.prismatic/releases/{release_id}"],
+        "source_path": _rel + "/prismatic/task_admission_consumer.py",
+        "working_directory": _rel,
+        "import_paths": [_rel],
         "state_paths": [
-            "/home/ubuntu/.prismatic/bus/event_log.sqlite",
-            "/home/ubuntu/.prismatic/policy/task-admission.json",
+            _prismatic_base + "/bus/event_log.sqlite",
+            _prismatic_base + "/policy/task-admission.json",
         ],
-        "environment_files": ["/home/ubuntu/.prismatic/env.d/task_admission.env"],
+        "environment_files": [_prismatic_base + "/env.d/task_admission.env"],
     }
     if set(consumer) != set(expected_consumer):
         missing = sorted(set(expected_consumer) - set(consumer))
