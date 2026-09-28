@@ -121,7 +121,7 @@ def trigger_migrate(slug: str, publish_root: Optional[Path] = None) -> Dict[str,
         if str(plugins_root) not in sys.path:
             sys.path.insert(0, str(plugins_root))
 
-        from plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate
 
         manifest = operator_migrate.run(
             dry_run=False,

@@ -62,7 +62,7 @@ if SHIPPED_PLUGINS.is_dir():
     sys.path.insert(1, str(SHIPPED_PLUGINS))
 
 try:
-    from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
+    from prismatic.shipped_plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
 except ImportError:
     import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
 
@@ -104,7 +104,7 @@ def cmd_list_sites(args) -> int:
     if runtime is None:
         # Run the pipeline ourselves so headline_value is populated.
         try:
-            from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+            from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
         except ImportError:
             from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
         runtime = rv.build_runtime_values()
@@ -148,7 +148,7 @@ def cmd_validate(args) -> int:
 def cmd_migrate(args) -> int:
     """Derive per-site *.kpi.json files from the registry."""
     try:
-        from plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
     except ImportError:
         from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
     rc = 1
@@ -177,7 +177,7 @@ def cmd_snapshot(args) -> int:
     overwritten unless --force is passed.
     """
     try:
-        from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
     except ImportError:
         from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
     sites_dir = Path(args.sites_dir) if args.sites_dir else rv.default_sites_dir()
@@ -214,7 +214,7 @@ def cmd_cron(args) -> int:
     requested kind are skipped — this lets a single Prismatic Engine
     cron entry drive daily/weekly/monthly runs without per-site wiring.
     """
-    from plugins.pwp.capabilities.publish_kpi_tracker import cron_orchestrator as orch
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import cron_orchestrator as orch
     try:
         manifest = orch.run(
             kind=args.kind,
@@ -313,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Provisioning (Phase 1 Cloudflare-first MVP) — delegates to the
     # provision_site capability's operator_cli.attach_subparser().
     try:
-        from plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
     except ImportError:
         import prismatic.shipped_plugins.pwp.capabilities.provision_site.operator_cli as prov_cli
     prov_cli.attach_subparser(sub)

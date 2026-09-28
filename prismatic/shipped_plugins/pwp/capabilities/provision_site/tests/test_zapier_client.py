@@ -15,7 +15,7 @@ SHIP_ROOT = HERE.parents[4]
 if str(SHIP_ROOT) not in sys.path:
     sys.path.insert(0, str(SHIP_ROOT))
 
-from plugins.pwp.capabilities.provision_site.zapier_client import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client import (  # noqa: E402
     FareHarborCompany,
     FareHarborNotFoundError,
     WebhookProbe,
@@ -131,7 +131,7 @@ class TestProbeWebhook:
         c = ZapierClient(webhook_url="https://httpbin.org/status/200")
         # We don't actually hit the network in tests by default — mock.
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 200,
@@ -145,7 +145,7 @@ class TestProbeWebhook:
     def test_405_falls_back_to_get(self):
         c = ZapierClient(webhook_url="https://example.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.side_effect = [
                 {"status": 405, "headers": {}, "body": ""},
@@ -160,7 +160,7 @@ class TestProbeWebhook:
     def test_unreachable_on_404(self):
         c = ZapierClient(webhook_url="https://example.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 404,
@@ -175,7 +175,7 @@ class TestProbeWebhook:
     def test_unreachable_on_transport_error(self):
         c = ZapierClient(webhook_url="https://unreachable.example.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.side_effect = ZapierError("connection refused")
             probe = c.probe_webhook()
@@ -189,7 +189,7 @@ class TestProbeFareHarbor:
     def test_resolves_activeoahutours(self):
         c = ZapierClient(webhook_url="https://x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 200,
@@ -217,7 +217,7 @@ class TestProbeFareHarbor:
     def test_404_raises_not_found(self):
         c = ZapierClient(webhook_url="https://x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {"status": 404, "headers": {}, "body": ""}
             with pytest.raises(FareHarborNotFoundError) as excinfo:
@@ -234,7 +234,7 @@ class TestProbeFareHarbor:
     def test_5xx_raises_zapier_error(self):
         c = ZapierClient(webhook_url="https://x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 500,
@@ -248,7 +248,7 @@ class TestProbeFareHarbor:
     def test_non_json_response_raises(self):
         c = ZapierClient(webhook_url="https://x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 200,
@@ -262,7 +262,7 @@ class TestProbeFareHarbor:
     def test_200_with_missing_shortname_raises(self):
         c = ZapierClient(webhook_url="https://x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 200,
@@ -279,7 +279,7 @@ class TestValidate:
     def test_validate_no_shortname(self):
         c = ZapierClient(webhook_url="https://hooks.zapier.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.return_value = {
                 "status": 200,
@@ -295,7 +295,7 @@ class TestValidate:
     def test_validate_with_shortname(self):
         c = ZapierClient(webhook_url="https://hooks.zapier.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.side_effect = [
                 {
@@ -328,7 +328,7 @@ class TestValidate:
     def test_validate_fareharbor_404_reraises(self):
         c = ZapierClient(webhook_url="https://hooks.zapier.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client._http_request"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client._http_request"
         ) as mock_http:
             mock_http.side_effect = [
                 {"status": 200, "headers": {}, "body": ""},

@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from plugins.pwp.capabilities import publish_kpi_tracker as kpi
-from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+from prismatic.shipped_plugins.pwp.capabilities import publish_kpi_tracker as kpi
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
 
 
 # Layout: <PWP_REPO>/prismatic/shipped_plugins/pwp/capabilities/publish_kpi_tracker/tests/
@@ -218,7 +218,7 @@ def test_build_site_computes_derived_metrics(tmp_path: Path, monkeypatch):
     }
     coll_path.write_text(json.dumps(coll, indent=2))
     # Patch SITES_DIR so resolve_collection() reads from our tmp dir.
-    import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
     monkeypatch.setattr(inner, "SITES_DIR", d)
     builder = rv.RuntimeValuesBuilder(env={})
     values = builder.build_site("hd-engine", sites_dir=d)
@@ -240,7 +240,7 @@ def test_build_all_walks_every_site(tmp_path: Path):
     # The 'list_sites' function reads from kpi.SITES_DIR; if that doesn't
     # include our test fixtures, build_all won't see them. The proper way is
     # to monkeypatch.
-    import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
     monkey = pytest.MonkeyPatch()
     monkey.setattr(inner, "SITES_DIR", d)
     try:
@@ -259,7 +259,7 @@ def test_build_all_is_deterministic(tmp_path: Path):
     d = tmp_path / "deterministic"
     d.mkdir()
     _make_site(d, "hd-engine", runtime={"funnel_top.free_chart_generated_total": 99})
-    import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
     monkey = pytest.MonkeyPatch()
     monkey.setattr(inner, "SITES_DIR", d)
     try:
@@ -284,7 +284,7 @@ def test_snapshot_subcommand_writes_template(tmp_path: Path, monkeypatch):
     dst_sites = tmp_path / "sites"
     dst_sites.mkdir()
     shutil.copy(src, dst_sites / "hd-engine.kpi.json")
-    import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
     monkeypatch.setattr(inner, "SITES_DIR", dst_sites)
     # Run the CLI
     result = subprocess.run(
@@ -316,7 +316,7 @@ def test_snapshot_skips_existing_files_without_force(tmp_path: Path, monkeypatch
     out_dir.mkdir()
     sentinel = "{\"existing\": 1}\n"
     (out_dir / "hd-engine.runtime.json").write_text(sentinel, encoding="utf-8")
-    import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
     monkeypatch.setattr(inner, "SITES_DIR", dst_sites)
     cli = Path(__file__).resolve().parents[1] / "operator_cli.py"
     result = subprocess.run(

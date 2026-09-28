@@ -2,7 +2,7 @@
 
 **Status:** Canonical Implementation
 **Owner Lane:** Prismatic Web Plugin / Theme Task Pipeline
-**Module:** `plugins.pwp.theme_task_generation`
+**Module:** `prismatic.shipped_plugins.pwp.theme_task_generation`
 **Issue:** GRO-3738
 
 ---
@@ -81,7 +81,7 @@ Per GRO-3738 test rules:
 
 ```python
 from prismatic.capability_router import AgentCapability, CapabilityRegistry
-from plugins.pwp.theme_task_generation import create_theme_task_plan, DispatchState
+from prismatic.shipped_plugins.pwp.theme_task_generation import create_theme_task_plan, DispatchState
 
 test_registry = CapabilityRegistry([
     AgentCapability(

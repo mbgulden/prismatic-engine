@@ -13,14 +13,14 @@ SHIP_ROOT = HERE.parents[4]
 if str(SHIP_ROOT) not in sys.path:
     sys.path.insert(0, str(SHIP_ROOT))
 
-from plugins.pwp.capabilities.provision_site.steps.zapier import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps.zapier import (  # noqa: E402
     _resolve_fareharbor_shortname,
     step_register_zapier_webhook,
 )
 
 
 def _run(domain: str, publish_root: Path, **kwargs):
-    from plugins.pwp.capabilities.provision_site.types import ProvisionRun
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.types import ProvisionRun
 
     run = ProvisionRun(
         domain=domain, owner="me@example.com", started_at="2026-01-01T00:00:00+00:00"
@@ -67,7 +67,7 @@ class TestMissingCredentials:
         monkeypatch.delenv("ZAPIER_WEBHOOK_URL", raising=False)
         # Patch ZapierClient.from_env to simulate the "no creds" path
         # by raising the same ValueError the real from_env would raise.
-        from plugins.pwp.capabilities.provision_site.zapier_client import ZapierClient
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client import ZapierClient
 
         with mock.patch.object(
             ZapierClient,
@@ -97,7 +97,7 @@ class TestWebhookUnreachable:
     def test_unreachable_webhook(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ZAPIER_WEBHOOK_URL", "https://unreachable.example.com/x")
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
         ) as mock_probe:
             mock_probe.return_value = mock.Mock(
                 url="https://unreachable.example.com/x",
@@ -141,10 +141,10 @@ class TestHappyPath:
         try:
             with (
                 mock.patch(
-                    "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
+                    "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
                 ) as mock_probe,
                 mock.patch(
-                    "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
+                    "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
                 ) as mock_fh,
             ):
                 mock_probe.return_value = mock.Mock(
@@ -207,10 +207,10 @@ class TestHappyPath:
         monkeypatch.setenv("ZAPIER_WEBHOOK_URL", "https://hooks.zapier.com/x")
         with (
             mock.patch(
-                "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
+                "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
             ) as mock_probe,
             mock.patch(
-                "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
+                "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
             ) as mock_fh,
         ):
             mock_probe.return_value = mock.Mock(
@@ -227,7 +227,7 @@ class TestHappyPath:
                     "error_message": "",
                 },
             )
-            from plugins.pwp.capabilities.provision_site.zapier_client import (
+            from prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client import (
                 FareHarborNotFoundError,
             )
 
@@ -242,10 +242,10 @@ class TestHappyPath:
         monkeypatch.setenv("ZAPIER_WEBHOOK_URL", "https://hooks.zapier.com/x")
         with (
             mock.patch(
-                "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
+                "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
             ) as mock_probe,
             mock.patch(
-                "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
+                "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
             ) as mock_fh,
         ):
             mock_probe.return_value = mock.Mock(
@@ -262,7 +262,7 @@ class TestHappyPath:
                     "error_message": "",
                 },
             )
-            from plugins.pwp.capabilities.provision_site.zapier_client import (
+            from prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client import (
                 ZapierError,
             )
 
@@ -275,17 +275,17 @@ class TestHappyPath:
 # ── Step function discoverability ───────────────────────────────────────
 class TestStepDiscovery:
     def test_step_name_in_STEP_NAMES(self):
-        from plugins.pwp.capabilities.provision_site.orchestrator import STEP_NAMES
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.orchestrator import STEP_NAMES
 
         assert "register_zapier_webhook" in STEP_NAMES
 
     def test_step_category_is_soft(self):
-        from plugins.pwp.capabilities.provision_site.steps import STEP_CATEGORIES
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import STEP_CATEGORIES
 
         assert STEP_CATEGORIES.get("register_zapier_webhook") == "soft"
 
     def test_step_function_in_steps_module(self):
-        from plugins.pwp.capabilities.provision_site import steps
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site import steps
 
         assert hasattr(steps, "step_register_zapier_webhook")
         assert callable(steps.step_register_zapier_webhook)
@@ -322,10 +322,10 @@ class TestExistingKpiFile:
         try:
             with (
                 mock.patch(
-                    "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
+                    "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_webhook"
                 ) as mock_probe,
                 mock.patch(
-                    "plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
+                    "prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client.ZapierClient.probe_fareharbor"
                 ) as mock_fh,
             ):
                 mock_probe.return_value = mock.Mock(

@@ -46,6 +46,6 @@ Behavior notes:
   snapshots plus any live-mode adapters with credentials; missing values render
   as "—".
 - The import path is `prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker`.
-  The older `/api/pwp/kpi/*` cluster imports `plugins.pwp...`, which does not
-  resolve in the deployed gateway (no top-level `plugins` package) — do not
-  copy that path into new code.
+  The `/api/pwp/kpi/*` cluster previously imported `plugins.pwp...`, which did not
+  resolve in the deployed gateway (no top-level `plugins` package); it was
+  rewritten to the live path in the #376 rescue — do not reintroduce the old path.

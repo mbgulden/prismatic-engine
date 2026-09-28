@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-import plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
-from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
+import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     site_builder as sb,
 )
 

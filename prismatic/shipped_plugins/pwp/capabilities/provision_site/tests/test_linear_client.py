@@ -28,7 +28,7 @@ from unittest.mock import patch
 
 import pytest
 
-from plugins.pwp.capabilities.provision_site.linear_client import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import (
     CreateIssueInput,
     LINEAR_API_URL,
     LinearClient,

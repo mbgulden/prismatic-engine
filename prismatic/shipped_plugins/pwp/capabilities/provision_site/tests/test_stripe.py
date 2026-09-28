@@ -24,15 +24,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plugins.pwp.capabilities.provision_site.stripe_client import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.stripe_client import (
     STRIPE_API_URL,
     StripeClient,
     StripeError,
     StripePrice,
     StripeProduct,
 )
-from plugins.pwp.capabilities.provision_site import auth_loader
-from plugins.pwp.capabilities.provision_site.steps.stripe import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site import auth_loader
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps.stripe import (
     step_register_stripe,
 )
 
@@ -94,7 +94,7 @@ def test_from_env_raises_when_no_token(monkeypatch) -> None:
         monkeypatch.delenv(k, raising=False)
     # Block the auth_loader fallback so this test is hermetic
     with patch(
-        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=auth_loader.AuthResult(
             value=None, source="none", env_var="",
             hint="(test stub)", redaction="<missing>",
@@ -219,7 +219,7 @@ def test_step_register_stripe_soft_fails_without_creds(
         monkeypatch.delenv(k, raising=False)
     # Block the auth_loader fallback so this test is hermetic
     with patch(
-        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=auth_loader.AuthResult(
             value=None, source="none", env_var="",
             hint="(test stub)", redaction="<missing>",
@@ -262,7 +262,7 @@ def test_step_register_stripe_persists_to_kpi_collections(
     }))
 
     with patch(
-        "plugins.pwp.capabilities.provision_site.stripe_client.StripeClient.from_env",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.stripe_client.StripeClient.from_env",
         return_value=fake_client,
     ):
         run = MagicMock()
@@ -302,7 +302,7 @@ def test_step_register_stripe_creates_minimal_kpi_when_missing(
     fake_client.validate.return_value = {"available": []}
 
     with patch(
-        "plugins.pwp.capabilities.provision_site.stripe_client.StripeClient.from_env",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.stripe_client.StripeClient.from_env",
         return_value=fake_client,
     ):
         run = MagicMock()
@@ -335,7 +335,7 @@ def test_step_register_stripe_handles_invalid_creds(
     )
 
     with patch(
-        "plugins.pwp.capabilities.provision_site.stripe_client.StripeClient.from_env",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.stripe_client.StripeClient.from_env",
         return_value=fake_client,
     ):
         run = MagicMock()
