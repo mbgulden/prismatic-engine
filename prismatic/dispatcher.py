@@ -1041,7 +1041,7 @@ def report_lane_starvation(
     agent_name: str, candidate_count: int, gated_count: int
 ) -> None:
     """Emit a visible no-runnable-work signal for an agent lane."""
-    label = f"agent::{agent_name}"
+    label = f"agent:{agent_name}"
     if candidate_count == 0:
         print(
             f"[dispatcher] 🟡 STARVED {label}: no candidate issues found for this lane"
@@ -4445,7 +4445,7 @@ def dispatch_once(
 
     Process flow:
       1. Discover new pipeline issues (``setup_pipeline_issues``).
-      2. For each configured agent, find issues with ``agent::<name>``
+      2. For each configured agent, find issues with ``agent:<name>``
          label that haven't been dispatched this cycle.
       3. Dispatch each issue to its agent's launch function.
       4. Clean up stale AGY processes.
@@ -4614,7 +4614,9 @@ def dispatch_once(
         if not linear_poll_allowed or not agent_scan_due:
             counts["broad_poll_skipped"] = 1
             continue
-        label = f"agent::{agent_name}"
+        # Canonical Linear label is single-colon (docs/proof-loop-demo-wedge.md).
+        # Double-colon matched nothing in Linear, so every lane reported STARVED.
+        label = f"agent:{agent_name}"
         try:
             issues = get_issues_with_label(label)
         except LinearBudgetExhaustedError as exc:
