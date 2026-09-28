@@ -3,7 +3,7 @@ importlib.resources even when the package root is a zip-backed traversable.
 
 Ported from stale PR #375 (never landed) as a fresh port on current main;
 imports use the canonical package path (Slice 1 rewrote the dead
-``prismatic.shipped_plugins.pwp`` aliases to ``prismatic.shipped_plugins.pwp``).
+``plugins.pwp`` aliases to ``prismatic.shipped_plugins.pwp``).
 """
 
 from __future__ import annotations
