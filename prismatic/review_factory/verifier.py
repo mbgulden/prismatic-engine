@@ -662,16 +662,23 @@ class VerificationWorker:
         seen = set()
         targets = [t for t in test_files if not (t in seen or seen.add(t))][:10]
         if not targets:
+            # Fail closed: Python files changed but no test files resolve.
+            # A verification run that executes zero tests proves nothing;
+            # passing vacuously would let untested changes through the gate.
+            # (Docs/config-only changes exit earlier with a pass — that path
+            # is intentional and unchanged.)
             return CheckResult(
                 name="focused",
                 proof_class="focused",
                 command="rf-verify-focused",
-                exit_code=0,
-                stdout=(
-                    "No test files resolved for changed Python files "
-                    "(" + ", ".join(py_changed[:5]) + "); nothing to focus on."
+                exit_code=1,
+                stderr=(
+                    "FAIL-CLOSED: no test files resolved for changed Python "
+                    "files (" + ", ".join(py_changed[:5]) + "). Focused "
+                    "verification matched zero tests; add tests or adjust "
+                    "the change so its test surface resolves."
                 ),
-                passed=True,
+                passed=False,
             )
 
         args = [sys.executable, "-m", "pytest"] + targets + ["-x", "-q", "--no-header"]
