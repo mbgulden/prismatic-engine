@@ -856,10 +856,14 @@ class DeployReceiverPipeline:
         # overwrite the underlying deploy-step error (2026-09-22: the real
         # rsync ENOSPC error was masked by "version dir missing or invalid").
         # Both are recorded in failure_reason.
+        # require_http=True: the deploy path must not report success while
+        # the gateway is unreachable (2026-09-28: the check passed with the
+        # gateway down because STRICT_HTTP_HEALTH is unset in production).
         health_res = self.health_checker.check(
             version_dir=version_dir,
             release_symlink=runner.release_symlink,
             dry_run=is_dry_run,
+            require_http=True,
         )
 
         if not health_res["passed"]:

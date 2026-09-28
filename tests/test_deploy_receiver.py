@@ -387,7 +387,8 @@ class _FailingDeployRunner(AtomicDeployRunner):
 class _FailingHealthChecker:
     """Health checker stub that always fails the version-dir check."""
 
-    def check(self, version_dir=None, release_symlink=None, dry_run=False):
+    def check(self, version_dir=None, release_symlink=None, dry_run=False,
+                require_http=False):
         return {
             "passed": False,
             "checks": {"version_dir_valid": False},
