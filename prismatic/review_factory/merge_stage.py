@@ -210,7 +210,9 @@ class MergeStage:
         # audit trail and the merge-stage audit; the verdict is advisory
         # only — the pipeline is NEVER halted and nothing is quarantined
         # by this path. Inert while the novelty policy is disabled.
-        self._novelty_screen(job, job_id)
+        # Trip flags ARE fed into the earned-autonomy consult below, so the
+        # novelty-clean predicate is enforced when the detector is armed.
+        novelty_flags, novelty_inert = self._novelty_screen(job, job_id)
 
         # L2 judgment layer (Jev validation-loop plan section 8): Jev judges
         # only what the deterministic floor cannot decide. CLEAN-only (jobs
@@ -227,7 +229,9 @@ class MergeStage:
         # Fail-closed: any consult failure refuses. The consult runs in
         # dry-run mode too — dry_run_ok means "would have merged under
         # autonomy".
-        autonomy_allowed, autonomy_reason = self._autonomy_consult(job)
+        autonomy_allowed, autonomy_reason = self._autonomy_consult(
+            job, novelty_flags=novelty_flags, novelty_inert=novelty_inert
+        )
         if not autonomy_allowed:
             self._audit(
                 job_id,
@@ -440,7 +444,7 @@ class MergeStage:
             expected_schema_hash=_get("novelty_expected_schema_hash", None),
         )
 
-    def _novelty_screen(self, job: Any, job_id: str) -> None:
+    def _novelty_screen(self, job: Any, job_id: str) -> tuple[tuple[str, ...], bool]:
         """Run the monitor-only novelty screen for a merge candidate.
 
         The shipped novelty policy is disabled, so this is inert until the
@@ -451,15 +455,22 @@ class MergeStage:
         quarantined by this path. Enforcing mode is a separate
         phase-advancement step consumed by the quarantine-routing path,
         which is deliberately NOT wired here.
+
+        Returns ``(trip_flags, inert)``: the tripped novelty input names
+        (fed into the earned-autonomy consult so the novelty-clean
+        predicate is actually enforced when the detector is armed), and
+        whether the screen was inert (detector missing/disabled/failed —
+        the consult records a ``novelty_inert`` note as evidence the
+        predicate was vacuous, never a quiet pass).
         """
         detector = self.novelty_detector
         if detector is None:
-            return
+            return (), True
         try:
             result = detector.evaluate(self._novelty_input_for_job(job, job_id))
         except Exception as exc:
             logger.warning("novelty screen failed for %s: %s", job_id, exc)
-            return
+            return (), True
         self._audit(
             job_id,
             "merge_novelty_screen",
@@ -476,6 +487,12 @@ class MergeStage:
                 ),
             },
         )
+        flags = tuple(t.input for t in result.trips)
+        # Disabled/invalid detector = the novelty-clean predicate was
+        # vacuous for this candidate (recorded as a novelty_inert note by
+        # the consult, never a quiet pass).
+        inert = result.state in ("disabled", "invalid")
+        return flags, inert
 
     # ── L2 judgment screen ─────────────────────────────────────────
 
@@ -568,7 +585,13 @@ class MergeStage:
 
     # ── earned-autonomy consult (lazy phase-2 boundary) ────────────
 
-    def _autonomy_consult(self, job: Any, judgment: Any = None) -> tuple[bool, str]:
+    def _autonomy_consult(
+        self,
+        job: Any,
+        judgment: Any = None,
+        novelty_flags: tuple[str, ...] = (),
+        novelty_inert: bool = False,
+    ) -> tuple[bool, str]:
         """Consult the earned-autonomy tier engine for one merge candidate.
 
         Returns (allowed, reason). Fail-closed: the merge is refused
@@ -576,6 +599,10 @@ class MergeStage:
         read, or any part of the consult raises. While phases 1/2 are
         unmerged every consult refuses with "autonomy_module_absent" —
         the stage stays green and inert on the phase-1/2 boundary.
+        ``novelty_flags`` carries the novelty screen's trips so the
+        novelty-clean predicate is enforced when the detector is armed;
+        ``novelty_inert`` notes the predicate was vacuous (never a quiet
+        pass).
         """
         try:
             from prismatic.review_factory import autonomy
@@ -605,6 +632,8 @@ class MergeStage:
                 deterministic_verdict=getattr(job, "deterministic_verdict", "UNKNOWN"),
                 judgment=judgment,
                 brake_engaged=brake_engaged,
+                novelty_flags=tuple(novelty_flags),
+                novelty_inert=bool(novelty_inert),
             )
             return bool(decision.allowed), str(decision.reason)
         except Exception as exc:

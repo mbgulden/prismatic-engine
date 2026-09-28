@@ -104,6 +104,7 @@ def can_auto_merge(
     brake_engaged: bool = False,
     zero_ai: bool = False,
     novelty_flags: tuple[str, ...] = (),
+    novelty_inert: bool = False,
 ) -> AutonomyDecision:
     """Evaluate whether a change may auto-merge. Fail-closed.
 
@@ -111,6 +112,9 @@ def can_auto_merge(
     docstring; the first matching rule wins. ``judgment=None`` means no
     judge ran — allowed through with a ``"judgment_skipped"`` note (per
     the plan, Jev=CLEAR *or* judgment skipped with a verdict note).
+    ``novelty_inert=True`` records a ``"novelty_inert"`` note on allowed
+    decisions as evidence that the novelty-clean predicate was vacuous
+    (detector disabled) rather than evaluated.
     """
 
     def refuse(reason: str, notes: tuple[str, ...] = ()) -> AutonomyDecision:
@@ -168,6 +172,8 @@ def can_auto_merge(
 
     # 10. Cleared every gate.
     notes = ("judgment_skipped",) if judgment is None else ()
+    if novelty_inert:
+        notes = notes + ("novelty_inert",)
     return AutonomyDecision(
         allowed=True,
         reason="auto_merge_allowed",

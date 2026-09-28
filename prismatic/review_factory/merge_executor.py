@@ -53,16 +53,111 @@ def _record_learn_loop_rollback_outcome(job_id: str) -> None:
         logger.warning("learn loop record_outcome failed", exc_info=True)
 
 
-def classify_change_class(job: Any) -> str:
-    """Best-effort change class for the earned-autonomy tier engine.
+# ── change-class classification (evidence-based, fail-closed) ──────────
+# The class is COMPUTED from the job's changed paths, never trusted from a
+# caller-supplied ``change_class`` attribute: self-attestation would let any
+# producer claim "docs" and walk through the T1 auto-merge gate. Anything
+# unrecognized, mixed, sensitive, or empty classifies as "sensitive" (or
+# "production"), which sit in no auto-merge tier.
 
-    Returns ``job.change_class`` when it is a non-empty string; otherwise
-    "sensitive". Fail-closed: "sensitive" sits in no auto-merge tier, so
-    unknown work can never auto-merge under the phase-2 rules.
+# Substrings forcing the "sensitive" class (auth/security/secrets/payment).
+_SENSITIVE_PATH_HINTS = (
+    "auth",
+    "security",
+    "secret",
+    "credential",
+    "token",
+    "private",
+    "wallet",
+    "payment",
+    "billing",
+)
+# Substrings forcing the "production" class (deploy/release machinery).
+_PRODUCTION_PATH_HINTS = ("deploy", "production", "release")
+_SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+_SENSITIVE_BASENAMES = frozenset(
+    {".env", "credentials.json", "secrets.yaml", "secrets.yml"}
+)
+
+_DOCS_DIR_PREFIXES = ("docs/", "journals/")
+_DOCS_SUFFIXES = (".md", ".mdx", ".rst")
+
+# Basenames that are dependency lockfiles (dep_bump class). Manifests that
+# can change build behavior (package.json, pyproject.toml) are deliberately
+# excluded: they fail closed to "sensitive".
+_DEP_BUMP_BASENAMES = frozenset(
+    {
+        "requirements.txt",
+        "requirements-dev.txt",
+        "requirements-test.txt",
+        "poetry.lock",
+        "Pipfile.lock",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "Gemfile.lock",
+        "go.sum",
+        "Cargo.lock",
+    }
+)
+
+
+def _changed_paths_list(job: Any) -> list[str]:
+    """Changed paths for a job: ``changed_paths`` list, else parsed JSON."""
+    paths = getattr(job, "changed_paths", None)
+    if isinstance(paths, (list, tuple)):
+        return [str(p) for p in paths]
+    raw = getattr(job, "changed_paths_json", None)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            decoded = json.loads(raw)
+        except ValueError:
+            return []
+        if isinstance(decoded, list):
+            return [str(p) for p in decoded]
+    return []
+
+
+def classify_change_class(job: Any) -> str:
+    """Derive the change class from the job's changed paths.
+
+    Fail-closed: "sensitive"/"production" sit in no auto-merge tier, so
+    unknown, mixed, empty, or sensitive work can never auto-merge under
+    the phase-2 rules.
     """
-    value = getattr(job, "change_class", None)
-    if isinstance(value, str) and value.strip():
-        return value
+    paths = _changed_paths_list(job)
+    if not paths:
+        return "sensitive"
+    lowered = [p.lower() for p in paths]
+
+    # Sensitive / production paths win over everything (exclusion predicates
+    # from the autonomy spec: auth_security_paths, production_deploys).
+    for p in lowered:
+        base = p.rsplit("/", 1)[-1]
+        if (
+            p.endswith(_SENSITIVE_SUFFIXES)
+            or base in _SENSITIVE_BASENAMES
+            or any(hint in p for hint in _SENSITIVE_PATH_HINTS)
+        ):
+            return "sensitive"
+        if any(hint in p for hint in _PRODUCTION_PATH_HINTS):
+            return "production"
+
+    def _is_docs(p: str) -> bool:
+        return p.startswith(_DOCS_DIR_PREFIXES) or p.endswith(_DOCS_SUFFIXES)
+
+    def _is_dep_bump(p: str) -> bool:
+        return p.rsplit("/", 1)[-1] in _DEP_BUMP_BASENAMES
+
+    def _is_chore(p: str) -> bool:
+        return p.startswith(".github/")
+
+    if all(_is_docs(p) for p in lowered):
+        return "docs"
+    if all(_is_dep_bump(p) for p in lowered):
+        return "dep_bump"
+    if all(_is_chore(p) for p in lowered):
+        return "chore"
     return "sensitive"
 
 
@@ -80,6 +175,18 @@ class MergeResult:
     # or was skipped). Evidence for the earned-autonomy ``receipt_emitted``
     # condition.
     merge_receipt_id: str = ""
+
+
+class MergeReceiptMissingError(RuntimeError):
+    """A merge commit landed but no signed receipt could be emitted.
+
+    Raised by ``_execute_merge`` as a fail-closed postcondition: a T1
+    merge cannot finish successfully without receipt evidence. The
+    surrounding handler CAS-rolls the merge back when the target head is
+    exactly the merge commit; when rollback is refused the commit stays
+    live and a ``merge_receipt_missing`` trust-ledger event records the
+    attempt (it never counts as a clean merge).
+    """
 
 
 class MergeExecutor:
@@ -286,10 +393,10 @@ class MergeExecutor:
     ) -> str:
         """Emit the signed merge receipt for a completed merge.
 
-        Best-effort and never raising: the merge already happened, and a
-        receipt failure must not rewrite the result (same contract as the
-        trust-ledger recording). Returns the receipt_id, or "" when the
-        receipt could not be emitted.
+        Never raises; returns the receipt_id, or "" when the receipt could
+        not be emitted. The caller (``_execute_merge``) treats "" as a
+        fatal postcondition failure: a merge without a signed receipt is
+        not a successful merge.
         """
         try:
             from prismatic.verification.merge_receipt import (
@@ -583,6 +690,23 @@ class MergeExecutor:
                     f"{expected_merge_tree}; refusing merge"
                 )
 
+            # Merge-time receipt emission BEFORE any merged-manifest
+            # persistence or the terminal MERGED state transition: proof on
+            # every merge, enforced as a fail-closed postcondition. An
+            # empty receipt id raises MergeReceiptMissingError and the
+            # handler below CAS-rolls the merge back; the receipt_id is the
+            # evidence behind the earned-autonomy ``receipt_emitted``
+            # condition.
+            merge_receipt_id = self._emit_merge_receipt(
+                job, auth, manifest, merge_sha, ci_checks
+            )
+            if not merge_receipt_id:
+                raise MergeReceiptMissingError(
+                    f"merge {merge_sha} for job {job.review_job_id} completed "
+                    "but no signed merge receipt was emitted; refusing to "
+                    "finalize without receipt evidence"
+                )
+
             # Step 8: Atomically persist the merged manifest when this job is
             # file-backed, then require durable MERGING -> MERGED finalization.
             pre_merge_manifest = manifest
@@ -614,13 +738,6 @@ class MergeExecutor:
                     "actor": auth.actor,
                     "target": target_branch,
                 },
-            )
-
-            # Merge-time receipt emission: proof on every merge. Best-effort
-            # (never raises); the receipt_id is the evidence behind the
-            # earned-autonomy ``receipt_emitted`` condition.
-            merge_receipt_id = self._emit_merge_receipt(
-                job, auth, manifest, merge_sha, ci_checks
             )
 
             return MergeResult(
@@ -698,6 +815,15 @@ class MergeExecutor:
                     job.review_job_id,
                 )
             if rollback_error is not None:
+                if isinstance(exc, MergeReceiptMissingError):
+                    # The merge commit is live on the target but carries no
+                    # signed receipt and the CAS rollback was refused or
+                    # failed. Record the attempt in the trust ledger so the
+                    # gap is visible; it must NOT count as a clean merge
+                    # (no merge_completed event is recorded).
+                    self._record_trust_receipt_missing(
+                        job, merge_sha_created or "", str(rollback_error)
+                    )
                 raise RuntimeError(
                     f"Merge failed and rollback was refused or failed: {rollback_error}"
                 ) from exc
@@ -711,6 +837,30 @@ class MergeExecutor:
                     principal=principal,
                     acquisition_token=lock_token,
                 )
+
+    def _record_trust_receipt_missing(
+        self, job: ReviewJob, merge_sha: str, reason: str
+    ) -> None:
+        """Best-effort trust-ledger record for a live merge without receipt.
+
+        Same contract as _record_trust_merge_outcome: silent no-op while
+        phase 1 is unmerged, never raises.
+        """
+        try:
+            from prismatic.review_factory import trust
+        except Exception:
+            logger.debug("trust ledger unavailable; skipping receipt-missing record")
+            return
+        try:
+            ledger = self.trust_ledger or trust.TrustLedger()
+            ledger.record_merge_receipt_missing(
+                artifact_id=job.review_job_id,
+                change_class=classify_change_class(job),
+                merge_sha=merge_sha,
+                notes=reason,
+            )
+        except Exception:
+            logger.debug("trust ledger record_merge_receipt_missing failed", exc_info=True)
 
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
         if job.result_packet_path and Path(job.result_packet_path).exists():

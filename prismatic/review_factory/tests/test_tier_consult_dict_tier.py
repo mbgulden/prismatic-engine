@@ -121,10 +121,13 @@ def _stage(monkeypatch):
 
 
 def _docs_job():
+    # Classification is evidence-based (changed paths), never the
+    # self-attested change_class attribute: real docs path evidence.
     return SimpleNamespace(
         review_job_id="job-r2",
         risk_tier=0,
         change_class="docs",
+        changed_paths_json='["docs/guide.md"]',
         deterministic_verdict="CLEAN",
     )
 
