@@ -43,9 +43,9 @@ Do not treat them as globally unique or persistent identifiers.
 tokens (compare-and-reject on write). Roadmap, not v1. Note that swarmlock
 already ships `DurableFencingTokenGenerator` — restart-durable, still
 single-node — which is the natural first step if this boundary ever needs
-to move. (Separately, `prismatic/cron_authority.py` runs its own fencing
-with SQL-level stale-token rejection; that subsystem is independent of the
-kernel path described here.)
+to move. (Separately, the removed `prismatic/cron_authority.py` ran its own
+fencing with SQL-level stale-token rejection; that subsystem was independent
+of the kernel path described here. See ADR-0004.)
 
 ## 3. Commit semantics (ratified 2026-09-19)
 
