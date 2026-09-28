@@ -42,7 +42,7 @@ def apply_jev_advice(deterministic: str, jev_choice: str | None) -> str:
     Every future call site routes through this function; the adversarial
     cases are unit-tested explicitly.
     """
-    det = (deterministic or "").strip().upper()
+    det = str(deterministic or "").strip().upper()
     if det not in _SEVERITY:
         raise DecisionError(f"unknown deterministic verdict: {deterministic!r}")
     if jev_choice is None:

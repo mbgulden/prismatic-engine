@@ -31,6 +31,7 @@ class PostDeployHealthChecker:
         version_dir: Path | None = None,
         release_symlink: Path | None = None,
         dry_run: bool = False,
+        require_http: bool = False,
     ) -> dict[str, Any]:
         """Execute full post-deploy health check suite.
 
@@ -84,15 +85,23 @@ class PostDeployHealthChecker:
             checks[f"http_{name}"] = status_ok
             details[f"http_{name}_detail"] = msg
 
-        # Verification pass rule: filesystem checks MUST pass; HTTP passes or logs warning if offline
+        # Verification pass rule: filesystem checks MUST pass. HTTP checks
+        # are required when explicitly requested (require_http=True -- used by
+        # the production deploy path) or when STRICT_HTTP_HEALTH is set;
+        # otherwise they stay best-effort so offline unit tests keep passing.
+        # (2026-09-28: without this, a deploy was recorded successful with
+        # the gateway completely down -- a green lie.)
         fs_passed = all(
             v for k, v in checks.items() if k in ("symlink_exists", "version_dir_valid")
         )
         http_passed = any(v for k, v in checks.items() if k.startswith("http_"))
+        strict_http = require_http or bool(os.environ.get("STRICT_HTTP_HEALTH"))
+        if not http_passed and strict_http:
+            details["http_required_error"] = (
+                "gateway HTTP endpoints unreachable and HTTP health is required"
+            )
 
-        overall_passed = fs_passed and (
-            http_passed or not os.environ.get("STRICT_HTTP_HEALTH")
-        )
+        overall_passed = fs_passed and (http_passed or not strict_http)
 
         return {
             "passed": overall_passed,

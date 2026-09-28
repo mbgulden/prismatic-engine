@@ -184,3 +184,50 @@ class TestManifestDirImport:
         assert r2.scanned == 20
         assert r2.enqueued == 0
         assert r2.skipped_duplicate == 20
+
+
+# ── Concurrent drain race ────────────────────────────────────────────
+
+
+class TestConcurrentDrainRace:
+    """Two one-shots racing: the loser must count skipped_duplicate, not error.
+
+    The UNIQUE constraint on review_jobs.completed_work_id already prevents a
+    double-enqueue; this pins the accounting behavior when the loser's INSERT
+    hits it.
+    """
+
+    def test_lost_check_then_act_counts_duplicate(self, tmp_db, queue, monkeypatch):
+        importer = BacklogImporter(queue=queue, db_path=tmp_db)
+        sha = "a" * 40
+        kwargs = {
+            "completed_work_id": "agy-cw-race-test",
+            "task_id": "GRO-RACE",
+            "repository": "mbgulden/prismatic-engine",
+            "base_commit": sha,
+            "base_tree": sha,
+            "candidate_commit": "b" * 40,
+            "candidate_tree": "b" * 40,
+            "changed_paths": ["docs/x.md"],
+            "result_packet_path": "/tmp/x",
+        }
+        result = ImportResult()
+        importer._enqueue_idempotent(result, **kwargs)
+        assert result.enqueued == 1
+
+        # Simulate the race: both pre-checks see nothing (stale reads between
+        # check and insert), but the row is already there, so the INSERT hits
+        # the completed_work_id UNIQUE constraint.
+        monkeypatch.setattr(
+            queue.db, "get_job_by_completed_work_id", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            queue.db, "get_job_by_task_and_candidate", lambda *a, **k: None
+        )
+        importer._enqueue_idempotent(result, **kwargs)
+
+        assert result.enqueued == 1
+        assert result.skipped_duplicate == 1
+        assert result.errors == []
+        # Exactly one job row: no double-enqueue.
+        assert len(queue.db.list_review_jobs()) == 1

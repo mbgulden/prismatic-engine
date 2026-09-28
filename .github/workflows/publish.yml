@@ -12,6 +12,12 @@ on:
         default: false
         type: boolean
 
+# Serialize per ref; never cancel a publish mid-upload (partial
+# release risk).
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write
