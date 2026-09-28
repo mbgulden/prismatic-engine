@@ -10,7 +10,6 @@ Enforces Prismatic Engine Layer 1 Interceptor specifications:
 from __future__ import annotations
 
 import os
-import sys
 import time
 import json
 import logging
@@ -284,11 +283,23 @@ def get_candidate_transports(explicit_endpoint: str | None = None) -> list[Trans
         if not any(c.target == u for c in candidates):
             candidates.append(TransportCandidate("http", u, f"Loopback: {u}"))
 
-    # 3. Tailscale MagicDNS / IP candidates (Hermes VM 800)
-    tailscale_urls = [
-        f"http://webtop-hermes:{port}",
-        f"http://100.83.32.92:{port}",
-    ]
+    # 3. Tailscale / remote-mesh candidates. Override with PRISMATIC_TAILSCALE_CANDIDATES
+    # (comma-separated host or host:port entries, e.g. "gpu-box:9000,100.64.0.5").
+    # Defaults preserve the original single-box behavior; other machines set the
+    # env var to their own mesh hosts (or to empty to skip this tier entirely).
+    _mesh_env = os.environ.get("PRISMATIC_TAILSCALE_CANDIDATES")
+    if _mesh_env is None:
+        _mesh_hosts = ["webtop-hermes", "100.83.32.92"]
+    else:
+        _mesh_hosts = [h.strip() for h in _mesh_env.split(",") if h.strip()]
+    tailscale_urls = []
+    for _host in _mesh_hosts:
+        if _host.startswith("http://") or _host.startswith("https://"):
+            tailscale_urls.append(_host.rstrip("/"))
+        elif ":" in _host:
+            tailscale_urls.append(f"http://{_host}")
+        else:
+            tailscale_urls.append(f"http://{_host}:{port}")
     for tu in tailscale_urls:
         if not any(c.target == tu for c in candidates):
             candidates.append(TransportCandidate("http", tu, f"Tailscale Mesh: {tu}"))
