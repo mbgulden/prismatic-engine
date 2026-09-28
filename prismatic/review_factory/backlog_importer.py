@@ -15,11 +15,23 @@ Usage
 
     importer = BacklogImporter(queue=queue)
     result = importer.import_from_completed_work()
+
+CLI (systemd entry point — see scripts/prismatic-review-factory.service)
+-----------------------------------------------------------------------
+    python3 -m prismatic.review_factory.backlog_importer \
+        --db-path /home/ubuntu/.prismatic/state/agy_completed_work.db \
+        --completed-work-db-path /home/ubuntu/.prismatic/state/agy_completed_work.db \
+        --inbox-dir /home/ubuntu/.prismatic/inbox \
+        --state-dir /home/ubuntu/.prismatic/state \
+        --workspace-dir /home/ubuntu/.prismatic/state/source-workspaces \
+        --max-items 20 --worker-id review-factory-runtime
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -259,3 +271,146 @@ class BacklogImporter:
 
         if job_id:
             result.enqueued += 1
+
+
+# ── CLI entry point ──
+# R-1 follow-up (2026-09-27): the systemd unit
+# `scripts/prismatic-review-factory.service` runs this module as
+# `python3 -m prismatic.review_factory.backlog_importer ...`. The module
+# previously defined no main() and no `__main__` guard, so `-m` merely
+# imported it and exited 0 with every CLI flag silently ignored — the
+# drain never ran. This entry point mirrors the learn_loop.py codebase
+# convention (main(argv=None) -> int) and wires the REAL drain logic:
+# eligible completed-work rows are imported into the review queue.
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """CLI for the systemd `-m` entry point — the unit's exact flags."""
+    parser = argparse.ArgumentParser(
+        prog="prismatic.review_factory.backlog_importer",
+        description=(
+            "Review Factory backlog importer: drain eligible completed-work "
+            "rows into the review queue (bounded one-shot). Invoked by "
+            "prismatic-review-factory.service via `python3 -m`."
+        ),
+    )
+    parser.add_argument(
+        "--db-path",
+        default=None,
+        help=(
+            "Review Factory queue DB path (the queue tables live in the "
+            "same file as the completed-work store; defaults to the "
+            "standard state-dir resolution)."
+        ),
+    )
+    parser.add_argument(
+        "--completed-work-db-path",
+        default=None,
+        help=(
+            "Completed-work store DB path (defaults to the standard "
+            "state-dir resolution)."
+        ),
+    )
+    parser.add_argument(
+        "--inbox-dir",
+        default=None,
+        help=(
+            "Inbox directory (accepted for unit CLI compatibility; the "
+            "drain reads the completed-work DB, not the inbox)."
+        ),
+    )
+    parser.add_argument(
+        "--state-dir",
+        default=None,
+        help=(
+            "State directory; exported as PRISMATIC_STATE_DIR for default "
+            "path resolution when set."
+        ),
+    )
+    parser.add_argument(
+        "--workspace-dir",
+        default=None,
+        help=(
+            "Source-workspaces directory (accepted for unit CLI "
+            "compatibility; reserved for future manifest-dir scanning)."
+        ),
+    )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=20,
+        help="Maximum completed-work rows to scan per run (default: 20, "
+        "the bound the systemd unit passes).",
+    )
+    parser.add_argument(
+        "--worker-id",
+        default="review-factory-runtime",
+        help="Worker identity recorded in the drain summary (journald).",
+    )
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Run the bounded one-shot backlog drain.
+
+    This is the entry point the systemd unit invokes via
+    ``python3 -m prismatic.review_factory.backlog_importer``. It runs the
+    real drain: eligible completed-work rows are imported into the review
+    queue, and a one-line summary is printed (captured by journald as the
+    drain's success signal).
+
+    Exit code 0 = the drain ran (zero rows is a legitimate outcome).
+    Exit code 1 = the drain failed unexpectedly (exception), so the unit
+    reports failure instead of a silent success.
+    """
+    from prismatic.review_factory.db import ReviewFactoryDB
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.max_items < 0:
+        parser.error("--max-items must be >= 0")
+
+    if args.state_dir:
+        # The unit passes --state-dir and also sets PRISMATIC_STATE_DIR in
+        # the environment; make the flag authoritative for default-path
+        # resolution below without clobbering an explicitly set env var.
+        os.environ.setdefault("PRISMATIC_STATE_DIR", args.state_dir)
+
+    queue_db_path = Path(args.db_path) if args.db_path else None
+    completed_work_db_path = (
+        Path(args.completed_work_db_path) if args.completed_work_db_path else None
+    )
+
+    db = ReviewFactoryDB(db_path=queue_db_path)
+    queue = ReviewQueue(db=db)
+    try:
+        importer = BacklogImporter(queue=queue, db_path=completed_work_db_path)
+        result = importer.import_from_completed_work(limit=args.max_items)
+    except Exception as exc:
+        logger.exception("backlog drain failed unexpectedly")
+        print(
+            f"backlog_importer drain FAILED worker_id={args.worker_id}: {exc}",
+            flush=True,
+        )
+        return 1
+    finally:
+        queue.close()
+
+    summary = (
+        "backlog_importer drain complete "
+        f"worker_id={args.worker_id} "
+        f"scanned={result.scanned} eligible={result.eligible} "
+        f"enqueued={result.enqueued} "
+        f"skipped_duplicate={result.skipped_duplicate} "
+        f"skipped_ineligible={result.skipped_ineligible} "
+        f"errors={len(result.errors)}"
+    )
+    logger.info("%s", summary)
+    print(summary, flush=True)
+    for err in result.errors:
+        print(f"backlog_importer drain error: {err}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
