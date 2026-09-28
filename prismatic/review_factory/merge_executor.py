@@ -76,6 +76,10 @@ class MergeResult:
     error: str = ""
     integration_manifest: Optional[IntegrationManifest] = None
     final_manifest_state: str = ""
+    # Signed merge receipt emitted for this merge ("" when emission failed
+    # or was skipped). Evidence for the earned-autonomy ``receipt_emitted``
+    # condition.
+    merge_receipt_id: str = ""
 
 
 class MergeExecutor:
@@ -89,6 +93,7 @@ class MergeExecutor:
         mf_store: Optional[MergeFactoryStore] = None,
         verification_receipt_store: Optional[VerificationReceiptStore] = None,
         trust_ledger: Optional[Any] = None,
+        merge_receipts_path: Optional[Path] = None,
     ):
         self.queue = queue or ReviewQueue()
         self.dry_run = dry_run
@@ -99,6 +104,9 @@ class MergeExecutor:
         # tests; when None the phase-1 TrustLedger is built lazily at
         # record time and skipped silently while phase 1 is unmerged.
         self.trust_ledger = trust_ledger
+        # Merge-receipt log path (injectable for tests; default resolves
+        # via $PRISMATIC_MERGE_RECEIPTS / $PRISMATIC_STATE_DIR / ~/.prismatic).
+        self.merge_receipts_path = merge_receipts_path
 
     def execute(
         self,
@@ -267,6 +275,67 @@ class MergeExecutor:
             )
         except Exception:
             logger.debug("trust ledger record_rollback failed", exc_info=True)
+
+    def _emit_merge_receipt(
+        self,
+        job: ReviewJob,
+        auth: Any,
+        manifest: MergeCandidateManifest,
+        merge_sha: str,
+        validated_checks: tuple,
+    ) -> str:
+        """Emit the signed merge receipt for a completed merge.
+
+        Best-effort and never raising: the merge already happened, and a
+        receipt failure must not rewrite the result (same contract as the
+        trust-ledger recording). Returns the receipt_id, or "" when the
+        receipt could not be emitted.
+        """
+        try:
+            from prismatic.verification.merge_receipt import (
+                build_merge_receipt,
+                persist_merge_receipt,
+                sign_merge_receipt,
+            )
+        except Exception:
+            logger.debug("merge receipt module unavailable; skipping emission")
+            return ""
+        try:
+            refs = []
+            for check in validated_checks or ():
+                receipt_id = getattr(check, "provider_receipt_id", "")
+                if receipt_id:
+                    refs.append(
+                        {
+                            "receipt_id": str(receipt_id),
+                            "receipt_sha256": str(
+                                getattr(check, "provider_receipt_sha256", "")
+                            ),
+                        }
+                    )
+            receipt = build_merge_receipt(
+                repository=job.repository,
+                candidate_sha=job.candidate_commit,
+                candidate_tree=job.candidate_tree or job.candidate_commit,
+                base_sha=job.base_commit,
+                merge_sha=merge_sha,
+                actor=getattr(auth, "actor", ""),
+                authorization_id=getattr(auth, "authorization_id", ""),
+                job_id=job.review_job_id,
+                task_id=job.task_id or "",
+                manifest_digest=manifest.digest(),
+                policy_version=job.policy_version or "",
+                change_class=classify_change_class(job),
+                verified_receipt_refs=refs,
+            )
+            sign_merge_receipt(receipt)
+            persisted_id = persist_merge_receipt(
+                receipt, log_path=self.merge_receipts_path
+            )
+            return persisted_id or ""
+        except Exception:
+            logger.warning("merge receipt emission failed", exc_info=True)
+            return ""
 
     def _git_rev_parse(self, ref: str) -> str:
         import subprocess
@@ -547,12 +616,20 @@ class MergeExecutor:
                 },
             )
 
+            # Merge-time receipt emission: proof on every merge. Best-effort
+            # (never raises); the receipt_id is the evidence behind the
+            # earned-autonomy ``receipt_emitted`` condition.
+            merge_receipt_id = self._emit_merge_receipt(
+                job, auth, manifest, merge_sha, ci_checks
+            )
+
             return MergeResult(
                 job_id=job.review_job_id,
                 success=True,
                 merge_sha=merge_sha,
                 integration_manifest=integration_manifest,
                 final_manifest_state=manifest.state.value,
+                merge_receipt_id=merge_receipt_id,
             )
         except Exception as exc:
             logger.error("Integration merge execution failed: %s", exc)
