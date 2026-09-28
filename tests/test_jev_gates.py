@@ -99,6 +99,15 @@ class TestCallSiteGate(unittest.TestCase):
             with self._env(SWARMJEV_ENABLED=val, SWARMJEV_CALLSITE_X_ENABLED=val):
                 self.assertFalse(CallSiteGate("x").allow(), msg=f"value={val!r}")
 
+    def test_non_string_deterministic_verdict_raises_decision_error(self):
+        # Contract: an unrecognized deterministic verdict is a DecisionError
+        # (fail-closed), never an AttributeError from string handling.
+        for bad in (123, 4.5, ["CLEAN"], ("REPAIR",), object()):
+            with self.assertRaises(DecisionError, msg=f"verdict={bad!r}"):
+                apply_jev_advice(bad, None)
+            with self.assertRaises(DecisionError, msg=f"verdict={bad!r}"):
+                apply_jev_advice(bad, "CLEAN")
+
     def test_site_name_normalized(self):
         gate = CallSiteGate("failure-triage #26")
         self.assertEqual(gate.site_env, "SWARMJEV_CALLSITE_FAILURE_TRIAGE__26_ENABLED")
