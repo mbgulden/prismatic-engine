@@ -18,11 +18,21 @@ Do not merge #380; this contract replaces it.
 
 ## The version (single source of truth)
 
-The contract version **is the engine package version**: `prismatic.__version__`,
-which mirrors `version` in `pyproject.toml`. There is exactly one number. No
-separate "plugin API version" exists — a second version is a second thing to forget
-to bump, and the failure mode of a forgotten bump is silent contract breakage.
-The package version cannot be forgotten: it is the release.
+The contract version **is the engine package version**: `prismatic.__version__`.
+`pyproject.toml` carries a second literal of the same number; the standing
+conformance test asserts they agree, because a silent desync would let the gate
+validate plugins against a stale version. No separate "plugin API version"
+exists — a second version is a second thing to forget to bump, and the failure
+mode of a forgotten bump is silent contract breakage. The package version cannot
+be forgotten: it is the release.
+
+Convention, not compiler enforcement: `PluginLoader` takes `core_version` as a
+constructor argument. Both production call sites pass `prismatic.__version__`
+(`prismatic/plugins/cli_handlers.py`; the Gap 13 gate via
+`read_core_version`'s tier-1 preference in `prismatic/quality/plugin_load.py`,
+which falls back through `importlib.metadata`, `pyproject.toml`, and finally
+`"0.0.0"` — the last resort fails every shipped plugin's range, i.e. fail
+closed). Future call sites must keep passing `prismatic.__version__`.
 
 Rationale: plugin compatibility is about the plugin-facing interface (manifest
 schema, `PluginContext` surface, lifecycle hooks, capability/provider constraint
@@ -53,8 +63,14 @@ plugin's entry point, before capability/provider validation, before `on_init`:
 - Mismatch → `PluginValidationError("Core version '<v>' does not satisfy
   constraint '<c>' for plugin '<name>'.")`. The plugin is **not loaded**; the
   error names the running version, the declared constraint, and the plugin.
-- The check never raises anything else and never warns-and-continues. A plugin
-  that cannot prove compatibility with the running engine does not run.
+- Malformed specifier or unparseable engine version → `PluginValidationError`
+  as well. Only `PluginValidationError` ever leaves the version check: a bad
+  constraint is a rejection, never a crash.
+- Blank or whitespace-only constraint → rejected at manifest read time. An
+  undeclared compatibility is a fail-closed rejection, not a
+  match-everything guess.
+- The check never warns-and-continues. A plugin that cannot prove
+  compatibility with the running engine does not run.
 
 ## Conformance (CI)
 
@@ -105,6 +121,8 @@ fails silently in production (unsafe).
 
 - [x] Engine version has exactly one source of truth (`prismatic.__version__`).
 - [x] `core_version_constraint` is a required manifest field; omission fails closed.
+- [x] Blank constraints and malformed specifiers fail closed as `PluginValidationError`.
+- [x] `pyproject.toml` version and `prismatic.__version__` agree (asserted by the conformance test).
 - [x] Mismatch fails closed at load time with an error naming version, constraint, plugin.
 - [x] CI runs the conformance gate on plugin, loader, **and version-bump** changes.
 - [x] Unit tests prove the fail-closed behavior and the standing conformance assertion.

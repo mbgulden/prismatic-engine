@@ -298,6 +298,8 @@ def test_plugin_load_result_to_markdown():
     assert "0.2.0" in md
     assert "/tmp/plugins" in md
     print("PASS: PluginLoadResult.to_markdown() produces a useful report")
+
+
 def test_all_shipped_plugin_constraints_include_current_engine_version():
     """Standing conformance assertion for the plugin<->engine compatibility contract.
 
@@ -329,7 +331,92 @@ def test_all_shipped_plugin_constraints_include_current_engine_version():
             f"{name}: engine version {prismatic.__version__} not in "
             f"declared range {constraint}"
         )
+    # The contract version is prismatic.__version__; pyproject.toml carries
+    # a second literal of the same number. They must agree — a silent desync
+    # would let the gate validate plugins against a stale version.
+    import re
+
+    repo_root = get_shipped_plugins_dir().parent.parent
+    pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+    assert m, "could not read version from pyproject.toml"
+    assert m.group(1) == prismatic.__version__, (
+        f"version desync: pyproject.toml={m.group(1)} "
+        f"prismatic.__version__={prismatic.__version__}"
+    )
     print(
         f"PASS: all {len(manifests)} shipped plugin constraints "
         f"include engine version {prismatic.__version__}"
     )
+
+
+def test_read_manifest_rejects_missing_constraint():
+    """Omission of core_version_constraint fails closed at manifest read time."""
+    from prismatic.core.registry import PluginLoader
+    from prismatic.interface.plugin import PluginValidationError
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest_path = Path(td) / "plugin-manifest.yaml"
+        manifest_path.write_text(
+            'schema_version: "1.0.0"\n'
+            'name: "no-constraint-plugin"\n'
+            'version: "1.0.0"\n'
+            'entry_point: "no_constraint.plugin:NoConstraintPlugin"\n',
+            encoding="utf-8",
+        )
+        loader = PluginLoader(core_version="0.2.0", plugins_dir=td)
+        try:
+            loader._read_manifest(manifest_path)
+        except PluginValidationError:
+            print("PASS: missing core_version_constraint rejected")
+            return
+        raise AssertionError("expected PluginValidationError for missing constraint")
+
+
+def test_read_manifest_rejects_blank_constraint():
+    """A whitespace-only constraint is an undeclared compatibility: rejected."""
+    from prismatic.core.registry import PluginLoader
+    from prismatic.interface.plugin import PluginValidationError
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest_path = Path(td) / "plugin-manifest.yaml"
+        manifest_path.write_text(
+            'schema_version: "1.0.0"\n'
+            'name: "blank-constraint-plugin"\n'
+            'version: "1.0.0"\n'
+            'entry_point: "blank_constraint.plugin:BlankConstraintPlugin"\n'
+            'core_version_constraint: "   "\n',
+            encoding="utf-8",
+        )
+        loader = PluginLoader(core_version="0.2.0", plugins_dir=td)
+        try:
+            loader._read_manifest(manifest_path)
+        except PluginValidationError:
+            print("PASS: blank core_version_constraint rejected")
+            return
+        raise AssertionError("expected PluginValidationError for blank constraint")
+
+
+def test_validate_manifest_rejects_malformed_specifier():
+    """A malformed specifier raises PluginValidationError, never InvalidSpecifier."""
+    from packaging.specifiers import InvalidSpecifier
+
+    from prismatic.core.registry import PluginLoader
+    from prismatic.interface.plugin import PluginContext, PluginValidationError
+
+    loader = PluginLoader(core_version="0.2.0", plugins_dir="/tmp")
+    manifest = {
+        "name": "malformed-plugin",
+        "version": "1.0.0",
+        "entry_point": "malformed.plugin:MalformedPlugin",
+        "core_version_constraint": "not-a-specifier",
+    }
+    context = PluginContext(config={}, db_connection=None, state_dir="/tmp")
+    try:
+        loader._validate_manifest(manifest, context, Path("/tmp/plugin-manifest.yaml"))
+    except PluginValidationError:
+        print("PASS: malformed specifier -> PluginValidationError")
+        return
+    except InvalidSpecifier:
+        raise AssertionError("malformed specifier leaked InvalidSpecifier")
+    raise AssertionError("expected PluginValidationError for malformed specifier")
