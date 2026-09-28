@@ -138,6 +138,11 @@ GROUP BY parent_id;
 
 ## 4. Backup & Restore
 
+> **Portability note:** paths below are written with `$HOME` / `$PRISMATIC_HOME`.
+> Concrete values shown in examples come from the reference deployment
+> (webtop-hermes, user `ubuntu`); substitute your own home directory on other machines.
+
+
 ### 4.1 What is backed up
 
 Daily snapshots land in `/archive/prismatic-bus-snapshots/` (14-day retention per store,
@@ -157,13 +162,13 @@ Snapshot files are named `<prefix>.YYYYMMDD_HHMMSS` (UTC).
 ### 4.2 How it runs
 
 - **Writer:** the Hermes orchestrator cron job `event_log_backup` (daily 02:00 MDT =
-  08:00 UTC) executes `/home/ubuntu/.hermes/profiles/orchestrator/scripts/prismatic_bus_backup.py`.
+  08:00 UTC) executes `$HOME/.hermes/profiles/orchestrator/scripts/prismatic_bus_backup.py`.
   The script integrity-checks each live sqlite DB *before* snapshotting, verifies every
   snapshot after writing, prunes to 14 days, and exits non-zero with a stderr message on
   any failure — failures are loud, never silent. A per-run report lands in the
   orchestrator's cron output dir (`.../cron/output/event_log_backup/`).
 - **Off-box sync:** crontab `30 8 * * *` rsyncs the snapshot dir to the synology mount
-  (log: `/home/ubuntu/.hermes/logs/prismatic_snapshot_sync.log`).
+  (log: `$HOME/.hermes/logs/prismatic_snapshot_sync.log`).
 - **Gotchas the automation already handles:**
   - The live DBs run in WAL mode — a naive `cp` of the `.db` file misses the WAL and
     yields a stale view. Always use the sqlite backup API (or checkpoint first).
@@ -213,8 +218,10 @@ then validate every line parses as JSON.
 3. Restore each store per 4.4 into a fresh `~/.prismatic/` tree.
 4. Recreate `keys/` and `env.d/` — **no backups exist; secrets must be regenerated**,
    which invalidates all prior receipt signatures. **[UNVERIFIED — no key rotation procedure]**
-5. Reinstall systemd units (units are not in the repo; reconstruct from `.bak` copies
-   under `~/.prismatic/backups/` or the old host's notes). **[UNVERIFIED]**
+5. Reinstall systemd units from `templates/systemd/` (portable template — set `User=`
+   and paths for the new host). The previous host's installed units live in
+   `scripts/*.service` as reference; `.bak` copies under `~/.prismatic/backups/`
+   are a fallback. **[UNVERIFIED]**
 6. Restart services in dependency order; reset/repair the consumer cursor if
    `dispatch_consumer.rowid` was lost (consumer refuses to start when cursor > bus max —
    use its `--repair-apply` flow). **[UNVERIFIED]**
@@ -222,7 +229,7 @@ then validate every line parses as JSON.
 ### 4.6 Verifying backups (do this after any change to the snapshot job)
 
 ```bash
-python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/prismatic_bus_backup.py
+python3 $HOME/.hermes/profiles/orchestrator/scripts/prismatic_bus_backup.py
 # expect: one line per store with integrity/row/line counts, then "Success: ..."
 ls /mnt/synology-agentic-context/prismatic-snapshots/ | tail -5
 # expect: today's snapshot set present off-box
