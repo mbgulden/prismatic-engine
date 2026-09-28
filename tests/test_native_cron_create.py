@@ -274,3 +274,154 @@ def test_pwp_cron_status_registers_without_fallback(
     pwp_crons = [c for c in NativeCronStore(path=store_path).load()
                  if c.id == "cron-pwp-auto-sync"]
     assert len(pwp_crons) == 1
+
+
+# ── POST /native-crons over real HTTP (TestClient) ────────────────────
+#
+# The full gateway server cannot be imported in a bare checkout (it needs
+# live-VM-only deps), so these tests mount the REAL handler function
+# extracted from prismatic/gateway/server.py — decorator included — on a
+# fresh FastAPI app and exercise it over HTTP. Fail-first: on pre-WI-3
+# server.py there is no create_native_cron_endpoint and the mount raises
+# AssertionError.
+
+
+def _mount_create_route(server_py: Path | None = None):
+    """Return a FastAPI app with server.py's real POST /native-crons handler."""
+    pytest.importorskip("fastapi")
+    from typing import Any as TypingAny
+
+    from fastapi import FastAPI
+
+    if server_py is None:
+        server_py = (
+            Path(native_crons.__file__).resolve().parents[1]
+            / "prismatic"
+            / "gateway"
+            / "server.py"
+        )
+    source = server_py.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    target = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "create_native_cron_endpoint"
+        ),
+        None,
+    )
+    assert target is not None, (
+        "create_native_cron_endpoint not found in server.py "
+        "(POST /native-crons was never wired)"
+    )
+    # The decorator must be app.post("/native-crons", status_code=201).
+    assert target.decorator_list, "handler has no route decorator"
+    deco = target.decorator_list[0]
+    assert isinstance(deco, ast.Call)
+    assert isinstance(deco.func, ast.Attribute) and deco.func.attr == "post"
+    assert (
+        deco.args
+        and isinstance(deco.args[0], ast.Constant)
+        and deco.args[0].value == "/native-crons"
+    ), "handler is not registered as POST /native-crons"
+
+    app = FastAPI()
+    # NB: ast.get_source_segment() starts at the `def` line and drops the
+    # decorator, so slice from the first decorator line explicitly.
+    src_lines = source.splitlines(keepends=True)
+    first_line = min(
+        [target.lineno]
+        + [deco.lineno for deco in target.decorator_list]
+    )
+    segment = "".join(src_lines[first_line - 1 : target.end_lineno])
+    # The handler body only uses names bound inside itself (local imports of
+    # JSONResponse, DuplicateCronIdError, create_native_cron) plus the `app`
+    # the decorator closes over and the `Any` in its signature annotation.
+    # NB: this test module has `from __future__ import annotations`, which
+    # exec() inherits — without `Any` in the namespace FastAPI cannot resolve
+    # the body annotation and misroutes the payload as a query param.
+    exec(compile(segment, str(server_py), "exec"), {"app": app, "Any": TypingAny})  # noqa: S102
+    assert any(
+        route.path == "/native-crons" and "POST" in route.methods
+        for route in app.routes
+    )
+    return app
+
+
+@pytest.fixture()
+def http_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """TestClient serving the real POST /native-crons handler, isolated store."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("PRISMATIC_NATIVE_CRON_STORE", str(tmp_path / "native_crons.json"))
+    monkeypatch.setattr(native_crons, "read_user_crontab", lambda: None)
+    monkeypatch.setattr(native_crons, "write_user_crontab", lambda content: None)
+    return TestClient(_mount_create_route())
+
+
+def _http_payload(**overrides) -> dict:
+    payload = {
+        "id": "test.http-cron",
+        "name": "HTTP cron",
+        "schedule": "*/15 * * * *",
+        "command": ["echo", "http-ok"],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_post_native_crons_returns_201_and_persists(
+    http_client, tmp_path: Path
+) -> None:
+    resp = http_client.post("/native-crons", json=_http_payload())
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["id"] == "test.http-cron"
+    assert body["name"] == "HTTP cron"
+    assert body["schedule"] == "*/15 * * * *"
+    assert body["state"] == "active"
+
+    stored = NativeCronStore(path=tmp_path / "native_crons.json").get("test.http-cron")
+    assert stored is not None
+    assert stored.command == ["echo", "http-ok"]
+
+
+def test_post_native_crons_duplicate_returns_409(http_client) -> None:
+    first = http_client.post("/native-crons", json=_http_payload(id="test.http-dupe"))
+    assert first.status_code == 201, first.text
+
+    second = http_client.post("/native-crons", json=_http_payload(id="test.http-dupe"))
+    assert second.status_code == 409, second.text
+    assert "already exists" in second.json()["error"]
+
+
+def test_post_native_crons_bad_schedule_returns_400(http_client) -> None:
+    resp = http_client.post(
+        "/native-crons", json=_http_payload(id="test.http-bad", schedule="soon")
+    )
+    assert resp.status_code == 400, resp.text
+    assert "Invalid cron schedule" in resp.json()["error"]
+
+
+def test_post_native_crons_missing_name_returns_400(http_client) -> None:
+    payload = _http_payload(id="test.http-noname")
+    del payload["name"]
+    resp = http_client.post("/native-crons", json=payload)
+    assert resp.status_code == 400, resp.text
+    assert "error" in resp.json()
+
+
+def test_post_native_crons_handler_absent_pre_wi3(tmp_path: Path) -> None:
+    """Fail-first proof: without the handler in server.py the mount fails."""
+    src = (
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n\n"
+        '@app.get("/native-crons")\n'
+        "async def list_native_crons():\n"
+        "    return []\n"
+    )
+    stub = tmp_path / "server_pre_wi3.py"
+    stub.write_text(src, encoding="utf-8")
+    with pytest.raises(AssertionError, match="create_native_cron_endpoint not found"):
+        _mount_create_route(stub)
