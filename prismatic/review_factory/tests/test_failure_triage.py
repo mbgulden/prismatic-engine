@@ -107,7 +107,7 @@ class StubBackend:
         self.fail_with = fail_with
         self.calls = 0
 
-    def decide(self, state, questions):
+    def decide(self, state, questions, *, call=None):
         self.calls += 1
         if self.fail_with is not None:
             raise self.fail_with
@@ -293,7 +293,7 @@ class TestShadowAdvice:
         seen = {}
 
         class CountingBackend(StubBackend):
-            def decide(self, state, questions):
+            def decide(self, state, questions, *, call=None):
                 seen["n_questions"] = len(questions)
                 seen["names"] = [q.name for q in questions]
                 return super().decide(state, questions)
