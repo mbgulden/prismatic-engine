@@ -6006,6 +6006,26 @@ async def native_cron_action(cron_id: str, payload: dict[str, Any]):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+@app.post("/native-crons", status_code=201)
+async def create_native_cron_endpoint(payload: dict[str, Any]):
+    """Create a PE-native cron definition.
+
+    Validates the payload through the shared create path: duplicate ids are
+    rejected (409) and schedules must be 5-field cron expressions or 'manual'
+    (400). A successful create best-effort refreshes the managed crontab block.
+    """
+    from fastapi.responses import JSONResponse
+
+    from prismatic.native_crons import DuplicateCronIdError, create_native_cron
+
+    try:
+        return create_native_cron(payload)
+    except DuplicateCronIdError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    except (ValueError, KeyError, TypeError) as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
 # ── Opaque, descriptor-relative workspace-tree boundary ─────────────────
 
 
