@@ -572,6 +572,33 @@ class ReviewQueue:
                 f"Cross-job candidate tree mismatch: receipt tree ({candidate_tree}) != job tree ({job.candidate_tree})"
             )
 
+        # A receipt is only completable when every recorded check passed.
+        # complete_verification is the choke point that advances a job to
+        # REVIEW_READY; without this, a fabricated or failing receipt (e.g.
+        # exit_codes {"canonical": 1}) would be accepted as verification.
+        # Genuinely-failed verifications are persisted for the audit trail
+        # via _route_verification_failure -> insert_receipt, not here.
+        try:
+            exit_codes = json.loads(getattr(receipt, "exit_codes", "{}") or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Receipt exit_codes is not valid JSON for job {review_job_id}: {exc}"
+            ) from exc
+        except TypeError as exc:
+            raise TypeError(
+                f"Receipt exit_codes has an invalid type for job {review_job_id}: {exc}"
+            ) from exc
+        if not isinstance(exit_codes, dict):
+            raise TypeError(
+                f"Receipt exit_codes must be a JSON object for job {review_job_id}"
+            )
+        failed = {k: v for k, v in exit_codes.items() if v != 0}
+        if failed:
+            raise ValueError(
+                f"Receipt for job {review_job_id} records failing checks "
+                f"{sorted(failed)}; refusing to complete verification"
+            )
+
         # All authoritative checks precede the first durable mutation.
         self.db.insert_receipt(receipt)
         updated = self.db.update_review_job_state(

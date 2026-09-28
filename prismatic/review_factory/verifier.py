@@ -750,7 +750,7 @@ class VerificationWorker:
         except subprocess.TimeoutExpired:
             exit_code = -1
             stdout = ""
-            stderr = "Timeout: check exceeded 300s"
+            stderr = f"Timeout: check exceeded {timeout}s"
             passed = False
         except Exception as exc:
             exit_code = -2
