@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import yaml
-from packaging.specifiers import SpecifierSet
-from packaging.version import Version
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 from prismatic.interface.plugin import (
     PluginContext,
@@ -511,6 +511,10 @@ class PluginLoader:
             raise PluginValidationError(
                 f"Missing required fields in manifest: {manifest_path}"
             )
+        if not str(core_constraint).strip():
+            raise PluginValidationError(
+                f"Blank core_version_constraint in manifest: {manifest_path}"
+            )
         return manifest
 
     def _validate_manifest(
@@ -524,9 +528,27 @@ class PluginLoader:
         name = manifest.get("name")
         core_constraint = manifest.get("core_version_constraint")
 
-        # 1. Core version validation
-        specifier = SpecifierSet(core_constraint)
-        if Version(self.core_version) not in specifier:
+        # 1. Core version validation — fail closed on ANY version problem.
+        # Only PluginValidationError ever leaves this block: a blank
+        # constraint, a malformed specifier, or an unparseable engine version
+        # is a rejection, never a crash and never a match-everything guess.
+        if not str(core_constraint or "").strip():
+            raise PluginValidationError(
+                f"Blank core_version_constraint for plugin '{name}'."
+            )
+        try:
+            specifier = SpecifierSet(str(core_constraint).strip())
+            engine_version = Version(str(self.core_version).strip())
+        except InvalidSpecifier as e:
+            raise PluginValidationError(
+                f"Malformed core_version_constraint '{core_constraint}' "
+                f"for plugin '{name}': {e}"
+            ) from e
+        except InvalidVersion as e:
+            raise PluginValidationError(
+                f"Unparseable engine version '{self.core_version}': {e}"
+            ) from e
+        if engine_version not in specifier:
             raise PluginValidationError(
                 f"Core version '{self.core_version}' does not satisfy "
                 f"constraint '{core_constraint}' for plugin '{name}'."
