@@ -61,7 +61,9 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import defaultdict
+from enum import Enum, auto
 from pathlib import Path
+from typing import NamedTuple
 
 if sys.version_info < (3, 11):
     try:
@@ -245,6 +247,24 @@ def get_canonical_utc_now() -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
+class CursorOutcome(Enum):
+    NO_MUTATION_FAIL_CLOSED = auto()
+    EXACT_ROLLBACK_COMPLETE = auto()
+    CONTENDER_STATE_PRESERVED = auto()
+    RECOVERY_REQUIRED_BACKUPS_RETAINED = auto()
+    SUCCESS = auto()
+
+class CursorPreState(NamedTuple):
+    kind: str  # "ABSENT" or "PRESENT"
+    bytes: bytes | None = None
+    dev: int | None = None
+    ino: int | None = None
+    mode: int | None = None
+    uid: int | None = None
+    nlink: int | None = None
+    size: int | None = None
+    mtime_ns: int | None = None
+
 class CursorLock:
     """Restrictive, no-follow canonical cursor lock file shared primitive."""
 
@@ -387,6 +407,266 @@ class CursorLock:
                     ) from exc_val
             else:
                 self.release()
+
+
+class CursorStateStore:
+    """Consolidated cursor storage primitive and state machine boundary."""
+
+    def __init__(self, state_file_path: str):
+        _validate_state_path_strict(state_file_path)
+        self.state_file_path = get_canonical_path(state_file_path)
+        self.lock = CursorLock(self.state_file_path)
+        self.prestate: CursorPreState | None = None
+
+    def acquire_lock(self, *, blocking: bool = True) -> CursorLock:
+        return self.lock.acquire(blocking=blocking)
+
+    def release_lock(self) -> None:
+        self.lock.release()
+
+    def snapshot_prestate(self) -> CursorPreState:
+        """Descriptor-bound no-follow existence snapshot establishing stable ABSENT or PRESENT pre-state."""
+        pre_st = None
+        try:
+            pre_st = os.lstat(self.state_file_path)
+        except FileNotFoundError:
+            pre_st = None
+
+        if pre_st is not None:
+            if stat.S_ISLNK(pre_st.st_mode):
+                raise ValueError(
+                    f"Cursor state path is a symlink: {self.state_file_path}"
+                )
+            if not stat.S_ISREG(pre_st.st_mode):
+                raise ValueError(
+                    f"Cursor state path is not a regular file: {self.state_file_path}"
+                )
+            if pre_st.st_mode & 0o077 != 0:
+                raise ValueError(
+                    f"Refusing to snapshot cursor state: unsafe permissions {oct(pre_st.st_mode)}"
+                )
+            if pre_st.st_nlink != 1:
+                raise ValueError(
+                    f"Cursor state path has hard links (st_nlink={pre_st.st_nlink}): {self.state_file_path}"
+                )
+            if pre_st.st_uid != os.geteuid():
+                raise ValueError(
+                    f"Cursor state path owner ({pre_st.st_uid}) does not match effective uid ({os.geteuid()}): {self.state_file_path}"
+                )
+
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(self.state_file_path, flags)
+        except FileNotFoundError:
+            if pre_st is not None:
+                raise ValueError(
+                    f"Cursor existence transition: present at pre-check but absent at descriptor open: {self.state_file_path}"
+                )
+            self.prestate = CursorPreState(kind="ABSENT")
+            return self.prestate
+
+        if pre_st is None:
+            os.close(fd)
+            raise ValueError(
+                f"Cursor existence transition: absent at pre-check but present at descriptor open: {self.state_file_path}"
+            )
+
+        body_exc = None
+        close_exc = None
+        read_bytes = None
+        st_fd2 = None
+
+        try:
+            st_fd1 = os.fstat(fd)
+            if not stat.S_ISREG(st_fd1.st_mode):
+                raise ValueError(
+                    f"Opened cursor descriptor is not a regular file: {self.state_file_path}"
+                )
+            if st_fd1.st_nlink != 1:
+                raise ValueError(
+                    f"Opened cursor descriptor st_nlink != 1 ({st_fd1.st_nlink}): {self.state_file_path}"
+                )
+            if st_fd1.st_uid != os.geteuid():
+                raise ValueError(
+                    f"Opened cursor descriptor owner ({st_fd1.st_uid}) does not match effective uid ({os.geteuid()}): {self.state_file_path}"
+                )
+            if st_fd1.st_mode & 0o077 != 0:
+                raise ValueError(
+                    f"Opened cursor descriptor unsafe permissions {oct(st_fd1.st_mode)}: {self.state_file_path}"
+                )
+            if st_fd1.st_dev != pre_st.st_dev or st_fd1.st_ino != pre_st.st_ino:
+                raise ValueError(
+                    f"Opened cursor descriptor identity (dev={st_fd1.st_dev}, ino={st_fd1.st_ino}) "
+                    f"mismatches pre-open object (dev={pre_st.st_dev}, ino={pre_st.st_ino}): {self.state_file_path}"
+                )
+
+            chunks = []
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            read_bytes = b"".join(chunks)
+
+            st_fd2 = os.fstat(fd)
+            if st_fd2.st_dev != st_fd1.st_dev or st_fd2.st_ino != st_fd1.st_ino:
+                raise ValueError("Cursor descriptor identity drift during read")
+            if st_fd2.st_size != len(read_bytes):
+                raise ValueError(
+                    f"Cursor descriptor size drift: stat={st_fd2.st_size} vs read={len(read_bytes)}"
+                )
+            if st_fd2.st_mtime_ns != st_fd1.st_mtime_ns:
+                raise ValueError("Cursor descriptor mtime drift during read")
+            if st_fd2.st_nlink != 1:
+                raise ValueError("Cursor descriptor link count drift during read")
+            if st_fd2.st_mode != st_fd1.st_mode or st_fd2.st_uid != st_fd1.st_uid:
+                raise ValueError("Cursor descriptor permission/owner drift during read")
+        except Exception as e:  # noqa: BLE001
+            body_exc = e
+
+        try:
+            os.close(fd)
+        except Exception as e:  # noqa: BLE001
+            close_exc = e
+
+        if body_exc is not None and close_exc is not None:
+            raise ExceptionGroup(
+                "Cursor snapshot failed and descriptor close encountered an error",
+                [body_exc, close_exc],
+            ) from body_exc
+        elif body_exc is not None:
+            raise body_exc
+        elif close_exc is not None:
+            raise close_exc
+
+        assert st_fd2 is not None
+        assert read_bytes is not None
+        self.prestate = CursorPreState(
+            kind="PRESENT",
+            bytes=read_bytes,
+            dev=st_fd2.st_dev,
+            ino=st_fd2.st_ino,
+            mode=st_fd2.st_mode,
+            uid=st_fd2.st_uid,
+            nlink=st_fd2.st_nlink,
+            size=st_fd2.st_size,
+            mtime_ns=st_fd2.st_mtime_ns,
+        )
+        return self.prestate
+
+    def write_atomic(self, content_bytes: bytes) -> None:
+        """Atomic restrictive durable cursor write using tempfile, fsync, and replace."""
+        if os.path.islink(self.state_file_path):
+            raise ValueError(
+                f"Refusing to write cursor state: target path is a symlink ({self.state_file_path})"
+            )
+        if os.path.exists(self.state_file_path):
+            st = os.lstat(self.state_file_path)
+            if not stat.S_ISREG(st.st_mode):
+                raise ValueError(
+                    "Refusing to write cursor state: target exists and is not a regular file"
+                )
+            if st.st_mode & 0o077 != 0:
+                raise ValueError(
+                    f"Refusing to write cursor state: unsafe file permissions {oct(st.st_mode)}"
+                )
+
+        target_dir = Path(self.state_file_path).parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        fd, temp_path = tempfile.mkstemp(
+            dir=str(target_dir), prefix=".dispatch_cursor_tmp_"
+        )
+        try:
+            os.chmod(temp_path, 0o600)
+            os.write(fd, content_bytes)
+            os.fsync(fd)
+            os.close(fd)
+
+            os.replace(temp_path, self.state_file_path)
+
+            dir_fd = os.open(
+                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception as primary_exc:
+            cleanup_exc = None
+            if os.path.exists(temp_path) or os.path.islink(temp_path):
+                try:
+                    os.remove(temp_path)
+                    dir_fd = os.open(
+                        str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    )
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except Exception as ce:  # noqa: BLE001
+                    cleanup_exc = ce
+            if cleanup_exc is not None:
+                raise ExceptionGroup(
+                    "Failed to write cursor state and cleanup encountered an error",
+                    [primary_exc, cleanup_exc],
+                ) from primary_exc
+            raise
+
+    def safe_rollback(self, written_bytes: bytes | None) -> CursorOutcome:
+        """Reacquire lock nonblocking and attempt safe reserialized rollback."""
+        try:
+            rollback_lock = CursorLock(self.state_file_path)
+            rollback_lock.acquire(blocking=False)
+        except Exception:  # noqa: BLE001
+            return CursorOutcome.NO_MUTATION_FAIL_CLOSED
+
+        release_failed = False
+        # NB: snapshot_prestate() overwrites self.prestate, so the pre-write
+        # snapshot must be captured before re-snapshotting current state.
+        pre_write = self.prestate
+        try:
+            try:
+                curr_pre = self.snapshot_prestate()
+            except Exception:  # noqa: BLE001
+                return CursorOutcome.RECOVERY_REQUIRED_BACKUPS_RETAINED
+
+            if (
+                written_bytes is not None
+                and curr_pre.kind == "PRESENT"
+                and curr_pre.bytes == written_bytes
+            ):
+                try:
+                    if pre_write is None or pre_write.kind == "ABSENT":
+                        if os.path.exists(self.state_file_path) or os.path.islink(
+                            self.state_file_path
+                        ):
+                            os.remove(self.state_file_path)
+                            target_dir = Path(self.state_file_path).parent
+                            dir_fd = os.open(
+                                str(target_dir),
+                                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                            )
+                            try:
+                                os.fsync(dir_fd)
+                            finally:
+                                os.close(dir_fd)
+                    else:
+                        assert pre_write.bytes is not None
+                        self.write_atomic(pre_write.bytes)
+                except Exception:  # noqa: BLE001
+                    return CursorOutcome.RECOVERY_REQUIRED_BACKUPS_RETAINED
+            else:
+                return CursorOutcome.CONTENDER_STATE_PRESERVED
+        finally:
+            try:
+                rollback_lock.release()
+            except Exception:  # noqa: BLE001
+                release_failed = not rollback_lock._last_release_closed
+
+        if release_failed:
+            return CursorOutcome.RECOVERY_REQUIRED_BACKUPS_RETAINED
+        return CursorOutcome.EXACT_ROLLBACK_COMPLETE
 
 
 def get_db_max_rowid_and_generation_readonly(

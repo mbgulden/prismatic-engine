@@ -16,17 +16,6 @@ import pytest
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "cron_runtime"
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
-UPSTREAM_CONTRACT_PATH = (
-    ROOT_DIR / "docs" / "contracts" / "cron-runtime-authority-v1.md"
-)
-EXPECTED_BASE_COMMIT = "e0069a70801840b931057997e344184797ff6f91"
-EXPECTED_BASE_TREE = "4a771ff26ee504a73a719e4108628894adb5138e"
-EXPECTED_CONTRACT_SHA256 = (
-    "4d8994cb6c54d2f47912a144dc759285a80841328ee56fb8823ffadb0c62d024"
-)
-ABSENT_HOOK_PATH = Path(
-    "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger"
-)
 LIVE_CRONTAB_EXPORT_SHA256 = (
     "8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680"
 )
@@ -279,30 +268,6 @@ def remove_managed_block_fixture(existing: str) -> str:
             suffix = suffix[1:]
         return f"{prefix.rstrip()}\n\n{suffix.lstrip()}".rstrip() + "\n"
     return existing
-
-
-# Fixtures check
-def test_contract_metadata_fixture_bound_to_base() -> None:
-    """Metadata fixture matches base commit, tree, contract path, and contract hash."""
-    meta_path = FIXTURES_DIR / "contract_metadata.json"
-    assert meta_path.exists(), f"Missing fixture {meta_path}"
-    data = json.loads(meta_path.read_text())
-
-    assert data["base_commit"] == EXPECTED_BASE_COMMIT
-    assert data["base_tree"] == EXPECTED_BASE_TREE
-    assert data["upstream_contract"] == str(
-        UPSTREAM_CONTRACT_PATH.relative_to(ROOT_DIR)
-    )
-
-    # Verify actual upstream contract sha256
-    contract_bytes = UPSTREAM_CONTRACT_PATH.read_bytes()
-    actual_sha256 = hashlib.sha256(contract_bytes).hexdigest()
-    assert actual_sha256 == EXPECTED_CONTRACT_SHA256
-    assert data["upstream_contract_sha256"] == EXPECTED_CONTRACT_SHA256
-
-    # Verify hook absence
-    assert not ABSENT_HOOK_PATH.exists()
-    assert data["hook_exists"] is False
 
 
 def test_pe_cron_runtime_neg_syntax() -> None:

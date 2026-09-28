@@ -129,24 +129,6 @@ entries:
     removal_plan: "Update PLUGIN_DIR/manifest/scan paths to prismatic/shipped_plugins/consensus (pattern: tests/test_plugin_merge.py)"
     remove_by: "2026-10-31"
 
-  - id: tests/test_plugin_cron.py::test_config_schema_accepts_valid_jobs_config
-    cause: "C1: stale plugin path — test references plugins/cron/plugin-manifest.yaml; shipped at prismatic/shipped_plugins/cron"
-    inventory_ref: "signal-inventory-2026-09-24.md"
-    removal_plan: "Update manifest path to prismatic/shipped_plugins/cron"
-    remove_by: "2026-10-31"
-
-  - id: tests/test_plugin_cron.py::test_config_schema_rejects_bad_cron_expr
-    cause: "C1: stale plugin path — test references plugins/cron/plugin-manifest.yaml; shipped at prismatic/shipped_plugins/cron"
-    inventory_ref: "signal-inventory-2026-09-24.md"
-    removal_plan: "Update manifest path to prismatic/shipped_plugins/cron"
-    remove_by: "2026-10-31"
-
-  - id: tests/test_plugin_cron.py::test_manifest_parses_with_required_fields
-    cause: "C1: stale plugin path — test references plugins/cron/plugin-manifest.yaml; shipped at prismatic/shipped_plugins/cron"
-    inventory_ref: "signal-inventory-2026-09-24.md"
-    removal_plan: "Update manifest path to prismatic/shipped_plugins/cron"
-    remove_by: "2026-10-31"
-
   - id: tests/test_plugin_merge.py::test_apply_without_primitive_raises_clear_error
     cause: "C4: fixture premise contradicts declared dependency — no_swarmmerge assumes the primitive is uninstallable, but swarmmerge is a base dependency"
     inventory_ref: "signal-inventory-2026-09-24.md"
