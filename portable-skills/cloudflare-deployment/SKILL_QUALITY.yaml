@@ -1,0 +1,5 @@
+rating: 4
+dependencies:
+- wrangler
+- node
+compatibility_notes: Requires Cloudflare Wrangler CLI and Node.js.
