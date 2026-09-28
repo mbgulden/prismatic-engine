@@ -8,6 +8,7 @@ These tests exercise real PE integration by creating
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -347,3 +348,30 @@ class TestIntegrityInvariants:
             ["request_review"],
         )
         assert res.passed
+
+
+class TestFocusedCheckFailClosed:
+    """Fail-closed: a focused run that resolves zero tests must FAIL.
+
+    Regression: _run_focused_check used to return passed=True when Python
+    files changed but no test files resolved — a vacuous pass that let
+    untested changes through the verification gate.
+    """
+
+    def test_zero_resolved_tests_fails_closed(self, tmp_path):
+        worker = VerificationWorker(repo_path=tmp_path)
+        (tmp_path / "lonely_module.py").write_text("x = 1\n", encoding="utf-8")
+        job = SimpleNamespace(changed_paths_json=json.dumps(["lonely_module.py"]))
+        res = worker._run_focused_check(job)
+        assert res.passed is False
+        assert res.exit_code == 1
+        assert "lonely_module.py" in res.stderr
+
+    def test_docs_only_changes_still_pass(self, tmp_path):
+        """The intentional docs/config-only early pass is unchanged."""
+        worker = VerificationWorker(repo_path=tmp_path)
+        (tmp_path / "README.md").write_text("hi\n", encoding="utf-8")
+        job = SimpleNamespace(changed_paths_json=json.dumps(["README.md"]))
+        res = worker._run_focused_check(job)
+        assert res.passed is True
+        assert res.exit_code == 0
