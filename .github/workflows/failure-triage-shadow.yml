@@ -62,7 +62,11 @@ jobs:
       - name: Run shadow triage
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/failure_triage_shadow.py --audit-log failure-triage-shadow.jsonl
+          # R-1 Phase 1b: retry-only active mode. Seven-day audit soak begins on merge.
+          # execute_retry is idempotent (per-run dedup store), deterministic-verdict retries only;
+          # JEV-advised retries stay shadow. To stop: revert this block; no other change needed.
+          PRISMATIC_TRIAGE_RETRY_ENABLED: "1"
+        run: python scripts/failure_triage_shadow.py --mode active --audit-log failure-triage-shadow.jsonl
 
       - name: Upload shadow audit log
         if: always()
