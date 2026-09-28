@@ -1,0 +1,34 @@
+# /etc/systemd/system/prismatic-review-factory.service
+#
+# Source of truth: this file in the prismatic-engine repo
+# (scripts/prismatic-review-factory.service). Do NOT hand-edit the installed
+# copy on the host; change it here, then reinstall (see PR R-1 for steps).
+#
+# R-1 repair (2026-09-27): the previous revision pinned a release-specific
+# install path (/home/ubuntu/.prismatic/releases/prismatic-engine-cd5f4bd and
+# /home/ubuntu/.prismatic/venvs/prismatic-engine-cd5f4bd). That release was
+# garbage-collected, so every activation failed in mount-namespacing setup
+# with 226/NAMESPACE and the auto-merge consult never ran. This revision
+# points at the stable install layout instead -- venv_stable plus the runtime
+# checkout -- the same layout the other prismatic units use
+# (e.g. scripts/prismatic-learn-loop.service).
+[Unit]
+Description=Prismatic Review/Merge Factory bounded one-shot drain
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/.prismatic/runtime/prismatic-engine
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 -m prismatic.review_factory.backlog_importer --db-path /home/ubuntu/.prismatic/state/agy_completed_work.db --completed-work-db-path /home/ubuntu/.prismatic/state/agy_completed_work.db --inbox-dir /home/ubuntu/.prismatic/inbox --state-dir /home/ubuntu/.prismatic/state --workspace-dir /home/ubuntu/.prismatic/state/source-workspaces --max-items 20 --worker-id review-factory-runtime
+Environment=PRISMATIC_STATE_DIR=/home/ubuntu/.prismatic/state
+Environment=PRISMATIC_HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/.prismatic/venv_stable/bin:/usr/local/bin:/usr/bin:/bin
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=false
+ReadOnlyPaths=/home/ubuntu/.prismatic/runtime/prismatic-engine /home/ubuntu/.prismatic/venv_stable
+ReadWritePaths=/home/ubuntu/.prismatic/state /home/ubuntu/.prismatic/inbox
+UMask=0077

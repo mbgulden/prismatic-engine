@@ -1,0 +1,21 @@
+# /etc/systemd/system/prismatic-review-factory.path
+#
+# Source of truth: this file in the prismatic-engine repo
+# (scripts/prismatic-review-factory.path). Do NOT hand-edit the installed
+# copy on the host; change it here, then reinstall (see PR R-1 for steps).
+#
+# R-1 repair (2026-09-27): the previous revision's Documentation= line
+# referenced a file inside the garbage-collected release
+# (prismatic-engine-cd5f4bd); the watch paths themselves were fine and are
+# unchanged.
+[Unit]
+Description=Activate Prismatic Review/Merge Factory on durable input changes
+
+[Path]
+PathChanged=/home/ubuntu/.prismatic/state/agy_completed_work.db
+PathChanged=/home/ubuntu/.prismatic/state/agy_completed_work.db-wal
+PathChanged=/home/ubuntu/.prismatic/inbox
+Unit=prismatic-review-factory.service
+
+[Install]
+WantedBy=multi-user.target
