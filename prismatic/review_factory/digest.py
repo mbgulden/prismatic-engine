@@ -13,11 +13,15 @@ silently dropped.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 MAX_EXCEPTIONS = 10
+
+STRANDED_FRAGMENT = "~/.prismatic/audit/stranded-verdicts-issued.json"
 
 DEFAULT_JANITOR: dict[str, Any] = {
     "removed": 0,
@@ -326,8 +330,20 @@ def collect_autonomy_inputs(ledger: Any = None) -> dict:
         if isinstance(event, dict) and event.get("event_type") == "tier_revoked"
     ]
     env_value = os.environ.get("PRISMATIC_AUTONOMY_ENABLED", "").strip().lower()
-    return {
+    result: dict[str, Any] = {
         "tier_status": tier_status,
         "revocations": revocations,
         "brake_engaged": env_value in {"0", "false", "no"},
     }
+    # Stranded-work fragment written by scripts/stranded_verdict_tick.py.
+    # Best-effort: a missing/unparseable fragment just means no stranded data.
+    try:
+        fragment = json.loads(Path(STRANDED_FRAGMENT).expanduser().read_text())
+        if isinstance(fragment, dict):
+            result["stranded"] = {
+                "approaching": fragment.get("approaching", []),
+                "verdicts_issued": fragment.get("verdicts_issued", []),
+            }
+    except (OSError, ValueError):
+        pass
+    return result

@@ -147,6 +147,7 @@ def _load_autonomy() -> dict:
             tier_status=inputs.get("tier_status"),
             revocations=inputs.get("revocations"),
             brake_engaged=inputs.get("brake_engaged", False),
+            stranded=inputs.get("stranded"),
         )
     except Exception as exc:  # fail closed: degrade, never break the report
         return {"status": "unavailable", "reason": str(exc)[:200]}
