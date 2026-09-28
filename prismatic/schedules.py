@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import json
+import subprocess
 import uuid
 import urllib.error
 import urllib.request
@@ -128,7 +129,6 @@ def get_prismatic_cron_jobs(cron_jobs_path: Optional[Path] = None) -> List[Sched
     """Inventory Prismatic cron jobs from the configured jobs.json."""
     if not cron_jobs_path:
         # Resolve path similarly to journal.py
-        state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")).expanduser()
         profile_dir = Path(os.environ.get("PRISMATIC_HARNESS_PROFILE", "~/.harness/profiles/orchestrator")).expanduser()
         cron_jobs_path = Path(os.environ.get("PRISMATIC_CRON_JOBS", str(profile_dir / "cron" / "jobs.json"))).expanduser()
 
@@ -176,25 +176,133 @@ def get_prismatic_cron_jobs(cron_jobs_path: Optional[Path] = None) -> List[Sched
     return records
 
 
+def _parse_systemd_usec(value: str) -> Optional[str]:
+    """Parse a systemd timestamp ("Mon 2026-09-28 22:35:23 UTC") to ISO.
+
+    Returns None for "n/a", empty, or unparseable values — fail-honest,
+    never fabricate a timestamp.
+    """
+    value = (value or "").strip()
+    if not value or value.lower() == "n/a":
+        return None
+    text = value[:-4].strip() if value.endswith(" UTC") else value
+    try:
+        dt = datetime.strptime(text, "%a %Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    return dt.isoformat()
+
+
+def _run_systemctl(args: List[str]) -> Optional[str]:
+    """Run systemctl, return stdout or None on any failure."""
+    try:
+        proc = subprocess.run(
+            ["systemctl", *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("systemd timer adapter: systemctl unavailable: %s", exc)
+        return None
+    if proc.returncode != 0:
+        logger.warning(
+            "systemd timer adapter: systemctl %s failed (rc=%s): %s",
+            " ".join(args), proc.returncode, proc.stderr.strip()[:200],
+        )
+        return None
+    return proc.stdout
+
+
+def _systemd_timer_state(unit: str) -> dict:
+    """Read live timer state via systemctl. All-None on any failure."""
+    state: dict = {
+        "last_trigger": None,
+        "next_elapse": None,
+        "active": None,
+        "schedule_expr": None,
+    }
+    show = _run_systemctl(
+        ["show", unit, "--property=LastTriggerUSec,ActiveState"]
+    )
+    if show is None:
+        return state
+    props: dict = {}
+    for line in show.splitlines():
+        if "=" in line:
+            key, _, val = line.partition("=")
+            props[key.strip()] = val.strip()
+    state["last_trigger"] = _parse_systemd_usec(props.get("LastTriggerUSec", ""))
+    state["active"] = props.get("ActiveState") or None
+
+    # NextElapseUSec is not exposed by `systemctl show` for timer units on
+    # this host; parse it from `systemctl list-timers` instead.
+    timers = _run_systemctl(["list-timers", "--no-legend", unit])
+    if timers:
+        for line in timers.splitlines():
+            # NEXT is always the first four tokens:
+            # "Mon 2026-09-28 22:39:56 UTC"
+            if unit in line:
+                parts = line.split()
+                if len(parts) >= 4:
+                    state["next_elapse"] = _parse_systemd_usec(
+                        " ".join(parts[0:4])
+                    )
+                break
+
+    # Honest schedule expression straight from the unit file, e.g.
+    # "OnUnitActiveSec=30" — never a hardcoded guess.
+    cat = _run_systemctl(["cat", unit])
+    if cat:
+        in_timer = False
+        specs = []
+        for line in cat.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                in_timer = stripped.lower() == "[timer]"
+                continue
+            if in_timer and stripped and not stripped.startswith("#"):
+                key = stripped.split("=", 1)[0].strip()
+                if key in (
+                    "OnCalendar", "OnUnitActiveSec", "OnActiveSec",
+                    "OnBootSec", "OnStartupSec", "OnUnitInactiveSec",
+                ):
+                    specs.append(stripped)
+        if specs:
+            state["schedule_expr"] = "; ".join(specs)
+    return state
+
+
 def get_systemd_timer_schedules() -> List[ScheduleRecord]:
-    """Inventory systemd timers by looking at configured service units or mock data."""
-    # systemd timers run locally. Let's return local timers.
-    # In production, we'd query systemctl list-timers --all
-    # We will simulate discovery of the prismatic-watchdog.timer
+    """Inventory systemd timers from live systemctl state.
+
+    last_run/next_run_at come from the real timer unit. If systemctl is
+    unavailable or the unit has never triggered, the fields are None —
+    rendered as "Never", never fabricated.
+    """
+    unit = "prismatic-watchdog.timer"
+    timer_state = _systemd_timer_state(unit)
+    last_trigger = timer_state["last_trigger"]
+    last_run = (
+        LastRunInfo(fired_at=last_trigger, status=STATUS_SUCCESS)
+        if last_trigger
+        else None
+    )
+    active_state = timer_state["active"]
     watchdog_timer = ScheduleRecord(
         id="prismatic:systemd:prismatic-watchdog",
         name="Prismatic Distributed Watchdog Timer",
         owner=OWNER_PRISMATIC,
         schedule_type=TYPE_SYSTEMD,
-        schedule_expr="OnCalendar=*:0/5",  # every 5 minutes
-        enabled=True,
-        next_run_at=datetime.now(timezone.utc).isoformat(),  # Simulated next run
-        last_run=LastRunInfo(
-            fired_at=datetime.now(timezone.utc).isoformat(),
-            status=STATUS_SUCCESS
-        ),
+        schedule_expr=timer_state["schedule_expr"] or "systemd timer",
+        enabled=(active_state == "active") if active_state else False,
+        next_run_at=timer_state["next_elapse"],
+        last_run=last_run,
         deep_link=None,
-        metadata={"unit": "prismatic-watchdog.timer", "service": "prismatic-watchdog.service"}
+        metadata={"unit": unit, "service": "prismatic-watchdog.service"},
     )
     return [watchdog_timer]
 
@@ -270,10 +378,8 @@ def get_agy_schedules() -> List[ScheduleRecord]:
         schedule_expr="0 2 * * *",  # 2 AM daily
         enabled=True,
         next_run_at=None,
-        last_run=LastRunInfo(
-            fired_at=datetime.now(timezone.utc).isoformat(),
-            status=STATUS_SUCCESS
-        ),
+        # No backing data: report unknown, never fabricate a success.
+        last_run=None,
         deep_link="http://jules.google.com/agy/schedules/daily-repo-sync",
         metadata={
             "adapter": "fallback-mock",
@@ -409,10 +515,8 @@ def get_jules_schedules() -> List[ScheduleRecord]:
         schedule_expr="0 0 * * 0",  # weekly on Sunday
         enabled=True,
         next_run_at=None,
-        last_run=LastRunInfo(
-            fired_at=datetime.now(timezone.utc).isoformat(),
-            status=STATUS_SUCCESS
-        ),
+        # No live source: report unknown, never fabricate a success.
+        last_run=None,
         deep_link="https://jules.google.com/schedules/dependency-scan",
         metadata={
             "adapter": "fallback-mock",
