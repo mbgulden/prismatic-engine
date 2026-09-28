@@ -9,15 +9,14 @@ from pathlib import Path
 from unittest import mock
 
 
-# Add the shipped_plugins directory to sys.path so the plugins.* namespace
-# resolves regardless of how the test harness is invoked.
+# Repo root on sys.path so prismatic.shipped_plugins.pwp.* resolves
+# regardless of how the test harness is invoked.
 HERE = Path(__file__).resolve()
-PKG_ROOT = HERE.parents[3]
-SHIP_ROOT = HERE.parents[4]
-if str(SHIP_ROOT) not in sys.path:
-    sys.path.insert(0, str(SHIP_ROOT))
+REPO_ROOT = HERE.parents[6]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from plugins.pwp.capabilities.publish_kpi_tracker.linear_status import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status import (  # noqa: E402
     CACHE_PATH,
     DEFAULT_ERROR_TTL_SECONDS,
     DEFAULT_OK_TTL_SECONDS,
@@ -224,7 +223,7 @@ class TestCacheIO:
 class TestLatestIssueId:
     def test_missing_log_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             tmp_path / "missing",
         )
         assert _latest_issue_id_for_site("ezshare") is None
@@ -233,7 +232,7 @@ class TestLatestIssueId:
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         assert _latest_issue_id_for_site("nope") is None
@@ -243,7 +242,7 @@ class TestLatestIssueId:
         log_dir.mkdir()
         (log_dir / "ezshare.json").write_text("not json", encoding="utf-8")
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         assert _latest_issue_id_for_site("ezshare") is None
@@ -256,7 +255,7 @@ class TestLatestIssueId:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         assert _latest_issue_id_for_site("ezshare") is None
@@ -276,7 +275,7 @@ class TestLatestIssueId:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         result = _latest_issue_id_for_site("ezshare")
@@ -290,7 +289,7 @@ class TestLatestIssueId:
 class TestCallLinearStatus:
     def test_ok_response(self):
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
         ) as mock_from_env:
             mock_client = mock.MagicMock()
             mock_issue = mock.MagicMock()
@@ -312,10 +311,10 @@ class TestCallLinearStatus:
             assert result["error"] is None
 
     def test_404_response(self):
-        from plugins.pwp.capabilities.provision_site.linear_client import LinearError
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import LinearError
 
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
         ) as mock_from_env:
             mock_client = mock.MagicMock()
             mock_client.get_issue_status.side_effect = LinearError(
@@ -328,10 +327,10 @@ class TestCallLinearStatus:
             assert result["error"] == "not_found"
 
     def test_401_response(self):
-        from plugins.pwp.capabilities.provision_site.linear_client import LinearError
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import LinearError
 
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
         ) as mock_from_env:
             mock_client = mock.MagicMock()
             mock_client.get_issue_status.side_effect = LinearError(
@@ -344,10 +343,10 @@ class TestCallLinearStatus:
             assert result["error"] == "auth_failed"
 
     def test_429_response(self):
-        from plugins.pwp.capabilities.provision_site.linear_client import LinearError
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import LinearError
 
         with mock.patch(
-            "plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client.LinearClient.from_env"
         ) as mock_from_env:
             mock_client = mock.MagicMock()
             mock_client.get_issue_status.side_effect = LinearError(
@@ -364,7 +363,7 @@ class TestCallLinearStatus:
 class TestScanStatus:
     def test_no_log_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             tmp_path / "missing",
         )
         results = scan_status()
@@ -377,7 +376,7 @@ class TestScanStatus:
             json.dumps({"form": {"primary_goal": "g"}}), encoding="utf-8"
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         results = scan_status()
@@ -417,17 +416,17 @@ class TestScanStatus:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
         # If Linear is called, the test fails. We assert the cache hit path.
         with mock.patch(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
         ) as mock_call:
             results = scan_status()
             assert mock_call.call_count == 0
@@ -453,16 +452,16 @@ class TestScanStatus:
         )
         cache_path = log_dir / "cache.json"
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
         with mock.patch(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
         ) as mock_call:
             mock_call.return_value = {
                 "ok": True,
@@ -514,16 +513,16 @@ class TestScanStatus:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
         with mock.patch(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
         ) as mock_call:
             mock_call.return_value = {
                 "ok": True,
@@ -554,16 +553,16 @@ class TestScanStatus:
         )
         cache_path = log_dir / "cache.json"
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
         with mock.patch(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
         ) as mock_call:
             mock_call.return_value = {
                 "ok": True,
@@ -597,16 +596,16 @@ class TestScanStatus:
         )
         cache_path = log_dir / "cache.json"
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
         with mock.patch(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
         ) as mock_call:
             mock_call.return_value = {
                 "ok": False,
@@ -639,16 +638,16 @@ class TestScanStatus:
         )
         cache_path = log_dir / "cache.json"
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
         with mock.patch(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status._call_linear_status"
         ) as mock_call:
             mock_call.return_value = {
                 "ok": True,
@@ -669,7 +668,7 @@ class TestScanStatus:
 class TestGetStatusForSite:
     def test_returns_none_for_unknown_site(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             tmp_path / "missing",
         )
         assert get_status_for_site("nope") is None
@@ -705,11 +704,11 @@ class TestGetStatusForSite:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
         ls = get_status_for_site("ezshare")
@@ -753,15 +752,15 @@ class TestRenderIndexIntegration:
             encoding="utf-8",
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.SUBMISSION_LOG_DIR",
             log_dir,
         )
         monkeypatch.setattr(
-            "plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
+            "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.linear_status.CACHE_PATH",
             cache_path,
         )
 
-        from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
             render_index,
         )
 

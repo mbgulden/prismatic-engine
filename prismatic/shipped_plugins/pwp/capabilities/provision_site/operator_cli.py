@@ -31,7 +31,7 @@ def _publish_root_default_for() -> Path:
 def cmd_provision(args) -> int:
     """Run the provisioning flow for a domain."""
     # Lazy import — the orchestrator depends on `requests`.
-    from plugins.pwp.capabilities.provision_site import orchestrator
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import orchestrator
 
     publish_root = Path(args.publish_root) if args.publish_root else None
     run = orchestrator.run(
@@ -47,7 +47,7 @@ def cmd_provision(args) -> int:
 
 def cmd_provision_status(args) -> int:
     """Print the current status of a provisioning run."""
-    from plugins.pwp.capabilities.provision_site import orchestrator
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import orchestrator
 
     publish_root = Path(args.publish_root) if args.publish_root else None
     state = orchestrator.status(args.domain, publish_root=publish_root)
@@ -60,7 +60,7 @@ def cmd_provision_status(args) -> int:
 
 def cmd_provision_list(args) -> int:
     """List all known provisioning runs."""
-    from plugins.pwp.capabilities.provision_site import orchestrator
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import orchestrator
 
     publish_root = Path(args.publish_root) if args.publish_root else None
     publish_root = publish_root or Path("/tmp/pwp-provisioning")
@@ -95,8 +95,8 @@ def cmd_funnel_config(args) -> int:
     into /tmp/pwp-provisioning/funnel-config/<site>.json and printed
     to stdout.
     """
-    from plugins.pwp.capabilities.provision_site import funnel_config
-    from plugins.pwp.capabilities.provision_site.linear_client import LinearClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import funnel_config
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import LinearClient
 
     form_path = Path(args.from_form)
     if not form_path.exists():
@@ -153,8 +153,8 @@ def cmd_funnel_config(args) -> int:
 def cmd_funnel_status(args) -> int:
     """Phase 4: read the latest funnel-config submission log + Linear task
     status for a given site_slug."""
-    from plugins.pwp.capabilities.provision_site import funnel_config
-    from plugins.pwp.capabilities.provision_site.linear_client import LinearClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import funnel_config
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import LinearClient
 
     sub = funnel_config.FunnelConfigSubmission.load(args.slug)
     if sub is None:

@@ -22,21 +22,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plugins.pwp.capabilities.provision_site import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site import (
     CloudflareError,
     orchestrator,
 )
-from plugins.pwp.capabilities.provision_site.domain_verifier import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.domain_verifier import (
     generate_challenge_token,
     expected_record_name,
     verify,
 )
-from plugins.pwp.capabilities.provision_site.steps import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import (
     register_in_registry,
     step_cloudflare_zone,
     step_verify_domain,
 )
-from plugins.pwp.capabilities.provision_site import types as prov_types
+from prismatic.shipped_plugins.pwp.capabilities.provision_site import types as prov_types
 
 
 HERE = Path(__file__).resolve().parent
@@ -110,7 +110,7 @@ def test_generate_challenge_tokens_are_unique() -> None:
 def test_cloudflare_client_requires_token() -> None:
     """A CloudflareClient constructed without a token must raise ValueError."""
     with pytest.raises(ValueError, match="Cloudflare token is empty"):
-        from plugins.pwp.capabilities.provision_site import CloudflareClient
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site import CloudflareClient
 
         CloudflareClient(token="")
 
@@ -119,7 +119,7 @@ def test_cloudflare_client_from_env_missing() -> None:
     """from_env must surface a helpful error listing the env vars it tried."""
     with patch.dict(os.environ, {}, clear=True):
         with pytest.raises(ValueError) as excinfo:
-            from plugins.pwp.capabilities.provision_site import CloudflareClient
+            from prismatic.shipped_plugins.pwp.capabilities.provision_site import CloudflareClient
 
             CloudflareClient.from_env()
     msg = str(excinfo.value)
@@ -131,7 +131,7 @@ def test_cloudflare_client_from_env_missing() -> None:
 def test_cloudflare_client_from_env_precedence() -> None:
     """When multiple token env vars are set, CF_API_TOKEN wins; if absent,
     CLOUDFLARE_API_TOKEN; if absent, CLOUDFLARE_PAGES_API_TOKEN."""
-    from plugins.pwp.capabilities.provision_site import CloudflareClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import CloudflareClient
 
     # Only CLOUDFLARE_PAGES_API_TOKEN set
     with patch.dict(
@@ -453,7 +453,7 @@ def test_step_verify_domain_success_after_record_created(tmp_path: Path) -> None
     token (which would couple the test to the step's token-format).
     """
     with patch(
-        "plugins.pwp.capabilities.provision_site.steps.verify",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.steps.verify",
         return_value=_mk_verify_result(verified=True, expected="pwp-verify-x"),
     ):
         run_state = prov_types.ProvisionRun(
@@ -480,7 +480,7 @@ def test_step_verify_domain_reuses_prior_token(tmp_path: Path) -> None:
     TXT record with a new value each run)."""
     prior = {"verify_domain": {"challenge_token": "pwp-verify-fixed"}}
     with patch(
-        "plugins.pwp.capabilities.provision_site.steps.verify",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.steps.verify",
         return_value=_mk_verify_result(verified=True, expected="pwp-verify-fixed"),
     ):
         run_state = prov_types.ProvisionRun(
@@ -507,7 +507,7 @@ def test_step_register_in_registry_writes_appendix(tmp_path: Path) -> None:
         owner="founder@newco.com",
         started_at="2026-01-01T00:00:00+00:00",
     )
-    from plugins.pwp.capabilities.provision_site.steps import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import (
         step_register_in_registry,
     )
 
@@ -540,7 +540,7 @@ def test_slug_from_domain() -> None:
 
 def _mk_verify_result(*, verified: bool, expected: str):
     """Build a VerifyResult for tests without going through DNS."""
-    from plugins.pwp.capabilities.provision_site.domain_verifier import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.domain_verifier import (
         VerifyResult,
     )
 
@@ -570,7 +570,7 @@ def _mock_response(status_code: int, *, success: bool, **payload):
 def _mk_client_with_mock(responses):
     """Build a CloudflareClient whose `requests.Session.request` returns
     the given responses in order."""
-    from plugins.pwp.capabilities.provision_site import CloudflareClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import CloudflareClient
 
     cf = CloudflareClient(token="fake-token-for-tests", max_retries=0)
     cf._session.request = MagicMock(side_effect=responses)
@@ -593,7 +593,7 @@ from pathlib import Path
 
 
 # Sentinel imports (these are loaded once via the main test file's imports)
-from plugins.pwp.capabilities.provision_site.steps import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import (
     ga4,
     gtm,
     gsc,
@@ -629,15 +629,15 @@ def test_google_client_from_env_missing(tmp_path, monkeypatch):
     """from_env should raise clearly when no SA creds are configured."""
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
-    from plugins.pwp.capabilities.provision_site.google_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import (
         GoogleClient,
         GoogleAuthError,
     )
-    from plugins.pwp.capabilities.provision_site import auth_loader
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import auth_loader
 
     # Block the auth_loader fallback so this test is hermetic
     with patch(
-        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=auth_loader.AuthResult(
             value=None,
             source="none",
@@ -654,7 +654,7 @@ def test_google_client_from_env_missing(tmp_path, monkeypatch):
 
 def test_google_client_from_env_json_file(tmp_path):
     """from_env with GOOGLE_SA_JSON pointing at a valid file should succeed."""
-    from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import GoogleClient
 
     sa_path, _ = _gen_test_sa(tmp_path)
     with patch.dict(os.environ, {"GOOGLE_SA_JSON": str(sa_path)}):
@@ -664,7 +664,7 @@ def test_google_client_from_env_json_file(tmp_path):
 
 def test_google_client_from_env_inline(tmp_path):
     """from_env with GOOGLE_SA_INLINE should succeed."""
-    from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import GoogleClient
 
     _, sa = _gen_test_sa(tmp_path)
     with patch.dict(os.environ, {"GOOGLE_SA_INLINE": json.dumps(sa)}, clear=True):
@@ -674,7 +674,7 @@ def test_google_client_from_env_inline(tmp_path):
 
 def test_google_client_ga4_account_id_env():
     """ga4_account_id property uses GA4_ACCOUNT_ID env var (or constructor arg)."""
-    from plugins.pwp.capabilities.provision_site.google_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import (
         GoogleClient,
         GoogleError,
     )
@@ -698,7 +698,7 @@ def test_google_client_ga4_account_id_env():
 
 def test_google_client_jwt_signing_is_three_part_rs256(tmp_path):
     """_make_jwt returns a 3-part dot-separated RS256 token."""
-    from plugins.pwp.capabilities.provision_site.google_client import _make_jwt
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import _make_jwt
 
     _, sa = _gen_test_sa(tmp_path)
     jwt = _make_jwt(
@@ -728,11 +728,11 @@ def test_step_ga4_property_missing_creds(tmp_path, monkeypatch, base_run_state):
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     monkeypatch.delenv("GA4_ACCOUNT_ID", raising=False)
-    from plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
 
     # Block the auth_loader fallback so this test is hermetic
     with patch(
-        "plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
         side_effect=GoogleAuthError("No Google credentials found"),
     ):
         result = ga4.step_ga4_property(
@@ -772,8 +772,8 @@ def test_step_ga4_property_success(tmp_path, base_run_state):
     ):
         # Mock the JWT exchange (return fake token immediately).
         # Then mock the property + stream API calls.
-        from plugins.pwp.capabilities.provision_site import google_client as gc_mod
-        from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site import google_client as gc_mod
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import GoogleClient
 
         with patch.object(
             gc_mod, "_exchange_jwt_for_access_token", return_value="fake-access-token"
@@ -827,10 +827,10 @@ def test_step_gtm_container_missing_creds(tmp_path, monkeypatch, base_run_state)
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     monkeypatch.delenv("GTM_ACCOUNT_ID", raising=False)
-    from plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
 
     with patch(
-        "plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
         side_effect=GoogleAuthError("No Google credentials found"),
     ):
         result = gtm.step_gtm_container(
@@ -859,8 +859,8 @@ def test_step_gtm_container_success(tmp_path, base_run_state):
             "GTM_ACCOUNT_ID": "55555",
         },
     ):
-        from plugins.pwp.capabilities.provision_site import google_client as gc_mod
-        from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site import google_client as gc_mod
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.google_client import GoogleClient
 
         with patch.object(
             gc_mod, "_exchange_jwt_for_access_token", return_value="fake-access-token"
@@ -901,7 +901,7 @@ def test_step_gsc_verify_placeholder_mode(tmp_path, base_run_state):
     """gsc_verify writes a placeholder TXT record via mocked Cloudflare."""
     prior = {"cloudflare_zone": {"zone_id": "fake-zone-123"}}
     # Mock Cloudflare.from_env + dns_list (empty) + dns_create.
-    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
 
     with patch.object(gsc_module, "CloudflareClient") as MockCF:
         mock_cf_instance = MockCF.from_env.return_value
@@ -931,7 +931,7 @@ def test_step_gsc_verify_placeholder_mode(tmp_path, base_run_state):
 def test_step_gsc_verify_google_issued_mode(tmp_path, base_run_state):
     """If GSC_VERIFICATION_TOKEN env var is set, use it verbatim instead of minting."""
     prior = {"cloudflare_zone": {"zone_id": "fake-zone-123"}}
-    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
 
     with patch.dict(os.environ, {"GSC_VERIFICATION_TOKEN": "google-issued-real-token"}):
         with patch.object(gsc_module, "CloudflareClient") as MockCF:
@@ -963,7 +963,7 @@ def test_step_gsc_verify_reuses_prior_output(tmp_path, base_run_state):
             "verification_mode": "google-issued",
         },
     }
-    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
 
     with patch.object(gsc_module, "CloudflareClient") as MockCF:
         result = gsc.step_gsc_verify(
@@ -1030,7 +1030,7 @@ def test_vercel_client_from_env_missing() -> None:
     """from_env must surface a helpful error when neither VERCEL_TOKEN
     nor VERCEL_API_TOKEN is set."""
     with patch.dict(os.environ, {}, clear=True):
-        from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
 
         with pytest.raises(ValueError) as excinfo:
             VercelClient.from_env()
@@ -1041,7 +1041,7 @@ def test_vercel_client_from_env_missing() -> None:
 
 def test_vercel_client_from_env_precedence() -> None:
     """VERCEL_TOKEN takes precedence over VERCEL_API_TOKEN."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
 
     with patch.dict(
         os.environ,
@@ -1054,7 +1054,7 @@ def test_vercel_client_from_env_precedence() -> None:
 
 def test_vercel_client_from_env_team_id() -> None:
     """VERCEL_TEAM_ID env var is captured into team_id."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
 
     with patch.dict(
         os.environ,
@@ -1067,7 +1067,7 @@ def test_vercel_client_from_env_team_id() -> None:
 
 def test_vercel_client_construct_requires_token() -> None:
     """Direct construction must reject an empty token."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
 
     with pytest.raises(ValueError):
         VercelClient(token="")
@@ -1078,7 +1078,7 @@ def test_vercel_client_construct_requires_token() -> None:
 def test_vercel_client_request_shape_and_bearer_auth() -> None:
     """A GET request must hit api.vercel.com with Bearer token in the
     Authorization header and the teamId query param when set."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
 
     captured = {}
 
@@ -1110,7 +1110,7 @@ def test_vercel_client_request_shape_and_bearer_auth() -> None:
 
 def test_vercel_client_404_returns_none_for_project_lookup() -> None:
     """A 404 on project_lookup must return None (not raise)."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
     import http.client
 
     hdrs = http.client.HTTPMessage()
@@ -1129,7 +1129,7 @@ def test_vercel_client_404_returns_none_for_project_lookup() -> None:
 
 def test_vercel_client_500_raises_vercel_error() -> None:
     """A 500 on project_lookup must raise VercelError (not return None)."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client import (
         VercelClient,
         VercelError,
     )
@@ -1156,7 +1156,7 @@ def test_vercel_client_500_raises_vercel_error() -> None:
 def test_platform_detect_cloudflare_active_zone() -> None:
     """If cloudflare_zone completed with status=active, platform_detect
     must short-circuit to platform=cloudflare_pages."""
-    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import platform_detect
 
     prior = {"cloudflare_zone": {"zone_id": "z-1", "status": "active"}}
 
@@ -1190,7 +1190,7 @@ def test_platform_detect_cloudflare_active_zone() -> None:
 def test_platform_detect_vercel_via_x_vercel_id() -> None:
     """An HTTP probe that returns X-Vercel-Id header should classify as
     'vercel' with project_name derived from the domain."""
-    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import platform_detect
 
     fake_headers = {"x-vercel-id": "cdg1::abc123"}
 
@@ -1217,7 +1217,7 @@ def test_platform_detect_vercel_via_x_vercel_id() -> None:
 def test_platform_detect_unknown_when_no_signals() -> None:
     """If the domain doesn't resolve and there are no Cloudflare / Vercel
     signals, the step returns platform='unknown'."""
-    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import platform_detect
 
     def fake_doh(_):
         return None
@@ -1250,7 +1250,7 @@ def test_platform_detect_unknown_when_no_signals() -> None:
 def test_vercel_project_skips_when_platform_not_vercel() -> None:
     """When platform_detect found a non-Vercel platform, vercel_project
     must skip itself cleanly."""
-    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import vercel_project
 
     prior = {"platform_detect": {"platform": "cloudflare_pages"}}
     result = vercel_project.step_vercel_project(
@@ -1271,7 +1271,7 @@ def test_vercel_project_skips_when_platform_not_vercel() -> None:
 def test_vercel_project_skips_when_no_platform_detect() -> None:
     """When platform_detect wasn't run (no prior_outputs), vercel_project
     must skip itself (we don't know the platform yet)."""
-    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import vercel_project
 
     result = vercel_project.step_vercel_project(
         domain="example.com",
@@ -1292,7 +1292,7 @@ def test_vercel_project_skips_when_no_platform_detect() -> None:
 
 def test_vercel_project_no_token_fails_cleanly() -> None:
     """Without VERCEL_TOKEN, the step returns a clean error (not raise)."""
-    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import vercel_project
 
     prior = {
         "platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}
@@ -1316,7 +1316,7 @@ def test_vercel_project_no_token_fails_cleanly() -> None:
 def test_vercel_project_lookup_existing() -> None:
     """When VERCEL_TOKEN is set and project_lookup finds the project,
     the step returns action='lookup' with the project metadata."""
-    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import vercel_project
 
     prior = {
         "platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}
@@ -1330,7 +1330,7 @@ def test_vercel_project_lookup_existing() -> None:
     with (
         patch.dict(os.environ, {"VERCEL_TOKEN": "fake"}, clear=True),
         patch(
-            "plugins.pwp.capabilities.provision_site.vercel_client.VercelClient.from_env"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.vercel_client.VercelClient.from_env"
         ) as MockCF,
     ):
         MockCF.return_value.project_lookup.return_value = fake_project
@@ -1385,7 +1385,7 @@ def test_cloudflare_zone_runs_when_platform_is_cloudflare() -> None:
     with (
         patch.dict(os.environ, {"CF_API_TOKEN": "fake"}, clear=True),
         patch(
-            "plugins.pwp.capabilities.provision_site.cloudflare_client.CloudflareClient"
+            "prismatic.shipped_plugins.pwp.capabilities.provision_site.cloudflare_client.CloudflareClient"
         ) as MockCF,
     ):
         MockCF.from_env.return_value.zone_lookup.return_value = fake_zone
@@ -1417,7 +1417,7 @@ def tmp_path_fixture():
 def test_platform_detect_cf_tunnel_via_cname() -> None:
     """If the apex CNAME ends in .cfargotunnel.com, the platform is
     classified as 'cf_tunnel' even without an active Cloudflare zone."""
-    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import platform_detect
 
     with (
         patch.object(
@@ -1447,7 +1447,7 @@ def test_platform_detect_cf_tunnel_via_cname() -> None:
 def test_platform_detect_vercel_cname_takes_precedence_over_zone() -> None:
     """If a CF zone exists but the CNAME points to vercel, the platform
     is 'vercel' (Vercel wins over CF zone)."""
-    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import platform_detect
 
     prior = {"cloudflare_zone": {"zone_id": "z-1", "status": "active"}}
     with (
@@ -1477,7 +1477,7 @@ def test_platform_detect_vercel_cname_takes_precedence_over_zone() -> None:
 def test_platform_detect_live_ezshare_classifies_as_vercel() -> None:
     """Real-world test: ezshare.systems currently CNAMEs to cname.vercel-dns.com.
     platform_detect should classify it as 'vercel' against the live DNS."""
-    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import platform_detect
 
     # Don't mock — let it actually call DoH and HTTP.
     result = platform_detect.step_platform_detect(
@@ -1505,7 +1505,7 @@ def test_platform_detect_live_ezshare_classifies_as_vercel() -> None:
 def test_gsc_verify_skips_when_platform_is_vercel(tmp_path) -> None:
     """When platform_detect found platform='vercel', gsc_verify must
     skip cleanly (Vercel sites have no CF zone to write TXT records to)."""
-    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_mod
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps import gsc as gsc_mod
 
     prior = {"platform_detect": {"platform": "vercel"}}
     result = gsc_mod.step_gsc_verify(

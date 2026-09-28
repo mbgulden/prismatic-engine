@@ -18,7 +18,7 @@ The loader never logs raw secret values. It returns a typed AuthResult
 object with the value, source, and a redaction hint for diagnostics.
 
 Usage:
-    from plugins.pwp.capabilities.provision_site.auth_loader import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader import (
         get_secret, AUTH_RESOLVERS,
     )
 

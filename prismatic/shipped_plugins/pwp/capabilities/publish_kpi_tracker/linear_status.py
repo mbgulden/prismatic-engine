@@ -202,7 +202,7 @@ def _call_linear_status(issue_id: str) -> Dict[str, Any]:
     try:
         # Lazy import so the publish_kpi_tracker module loads even when
         # the provision_site clients aren't available.
-        from plugins.pwp.capabilities.provision_site.linear_client import (
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import (
             LinearClient,
             LinearError,
         )
@@ -221,7 +221,7 @@ def _call_linear_status(issue_id: str) -> Dict[str, Any]:
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 — best-effort, surface classification
-        from plugins.pwp.capabilities.provision_site.linear_client import LinearError
+        from prismatic.shipped_plugins.pwp.capabilities.provision_site.linear_client import LinearError
 
         if isinstance(exc, LinearError):
             status = getattr(exc, "status", 0) or 0
