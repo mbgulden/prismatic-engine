@@ -98,7 +98,7 @@ _JEV_TO_TRIAGE = {
 GATE_SITE = "failure-triage"
 
 SPEC_DIR = Path(__file__).resolve().parent / "spec"
-DEFAULT_TRANSIENTS_FILE = SPEC_DIR / "triage_transients_v1.yaml"
+DEFAULT_TRANSIENTS_FILE = SPEC_DIR / "triage_transients_v2.yaml"
 DEFAULT_AUDIT_LOG = Path(
     os.path.expanduser("~/.prismatic/audit/failure-triage-shadow.jsonl")
 )

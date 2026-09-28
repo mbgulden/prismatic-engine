@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import copy
 import json
 import logging
 import os
@@ -18,6 +19,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Sequence
+
+from prismatic.worktree_janitor import prismatic_entrypoint
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +120,32 @@ def default_state_dir() -> Path:
     return Path(os.environ.get("PRISMATIC_STATE_DIR", repo_root() / "prismatic_state")).expanduser()
 
 
+#: Code-location-independent home for the native-cron store.
+#:
+#: The store used to default to ``repo_root() / "prismatic_state"``, which put
+#: a *different* store next to every code copy: the pip-installed venv copy,
+#: each release version dir, every worktree. Venv reinstalls wiped it, and the
+#: gateway (running from venv_current's site-packages) always read a
+#: freshly-seeded empty one — so the dashboard crons tab permanently showed
+#: zero run history. The canonical path below is the same no matter which copy
+#: of the code reads or writes it. Explicit env overrides still win.
+def canonical_cron_store_path() -> Path:
+    """The one store path the recorder, gateway, and dashboard all share.
+
+    Computed at call time (not import time) so tests and unusual HOME
+    configurations resolve the current home directory.
+    """
+    return Path.home() / ".prismatic" / "db" / "native_crons.json"
+
+
 def default_cron_store_path() -> Path:
-    return Path(os.environ.get("PRISMATIC_NATIVE_CRON_STORE", default_state_dir() / "native_crons.json")).expanduser()
+    override = os.environ.get("PRISMATIC_NATIVE_CRON_STORE")
+    if override:
+        return Path(override).expanduser()
+    state_dir = os.environ.get("PRISMATIC_STATE_DIR")
+    if state_dir:
+        return Path(state_dir).expanduser() / "native_crons.json"
+    return canonical_cron_store_path()
 
 
 @dataclass
@@ -589,13 +616,108 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
             pass
 
 
+#: Run-history fields carried over by the legacy-store migration.
+_MIGRATED_RUN_FIELDS = (
+    "last_run_at",
+    "last_status",
+    "last_exit_code",
+    "last_stdout",
+    "last_stderr",
+    "last_duration_s",
+)
+
+
+def _legacy_cron_store_candidates(exclude: Path | None = None) -> list[Path]:
+    """Pre-canonical store locations that may hold run history worth keeping."""
+    home = Path.home()
+    found: list[Path] = []
+    for pattern in (
+        ".prismatic/venv_*/lib/python*/site-packages/prismatic_state/native_crons.json",
+        ".prismatic/versions/*/prismatic_state/native_crons.json",
+    ):
+        found.extend(sorted(home.glob(pattern)))
+    if exclude is not None:
+        try:
+            excluded = exclude.resolve()
+        except OSError:
+            excluded = exclude
+        pruned = []
+        for path in found:
+            try:
+                same = path.resolve() == excluded
+            except OSError:
+                same = path == exclude
+            if not same:
+                pruned.append(path)
+        found = pruned
+    return [path for path in found if path.is_file()]
+
+
+def _read_legacy_run_history(path: Path) -> dict[str, dict[str, object]]:
+    """Map cron id -> run-history fields for one legacy store (best-effort)."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    crons = raw.get("crons", raw if isinstance(raw, list) else [])
+    history: dict[str, dict[str, object]] = {}
+    for item in crons:
+        if not isinstance(item, dict):
+            continue
+        cron_id = item.get("id")
+        if not cron_id or not item.get("last_run_at"):
+            continue
+        history[cron_id] = {field: item.get(field) for field in _MIGRATED_RUN_FIELDS}
+    return history
+
+
 class NativeCronStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_cron_store_path()
 
+    def _migrate_legacy_run_history(
+        self, crons: list[NativeCron]
+    ) -> tuple[list[NativeCron], bool]:
+        """One-time import of run history from pre-canonical stores.
+
+        Runs only while the canonical store has no run history at all; per
+        cron id the newest ``last_run_at`` across all legacy stores wins.
+        Legacy stores are never written after the canonical path lands, so a
+        single import is sufficient. Returns ``(crons, changed)`` — migrated
+        entries are shallow copies, so the shared module-level seed objects
+        are never mutated.
+        """
+        if any(cron.last_run_at for cron in crons):
+            return crons, False
+        merged: dict[str, dict[str, object]] = {}
+        for candidate in _legacy_cron_store_candidates(exclude=self.path):
+            for cron_id, fields in _read_legacy_run_history(candidate).items():
+                prev = merged.get(cron_id)
+                prev_ts = prev.get("last_run_at") if prev else None
+                cur_ts = fields.get("last_run_at")
+                if prev is None or (cur_ts or "") > (prev_ts or ""):
+                    merged[cron_id] = fields
+        if not merged:
+            return crons, False
+        by_id = {cron.id: idx for idx, cron in enumerate(crons)}
+        out = list(crons)
+        changed = False
+        for cron_id, fields in merged.items():
+            idx = by_id.get(cron_id)
+            if idx is None or out[idx].last_run_at:
+                continue
+            migrated_cron = copy.copy(out[idx])
+            for attr_name, value in fields.items():
+                setattr(migrated_cron, attr_name, value)
+            out[idx] = migrated_cron
+            changed = True
+        return out, changed
+
     def ensure_seeded(self) -> None:
         if not self.path.exists():
-            self.save([cron for _group_name, group in _seed_cron_groups() for cron in group])
+            crons = [cron for _group_name, group in _seed_cron_groups() for cron in group]
+            crons, _ = self._migrate_legacy_run_history(crons)
+            self.save(crons)
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -626,6 +748,9 @@ class NativeCronStore:
                 merged.append(refreshed)
         if existing_by_id:
             merged.extend(existing_by_id.values())
+        merged, history_imported = self._migrate_legacy_run_history(merged)
+        if history_imported:
+            changed = True
         if changed:
             self.save(merged)
 
@@ -805,7 +930,12 @@ def _wrapped_crontab_command(cron: NativeCron) -> str:
     stderr / duration) against the cron id, and exits with the job's exit code.
     """
     cwd = repo_root() / cron.cwd if not Path(cron.cwd).is_absolute() else Path(cron.cwd)
-    job = f"cd {shlex.quote(str(cwd))} && {' '.join(shlex.quote(part) for part in cron.command)}"
+    command = list(cron.command)
+    if command and command[0] == "prismatic":
+        # Cron's minimal PATH has no `prismatic` (exit 127); bake the absolute
+        # entry point for this interpreter instead (e.g. engine.doctor).
+        command[0] = prismatic_entrypoint()
+    job = f"cd {shlex.quote(str(cwd))} && {' '.join(shlex.quote(part) for part in command)}"
     return f"{_wrapper_prefix()} {shlex.quote(cron.id)} -- {shlex.quote(job)}"
 
 

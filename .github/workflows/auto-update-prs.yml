@@ -13,6 +13,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Concurrent runs could push conflicting updates to the same PR
+# branch; a newer run redoes the work anyway.
+concurrency:
+  group: auto-update-prs
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write

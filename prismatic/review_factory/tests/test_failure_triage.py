@@ -107,7 +107,7 @@ class StubBackend:
         self.fail_with = fail_with
         self.calls = 0
 
-    def decide(self, state, questions):
+    def decide(self, state, questions, *, call=None):
         self.calls += 1
         if self.fail_with is not None:
             raise self.fail_with
@@ -235,6 +235,37 @@ class TestFlakyClassification:
 # ── shadow Jev advice: logged, never acted on ────────────────────────
 
 
+class TestTransientFalsePositives:
+    """Regression: deterministic failures must not match transient rules."""
+
+    def test_module_not_found_is_not_transient(self, tmp_path):
+        # 2026-09-28: v1's bare ENOTFOUND pattern matched the substring
+        # "eNotFound" inside "ModuleNotFoundError", burning automatic
+        # reruns on deterministic import failures. v2 word-bounds it.
+        triager = FailureTriage(audit_log=str(tmp_path / "audit.jsonl"))
+        assert triager.policy.version == "triage-transients-v2"
+        result = triager.triage(
+            FailureInput(
+                failure_id="ci:1:2",
+                source="ci",
+                error_text="ModuleNotFoundError: No module named 'prismatic.dispatcher'",
+            )
+        )
+        assert result.deterministic_verdict is None
+
+    def test_errno_tokens_still_match(self, tmp_path):
+        triager = FailureTriage(audit_log=str(tmp_path / "audit.jsonl"))
+        for text in (
+            "Error: ECONNRESET",
+            "connect ETIMEDOUT 93.184.216.34:443",
+            "npm ERR! code ENOTFOUND",
+        ):
+            result = triager.triage(
+                FailureInput(failure_id="ci:1:2", source="ci", error_text=text)
+            )
+            assert result.deterministic_verdict == "retry", text
+
+
 class TestShadowAdvice:
     def test_jev_advice_logged_not_acted_on(self, policy_file, audit_log):
         triager = FailureTriage(
@@ -293,7 +324,7 @@ class TestShadowAdvice:
         seen = {}
 
         class CountingBackend(StubBackend):
-            def decide(self, state, questions):
+            def decide(self, state, questions, *, call=None):
                 seen["n_questions"] = len(questions)
                 seen["names"] = [q.name for q in questions]
                 return super().decide(state, questions)

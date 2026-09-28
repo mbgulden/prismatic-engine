@@ -311,3 +311,76 @@ class TestQueueStatistics:
 
         stats = queue.queue_depth()
         assert stats.get("queued", 0) == 2
+
+
+"""
+Tests for the exit-code gate in complete_verification.
+
+A receipt is only completable when every recorded check passed. Fabricated
+or failing receipts must be refused fail-closed instead of advancing the job
+to REVIEW_READY.
+"""
+
+
+def _lease_job(queue):
+    job_id = queue.enqueue_completed_work(
+        completed_work_id="agy-cw-exitgate",
+        task_id="GRO-EXITGATE",
+        repository="mbgulden/prismatic-engine",
+        base_commit="21be7812",
+        candidate_commit="c09761ed",
+        changed_paths=["prismatic/core/router.py"],
+    )
+    job = queue.lease_for_verification("verifier-1")
+    assert job is not None
+    assert job.review_job_id == job_id
+    return job_id
+
+
+def _receipt(job_id, exit_codes):
+    from prismatic.review_factory.models import VerificationReceipt
+
+    return VerificationReceipt(
+        review_job_id=job_id,
+        candidate_commit="c09761ed",
+        candidate_tree="c09761ed",
+        classification="targeted",
+        exit_codes=json.dumps(exit_codes),
+    )
+
+
+class TestCompleteVerificationExitCodeGate:
+    def test_failing_receipt_refused(self, queue):
+        """A receipt recording a failed check must not complete verification."""
+        job_id = _lease_job(queue)
+        receipt = _receipt(job_id, {"focused": 0, "canonical": 1})
+        with pytest.raises(ValueError, match="failing checks"):
+            queue.complete_verification(job_id, receipt, worker_id="verifier-1")
+        # Job stays in VERIFYING; nothing was persisted.
+        job = queue.db.get_review_job(job_id)
+        assert job.state == ReviewJobState.VERIFYING.value
+        assert queue.db.get_receipts_for_job(job_id) == []
+
+    def test_malformed_exit_codes_refused(self, queue):
+        """Non-JSON exit_codes must not complete verification."""
+        job_id = _lease_job(queue)
+        receipt = _receipt(job_id, {})
+        receipt.exit_codes = "not-json{{{"
+        with pytest.raises(ValueError, match="not valid JSON"):
+            queue.complete_verification(job_id, receipt, worker_id="verifier-1")
+        assert queue.db.get_review_job(job_id).state == ReviewJobState.VERIFYING.value
+
+    def test_all_zero_receipt_completes(self, queue):
+        """A receipt with all-zero exit codes completes normally."""
+        job_id = _lease_job(queue)
+        receipt = _receipt(job_id, {"focused": 0, "package": 0})
+        assert queue.complete_verification(job_id, receipt, worker_id="verifier-1")
+        assert (
+            queue.db.get_review_job(job_id).state == ReviewJobState.REVIEW_READY.value
+        )
+
+    def test_empty_exit_codes_completes(self, queue):
+        """Legacy receipts with no recorded checks still complete."""
+        job_id = _lease_job(queue)
+        receipt = _receipt(job_id, {})
+        assert queue.complete_verification(job_id, receipt, worker_id="verifier-1")

@@ -1815,17 +1815,21 @@ def fetch_issue(issue_id: str) -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             d = json.loads(r.read())
-        return d.get("data", {}).get("issue")
+        if not isinstance(d, dict):
+            return None
+        data = d.get("data") or {}
+        if not isinstance(data, dict):
+            return None
+        return data.get("issue")
     except Exception as e:
         print(f"[consumer] fetch_issue error: {e}")
         return None
 
 
 def has_dispatch_label(issue: dict) -> bool:
-    labels = [
-        label.get("name", "") for label in issue.get("labels", {}).get("nodes", [])
-    ]
-    return any(label_name.startswith("dispatch:") for label_name in labels)
+    labels = (issue.get("labels") or {}).get("nodes", []) or []
+    names = [(label or {}).get("name", "") for label in labels]
+    return any(name.startswith("dispatch:") for name in names)
 
 
 def should_dispatch(issue: dict) -> bool:
@@ -1903,6 +1907,24 @@ def process_event(
             db_path=effective_db,
         )
         return
+    if not isinstance(event, dict):
+        # Poison-shape guard: valid JSON but not an object. Without this the
+        # .get() chains below raise AttributeError pre-claim, the row is never
+        # marked processed, the cursor never advances, and every poll refetches
+        # the same event (silent infinite stall). Dead-letter it instead.
+        print(
+            f"[consumer] bad payload shape rowid={rowid}: expected dict, "
+            f"got {type(event).__name__}; dead-lettered"
+        )
+        mark_processed(
+            rowid,
+            event_key,
+            topic,
+            expected_generation=expected_generation,
+            db_path=effective_db,
+        )
+        return
+
     if event.get("type") != "Issue":
         mark_processed(
             rowid,
@@ -1913,7 +1935,21 @@ def process_event(
         )
         return
 
-    issue_id = event.get("data", {}).get("identifier")
+    data = event.get("data") or {}
+    if not isinstance(data, dict):
+        print(
+            f"[consumer] bad payload shape rowid={rowid}: 'data' not a dict; "
+            "dead-lettered"
+        )
+        mark_processed(
+            rowid,
+            event_key,
+            topic,
+            expected_generation=expected_generation,
+            db_path=effective_db,
+        )
+        return
+    issue_id = data.get("identifier")
     if not issue_id:
         mark_processed(
             rowid,
@@ -1995,6 +2031,13 @@ def vacuum_processed(
             "DELETE FROM events WHERE processed = 1 AND ts < ?",
             (time.time() - 86400,),
         )
+        # Dedup keys are useless once their event is vacuumed: rowids only
+        # increase within a DB generation, so a vacuumed event can never be
+        # refetched. Retain 30d (vs the 24h event vacuum) for margin.
+        conn.execute(
+            "DELETE FROM processed_event_keys WHERE processed_at < ?",
+            (time.time() - 30 * 86400,),
+        )
         conn.commit()
     except Exception:
         try:
@@ -2004,6 +2047,23 @@ def vacuum_processed(
         raise
     finally:
         conn.close()
+
+
+FAIL_CLOSED_BACKOFF_SEC = 300  # 5 minutes
+
+
+def _classify_loop_error(e: BaseException) -> str:
+    """Classify a main-loop exception.
+
+    Returns "backoff" for fail-closed gate failures (stay up, process nothing,
+    retry the gate after a backoff instead of crash-looping through systemd),
+    "raise" for other RuntimeErrors, "continue" for everything else.
+    """
+    if "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED" in str(e):
+        return "backoff"
+    if isinstance(e, RuntimeError):
+        return "raise"
+    return "continue"
 
 
 def main_loop() -> None:
@@ -2041,11 +2101,25 @@ def main_loop() -> None:
                 vacuum_processed(expected_generation=expected_gen, db_path=DB_PATH)
                 last_vacuum = time.time()
         except Exception as e:
-            print(f"[consumer] loop error: {e}")
-            if "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED" in str(
-                e
-            ) or isinstance(e, RuntimeError):
+            action = _classify_loop_error(e)
+            if action == "raise":
+                print(f"[consumer] loop error: {e}")
                 raise
+            if action == "backoff":
+                # Fail-closed: no events are processed while the gate fails,
+                # but the process stays up and re-verifies instead of
+                # crash-looping (observed 33k+ systemd restarts). A manual
+                # --repair-apply resumes processing without a restart.
+                print(
+                    f"[consumer] fail-closed gate failure; backing off "
+                    f"{FAIL_CLOSED_BACKOFF_SEC}s (no events processed while "
+                    "invalid)\n"
+                    "MARKER=PRISMATIC_DISPATCH_CONSUMER_FAIL_CLOSED_BACKOFF\n"
+                    f"[consumer] loop error: {e}"
+                )
+                time.sleep(FAIL_CLOSED_BACKOFF_SEC)
+                continue
+            print(f"[consumer] loop error: {e}")
         time.sleep(POLL_INTERVAL)
 
 

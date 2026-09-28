@@ -134,3 +134,96 @@ FROM telemetry_loop_events
 WHERE loop_type = 'refine' 
 GROUP BY parent_id;
 ```
+
+
+## 4. Backup & Restore
+
+### 4.1 What is backed up
+
+Daily snapshots land in `/archive/prismatic-bus-snapshots/` (14-day retention per store,
+oldest pruned automatically). An off-box copy syncs to the synology NFS mount at
+`/mnt/synology-agentic-context/prismatic-snapshots/` (append-only — never pruned off-box).
+
+| Store | Snapshot prefix | Method | RPO |
+|---|---|---|---|
+| Event bus (`~/.prismatic/bus/event_log.sqlite`) | `event_log.sqlite.` | sqlite backup API (WAL-safe) | ~24h |
+| Review factory (`~/.prismatic/state/agy_completed_work.db`) | `agy_completed_work.sqlite.` | sqlite backup API (WAL-safe) | ~24h |
+| Trust ledger (`~/.prismatic/audit/trust-ledger.jsonl`) | `trust-ledger.jsonl.` | copy + full JSON validation | ~24h |
+| Merge receipts (`~/.prismatic/merge-receipts.jsonl`) | `merge-receipts.jsonl.` | copy + full JSON validation | ~24h |
+| Webhook receipts (`~/.prismatic/db/merge-receipts.jsonl`) | `merge-receipts-db.jsonl.` | copy + full JSON validation | ~24h |
+
+Snapshot files are named `<prefix>.YYYYMMDD_HHMMSS` (UTC).
+
+### 4.2 How it runs
+
+- **Writer:** the Hermes orchestrator cron job `event_log_backup` (daily 02:00 MDT =
+  08:00 UTC) executes `/home/ubuntu/.hermes/profiles/orchestrator/scripts/prismatic_bus_backup.py`.
+  The script integrity-checks each live sqlite DB *before* snapshotting, verifies every
+  snapshot after writing, prunes to 14 days, and exits non-zero with a stderr message on
+  any failure — failures are loud, never silent. A per-run report lands in the
+  orchestrator's cron output dir (`.../cron/output/event_log_backup/`).
+- **Off-box sync:** crontab `30 8 * * *` rsyncs the snapshot dir to the synology mount
+  (log: `/home/ubuntu/.hermes/logs/prismatic_snapshot_sync.log`).
+- **Gotchas the automation already handles:**
+  - The live DBs run in WAL mode — a naive `cp` of the `.db` file misses the WAL and
+    yields a stale view. Always use the sqlite backup API (or checkpoint first).
+  - The bus DB's cron-authority tables carry `CHECK` constraints calling custom SQL
+    functions (`is_utc_timestamp`, `sha256_hex`). `PRAGMA integrity_check` fails with
+    "unknown function" unless those are registered on the checking connection — this is
+    a checker artifact, not corruption.
+
+### 4.3 What is NOT backed up
+
+- `~/.prismatic/keys/` (receipt-signing key) and `~/.prismatic/env.d/` (deploy HMAC
+  secret) — **no backup exists.** Regenerating the signing key invalidates all existing
+  receipt signatures; key rotation needs its own plan.
+- systemd unit files (only ad-hoc `.bak` copies exist under `~/.prismatic/backups/`).
+
+### 4.4 Restoring a single store (verified 2026-09-28 via /tmp dry-run)
+
+Stop the services that write to the target store first, then:
+
+**Event bus / review-factory DB (sqlite):**
+```bash
+# 1. Pick the snapshot
+ls -lt /archive/prismatic-bus-snapshots/event_log.sqlite.* | head -3
+# 2. Remove live DB *and* its WAL/SHM sidecars (WAL mode: all three must go)
+rm ~/.prismatic/bus/event_log.sqlite ~/.prismatic/bus/event_log.sqlite-wal ~/.prismatic/bus/event_log.sqlite-shm
+# 3. Copy the snapshot into place (plain cp is fine here: the snapshot itself is a clean DB)
+cp /archive/prismatic-bus-snapshots/event_log.sqlite.<STAMP> ~/.prismatic/bus/event_log.sqlite
+# 4. Verify before restarting services (register custom functions first, see 4.2)
+python3 -c "
+import sqlite3
+c = sqlite3.connect('$HOME/.prismatic/bus/event_log.sqlite')
+c.create_function('is_utc_timestamp', 1, lambda s: 1)
+c.create_function('sha256_hex', 1, lambda b: 'x')
+print(c.execute('PRAGMA integrity_check').fetchone()[0])
+"
+# 5. Restart services, confirm the consumer cursor still matches the bus max rowid
+```
+
+**Trust ledger / merge receipts (jsonl):** copy the newest snapshot over the live file,
+then validate every line parses as JSON.
+
+### 4.5 Full box loss (bare-metal rebuild)
+
+1. Provision replacement host, install Tailscale, rejoin tailnet. **[UNVERIFIED]**
+2. Mount the synology NFS share; copy the newest snapshot set from
+   `/mnt/synology-agentic-context/prismatic-snapshots/` to `/archive/prismatic-bus-snapshots/`.
+3. Restore each store per 4.4 into a fresh `~/.prismatic/` tree.
+4. Recreate `keys/` and `env.d/` — **no backups exist; secrets must be regenerated**,
+   which invalidates all prior receipt signatures. **[UNVERIFIED — no key rotation procedure]**
+5. Reinstall systemd units (units are not in the repo; reconstruct from `.bak` copies
+   under `~/.prismatic/backups/` or the old host's notes). **[UNVERIFIED]**
+6. Restart services in dependency order; reset/repair the consumer cursor if
+   `dispatch_consumer.rowid` was lost (consumer refuses to start when cursor > bus max —
+   use its `--repair-apply` flow). **[UNVERIFIED]**
+
+### 4.6 Verifying backups (do this after any change to the snapshot job)
+
+```bash
+python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/prismatic_bus_backup.py
+# expect: one line per store with integrity/row/line counts, then "Success: ..."
+ls /mnt/synology-agentic-context/prismatic-snapshots/ | tail -5
+# expect: today's snapshot set present off-box
+```
