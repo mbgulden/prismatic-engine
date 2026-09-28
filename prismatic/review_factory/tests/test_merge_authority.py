@@ -95,9 +95,46 @@ def _green_input(**overrides):
         verdict="CLEAN",
         no_merge_conflicts=True,
         branch_protection_satisfied=True,
+        verification_receipt_id="rcpt-1",
     )
     kwargs.update(overrides)
     return MergeInput(**kwargs)
+
+
+class _PassingReceiptJudge:
+    """Fake ReceiptJudge that approves every receipt (happy-path tests)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def validate(self, *, receipt_id, expected_candidate_sha,
+                 expected_tree_sha=None):
+        self.calls.append(
+            {
+                "receipt_id": receipt_id,
+                "expected_candidate_sha": expected_candidate_sha,
+                "expected_tree_sha": expected_tree_sha,
+            }
+        )
+        return True, None
+
+
+class _RefusingReceiptJudge:
+    """Fake ReceiptJudge that refuses with a fixed reason."""
+
+    def __init__(self, reason="receipt_not_found"):
+        self.reason = reason
+        self.calls = []
+
+    def validate(self, *, receipt_id, expected_candidate_sha,
+                 expected_tree_sha=None):
+        self.calls.append(receipt_id)
+        return False, self.reason
+
+
+@pytest.fixture()
+def passing_judge():
+    return _PassingReceiptJudge()
 
 
 @pytest.fixture()
@@ -114,7 +151,7 @@ def disabled_authority(tmp_path):
 
 
 @pytest.fixture()
-def enabled_authority(tmp_path):
+def enabled_authority(tmp_path, passing_judge):
     policy = _write_policy(tmp_path, enabled=True)
     lock = FakeLock()
     executor = FakeExecutor()
@@ -123,6 +160,7 @@ def enabled_authority(tmp_path):
         lock_client=lock,
         executor=executor,
         audit_log=tmp_path / "audit.jsonl",
+        receipt_judge=passing_judge,
     )
     return auth, lock, executor
 
@@ -245,6 +283,7 @@ def test_unknown_gate_id_fails_closed(tmp_path):
         lock_client=FakeLock(),
         executor=FakeExecutor(),
         audit_log=tmp_path / "audit.jsonl",
+        receipt_judge=_PassingReceiptJudge(),
     )
     decision = auth.request_merge(_green_input())
     assert decision.decision == "refused"
@@ -420,6 +459,7 @@ def test_real_swarmlock_mutex_serializes(tmp_path):
             lock_client=held,
             executor=executor,
             audit_log=tmp_path / "audit.jsonl",
+            receipt_judge=_PassingReceiptJudge(),
         )
         decision = auth.request_merge(_green_input())
         assert decision.decision == "refused"
@@ -436,6 +476,7 @@ def test_real_swarmlock_mutex_serializes(tmp_path):
         lock_client=free,
         executor=executor,
         audit_log=tmp_path / "audit2.jsonl",
+        receipt_judge=_PassingReceiptJudge(),
     )
     decision = auth.request_merge(_green_input())
     assert decision.decision == "allowed"
@@ -459,10 +500,101 @@ def test_enabled_all_green_allows_and_audits(enabled_authority, tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert row["decision"] == "allowed"
-    assert len(row["gates"]) == 5
+    assert len(row["gates"]) == 6  # 5 deterministic + ADR-0002 receipt gate
     assert all(g["passed"] for g in row["gates"])
     assert row["tier"] == 0
     assert row["merge_sha"] == "abc123"
+    assert row["verification_receipt_id"] == "rcpt-1"
+
+
+# ── ADR-0002 receipt validation ──────────────────────────────────────
+
+
+def _enabled_with_judge(tmp_path, judge):
+    policy = _write_policy(tmp_path, enabled=True)
+    auth = MergeAuthority(
+        policy_path=policy,
+        lock_client=FakeLock(),
+        executor=FakeExecutor(),
+        audit_log=tmp_path / "audit.jsonl",
+        receipt_judge=judge,
+    )
+    return auth
+
+
+def test_missing_receipt_id_refuses_before_executor(tmp_path):
+    lock = FakeLock()
+    executor = FakeExecutor()
+    policy = _write_policy(tmp_path, enabled=True)
+    auth = MergeAuthority(
+        policy_path=policy,
+        lock_client=lock,
+        executor=executor,
+        audit_log=tmp_path / "audit.jsonl",
+        receipt_judge=_RefusingReceiptJudge("receipt_missing"),
+    )
+    decision = auth.request_merge(_green_input(verification_receipt_id=""))
+    assert decision.decision == "refused"
+    assert decision.reason == "receipt_invalid:receipt_missing"
+    assert executor.calls == []  # never authorized
+    assert lock.acquire_calls == []  # mutex never touched
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "receipt_missing",
+        "receipt_not_found",
+        "candidate_sha_mismatch",
+        "producer_verifier_separation_failed",
+        "freshness_failed: receipt_stale",
+        "revocation_failed: receipt_revoked_by_id_rcpt-1",
+        "decision_not_merge_eligible",
+    ],
+)
+def test_receipt_judge_refusals_are_fail_closed(tmp_path, reason):
+    auth = _enabled_with_judge(tmp_path, _RefusingReceiptJudge(reason))
+    decision = auth.request_merge(_green_input())
+    assert decision.decision == "refused"
+    assert decision.reason == f"receipt_invalid:{reason}"
+    assert decision.allowed is False
+
+
+def test_judge_called_with_receipt_id_and_head_sha(
+    enabled_authority, passing_judge
+):
+    auth, _, _ = enabled_authority
+    auth.request_merge(_green_input())
+    assert passing_judge.calls == [
+        {
+            "receipt_id": "rcpt-1",
+            "expected_candidate_sha": "f" * 40,
+            "expected_tree_sha": None,
+        }
+    ]
+
+
+def test_receipt_refusal_is_audited_with_receipt_gate(tmp_path):
+    auth = _enabled_with_judge(
+        tmp_path, _RefusingReceiptJudge("receipt_not_found")
+    )
+    auth.request_merge(_green_input())
+    rows = _read_audit(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["decision"] == "refused"
+    assert row["reason"] == "receipt_invalid:receipt_not_found"
+    assert row["verification_receipt_id"] == "rcpt-1"
+    gates = {g["id"]: g for g in row["gates"]}
+    assert gates["receipt_validated"]["passed"] is False
+
+
+def test_disabled_never_builds_the_default_receipt_judge(disabled_authority):
+    auth, _, _ = disabled_authority
+    auth.request_merge(_green_input())
+    # The lazy default judge opens the real receipt store (state-dir side
+    # effects); the disabled path must never reach it.
+    assert auth._receipt_judge is None
 
 
 # ── Jev posture ──────────────────────────────────────────────────────
@@ -479,6 +611,7 @@ def test_jev_flag_is_dead_until_built(tmp_path):
         lock_client=FakeLock(),
         executor=FakeExecutor(),
         audit_log=tmp_path / "audit.jsonl",
+        receipt_judge=_PassingReceiptJudge(),
     )
     decision = auth.request_merge(_green_input())
     # Jev enabled in config but not built: fail closed. And when Jev exists,

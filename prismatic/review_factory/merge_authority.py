@@ -9,6 +9,7 @@ When a future policy version enables it (his word), the authority is the
 merge path's pause button:
 
     master switch -> deterministic gates -> tier check -> rate limit
+      -> ADR-0002 receipt validation
       -> Jev second opinion (pause only, fail-closed, never overrides gates)
       -> swarmlock merge mutex -> executor -> audit signal
 
@@ -40,6 +41,8 @@ try:
     _HAS_YAML = True
 except ImportError:  # pragma: no cover - exercised only without PyYAML
     _HAS_YAML = False
+
+from prismatic.review_factory.receipt_judge import ReceiptJudge
 
 SPEC_DIR = Path(__file__).resolve().parent / "spec"
 
@@ -185,6 +188,9 @@ class MergeInput:
     verdict: str = "REJECT"
     no_merge_conflicts: bool = False
     branch_protection_satisfied: bool = False
+    # ADR-0002: the candidate's verification receipt, independently
+    # validated by the judge at decision time. Empty = refuse (fail closed).
+    verification_receipt_id: str = ""
 
 
 def evaluate_gates(policy: AutoMergePolicy, pr: MergeInput) -> list[GateResult]:
@@ -317,6 +323,7 @@ class MergeAuthority:
         executor: Any = None,
         audit_log: Optional[Path | str] = None,
         now_fn: Any = None,
+        receipt_judge: Optional[ReceiptJudge] = None,
     ):
         try:
             self.policy = load_auto_policy(policy_path)
@@ -332,6 +339,21 @@ class MergeAuthority:
         self.audit_log = Path(audit_log) if audit_log is not None else DEFAULT_AUDIT_LOG
         self._now = now_fn or time.time
         self._limiter = RateLimiter(self.policy.rate_limits, self.audit_log)
+        # ADR-0002: the judge independently validates the receipt at decision
+        # time. Injected for tests; the default is built lazily so a
+        # disabled authority has zero side effects at construction.
+        self._receipt_judge = receipt_judge
+
+    def _get_receipt_judge(self) -> ReceiptJudge:
+        """Return the receipt judge, building the default on first use.
+
+        The default judge opens the real receipt store (which creates its
+        state dir), so it is only built on the enabled path — never while
+        the policy is disabled.
+        """
+        if self._receipt_judge is None:
+            self._receipt_judge = ReceiptJudge()
+        return self._receipt_judge
 
     # -- swarmlock merge mutex --------------------------------------
 
@@ -397,6 +419,7 @@ class MergeAuthority:
             ],
             "jev_score": decision.jev_score,
             "merge_sha": decision.merge_sha,
+            "verification_receipt_id": pr.verification_receipt_id,
         }
         try:
             self.audit_log.parent.mkdir(parents=True, exist_ok=True)
@@ -465,6 +488,26 @@ class MergeAuthority:
         over = self._limiter.would_exceed(self._now())
         if over is not None:
             return self._refuse(pr, over, gates)
+
+        # 5b. ADR-0002 receipt validation: the merge judge independently
+        # validates the candidate's verification receipt at decision time.
+        # Fail-closed on missing/malformed/unsigned/stale/producer-only
+        # evidence — a merge without a valid receipt is refused, never
+        # authorized on the manifest's claims alone. Runs after the cheap
+        # deterministic refusals (gates/tier/rate) but always before the
+        # Jev second opinion, mutex acquisition, or executor call.
+        receipt_ok, receipt_reason = self._get_receipt_judge().validate(
+            receipt_id=pr.verification_receipt_id,
+            expected_candidate_sha=pr.head_sha,
+        )
+        receipt_gate = GateResult(
+            "receipt_validated",
+            receipt_ok,
+            receipt_reason or "ADR-0002 independent receipt validation",
+        )
+        gates = gates + (receipt_gate,)
+        if not receipt_ok:
+            return self._refuse(pr, f"receipt_invalid:{receipt_reason}", gates)
 
         # 6. Jev second opinion: PAUSE BUTTON ONLY. When Jev is ever enabled,
         #    it may flip an allowed merge to refused — never the reverse.

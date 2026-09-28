@@ -335,6 +335,7 @@ class TestMergeExecution:
                 dry_run=False,
                 mf_store=mf_store,
                 repo_path=git_ids["repo"],
+                merge_receipts_path=tmp_path / "merge-receipts.jsonl",
             )
 
             job_id = _create_merge_ready_job(
@@ -398,5 +399,79 @@ class TestMergeExecution:
             decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
             assert len(decision_hist) == 1
             assert decision_hist[0]["decision"] == "APPROVE_MERGE"
+
+            # Verify the signed merge receipt was emitted at merge time.
+            assert result.merge_receipt_id
+            from prismatic.verification.merge_receipt import (
+                MERGE_RECEIPT_MARKER,
+                find_merge_receipts,
+            )
+
+            receipts = find_merge_receipts(
+                merge_sha=git_ids["merge_sha"],
+                log_path=tmp_path / "merge-receipts.jsonl",
+            )
+            assert len(receipts) == 1
+            receipt = receipts[0]
+            assert receipt["receipt_id"] == result.merge_receipt_id
+            assert receipt["marker"] == MERGE_RECEIPT_MARKER
+            assert receipt["candidate_sha"] == git_ids["candidate_commit"]
+            assert receipt["merge_sha"] == git_ids["merge_sha"]
+            assert receipt["verifier_id"] == "rf-merge-executor"
+            assert receipt["verified_receipt_refs"] == [
+                {"receipt_id": "receipt-123", "receipt_sha256": "a" * 64}
+            ]
+            assert receipt["explicit_non_claims"]
         finally:
             queue.close()
+
+
+class TestMergeReceiptEmission:
+    """Merge-time receipt emission is best-effort: it must never change the
+    merge result (same contract as the trust-ledger recording)."""
+
+    def _executor(self, tmp_path, **overrides):
+        from unittest.mock import MagicMock
+
+        job = MagicMock()
+        job.repository = "mbgulden/prismatic-engine"
+        job.candidate_commit = "a" * 40
+        job.candidate_tree = "b" * 40
+        job.base_commit = "c" * 40
+        job.review_job_id = "job-1"
+        job.task_id = "task-1"
+        job.policy_version = "v1"
+        job.change_class = "docs"
+        auth = MagicMock()
+        auth.actor = "merge-authority"
+        auth.authorization_id = "auth-1"
+        manifest = MagicMock()
+        manifest.digest.return_value = "m" * 64
+        executor = MergeExecutor(
+            dry_run=True, merge_receipts_path=tmp_path / "receipts.jsonl"
+        )
+        return executor, job, auth, manifest
+
+    def test_emission_writes_receipt_with_bindings(self, tmp_path):
+        executor, job, auth, manifest = self._executor(tmp_path)
+        receipt_id = executor._emit_merge_receipt(
+            job, auth, manifest, "d" * 40, ()
+        )
+        assert receipt_id
+        from prismatic.verification.merge_receipt import find_merge_receipts
+
+        receipts = find_merge_receipts(
+            log_path=tmp_path / "receipts.jsonl"
+        )
+        assert len(receipts) == 1
+        assert receipts[0]["receipt_id"] == receipt_id
+        assert receipts[0]["merge_sha"] == "d" * 40
+
+    def test_emission_failure_returns_empty_id_never_raises(self, tmp_path):
+        executor, job, auth, manifest = self._executor(tmp_path)
+        # A directory as the log path cannot be appended to.
+        executor.merge_receipts_path = tmp_path
+        assert (
+            executor._emit_merge_receipt(job, auth, manifest, "d" * 40, ())
+            == ""
+        )
