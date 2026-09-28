@@ -2,12 +2,12 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Tuple
 
-# Paths
-PWP_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = PWP_DIR / "templates"
-SCHEMA_PATH = TEMPLATES_DIR / "tokens.schema.json"
-DEFAULT_TOKENS_PATH = TEMPLATES_DIR / "tokens.json"
-TENANTS_DIR = PWP_DIR / "tenants"
+from .resources import bundled_json, bundled_relpath, bundled_resource, bundled_text
+
+# Mutable local state stays repo-relative; bundled read-only assets resolve
+# through importlib.resources so they survive standalone packaging.
+MODULE_DIR = Path(__file__).resolve().parent
+TENANTS_DIR = MODULE_DIR / "tenants"
 
 
 def load_json(path: Path) -> dict:
@@ -107,7 +107,7 @@ def validate_tokens(tokens: dict) -> None:
     try:
         import jsonschema
 
-        schema = load_json(SCHEMA_PATH)
+        schema = bundled_json("templates", "tokens.schema.json")
         jsonschema.validate(instance=tokens, schema=schema)
     except ImportError:
         manual_validate(tokens)
@@ -168,7 +168,7 @@ def compile_tokens_to_css(tokens: dict) -> str:
 def get_tokens_for_tenant(tenant_id: str = None) -> dict:
     """Loads and merges tokens for a given tenant."""
     # Load default
-    tokens = load_json(DEFAULT_TOKENS_PATH)
+    tokens = bundled_json("templates", "tokens.json")
 
     if tenant_id:
         tenant_path = TENANTS_DIR / tenant_id / "tokens.json"
@@ -192,17 +192,20 @@ def set_tenant_tokens(tenant_id: str, tokens: dict) -> None:
 
 def render_template(template_name: str, tenant_id: str = None) -> str:
     """Renders the HTML for the specified template with the compiled CSS tokens."""
-    template_html_path = TEMPLATES_DIR / template_name / "index.html"
-    if not template_html_path.exists():
-        raise FileNotFoundError(f"Template '{template_name}' not found at {template_html_path}")
+    template_resource = bundled_resource("templates", template_name, "index.html")
+    if not template_resource.is_file():
+        raise FileNotFoundError(
+            "Template "
+            f"'{template_name}' not found at "
+            f"{bundled_relpath('templates', template_name, 'index.html')}"
+        )
 
     # Get and validate compiled CSS variables
     tokens = get_tokens_for_tenant(tenant_id)
     css_vars = compile_tokens_to_css(tokens)
 
     # Load template HTML
-    with open(template_html_path, "r", encoding="utf-8") as f:
-        html = f.read()
+    html = bundled_text("templates", template_name, "index.html")
 
     # Inject CSS vars
     placeholder = "/* PWP_TOKENS_PLACEHOLDER */"
