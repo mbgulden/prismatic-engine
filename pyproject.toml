@@ -152,3 +152,6 @@ prismatic = [
 pythonpath = [".", "prismatic/shipped_plugins", "prismatic/shipped_plugins/pwp"]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+markers = [
+    "live: live-environment assertions; skipped unless PRISMATIC_RUN_LIVE_TESTS=1",
+]

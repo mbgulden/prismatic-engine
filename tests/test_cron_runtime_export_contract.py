@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -879,40 +880,195 @@ def test_pe_cron_runtime_no_direct_script() -> None:
             )
 
 
-def test_crontab_syntax_validation_disposable_file() -> None:
-    """Validates cron syntax with `crontab -n <tempfile>` on disposable file,
+def _render_generated_block(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    """Render the managed block exactly as scripts/install_native_crons.py would
+    install it, against a seeded store in a temp dir.
 
-    asserting live `crontab -l` SHA-256 remains completely unchanged.
+    The store path is pinned via PRISMATIC_NATIVE_CRON_STORE so no live or
+    repo-default state is read or written; only the generated text is returned.
     """
-    crontab = shutil.which("crontab")
-    if crontab is None:
-        pytest.skip("crontab executable is unavailable on this host")
+    spec = importlib.util.spec_from_file_location(
+        "install_native_crons_probe", ROOT_DIR / "scripts" / "install_native_crons.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # The block under test must stay byte-identical in structure to the real installer.
+    assert module.BEGIN == BEGIN_MARKER
+    assert module.END == END_MARKER
 
-    # 1. Capture live crontab -l SHA-256 before. A host with no installed
-    # user crontab has no production state for this invariance probe.
-    res_before = subprocess.run([crontab, "-l"], capture_output=True, text=True)
-    if res_before.returncode != 0:
-        pytest.skip("no live user crontab is installed on this host")
-    sha_before = hashlib.sha256(res_before.stdout.encode("utf-8")).hexdigest()
-    assert sha_before == LIVE_CRONTAB_EXPORT_SHA256
+    from prismatic.native_crons import NativeCron, NativeCronStore
 
-    # 2. Test syntax validation on disposable tempfile
-    with tempfile.NamedTemporaryFile("w", delete=False) as tf:
-        tf.write("0 3 * * * echo 'disposable syntax check'\n")
+    store_path = tmp_path / "native_crons.json"
+    monkeypatch.setenv("PRISMATIC_NATIVE_CRON_STORE", str(store_path))
+    NativeCronStore(store_path).save(
+        [
+            NativeCron(
+                id="probe.syntax-hourly",
+                name="syntax probe (hourly)",
+                schedule="*/15 * * * *",
+                command=["python3", "scripts/probe.py", "--flag", "a b"],
+                cwd=".",
+            ),
+            NativeCron(
+                id="probe.syntax-daily",
+                name="syntax probe (daily)",
+                schedule="0 3 * * 1-5",
+                command=["/usr/local/bin/job.sh"],
+                cwd="/tmp",
+                env={"FOO": "bar"},
+            ),
+            NativeCron(
+                id="probe.syntax-paused",
+                name="paused probe (must be filtered)",
+                schedule="0 1 * * *",
+                command=["/usr/local/bin/never-paused.sh"],
+                state="paused",
+            ),
+            NativeCron(
+                id="probe.syntax-manual",
+                name="manual probe (must be filtered)",
+                schedule="manual",
+                command=["/usr/local/bin/never-manual.sh"],
+            ),
+            NativeCron(
+                id="probe.syntax-deleted",
+                name="deleted probe (must be filtered)",
+                schedule="0 2 * * *",
+                command=["/usr/local/bin/never-deleted.sh"],
+                state="deleted",
+            ),
+        ]
+    )
+    return module.render_block()
+
+
+def _crontab_n_supported(crontab_bin: str) -> bool:
+    """Probe whether this host's `crontab` supports Debian's `-n` syntax-check
+    mode (check without installing). An empty file is always valid crontab
+    syntax, so a non-zero exit means the flag itself is unsupported."""
+    with tempfile.NamedTemporaryFile("w", suffix=".cron", delete=False) as tf:
         temp_path = tf.name
-
     try:
-        res = subprocess.run([crontab, "-n", temp_path], capture_output=True, text=True)
-        assert res.returncode == 0, f"crontab -n syntax check failed: {res.stderr}"
+        res = subprocess.run(
+            [crontab_bin, "-n", temp_path], capture_output=True, text=True
+        )
+        return res.returncode == 0
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-    # 3. Capture live crontab -l SHA-256 after
-    res_after = subprocess.run([crontab, "-l"], capture_output=True, text=True)
-    assert res_after.returncode == 0, "live user crontab disappeared during probe"
-    sha_after = hashlib.sha256(res_after.stdout.encode("utf-8")).hexdigest()
-    assert sha_after == sha_before, "Live crontab -l SHA-256 changed!"
+
+def _assert_block_syntax_valid(block: str, *, allow_empty: bool = False) -> None:
+    """Validate a managed block's cron syntax on a disposable temp file.
+
+    Validation cascade — first available wins, every path asserts on the given
+    block text, never on the live crontab:
+    1. python-crontab parses the whole block (preferred when installed);
+    2. `crontab -n <tempfile>` — Debian/Ubuntu syntax-check mode, installs nothing;
+    3. deterministic croniter check of every entry schedule (no external tools).
+    The croniter schedule-shape check runs in all paths as the baseline, so the
+    test asserts everywhere and never skips for a missing tool.
+    """
+    assert block.count(BEGIN_MARKER) == 1, (
+        "block must open exactly one managed block"
+    )
+    assert block.count(END_MARKER) == 1, (
+        "block must close exactly one managed block"
+    )
+
+    entry_lines = [
+        line
+        for line in block.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not allow_empty:
+        assert entry_lines, "generated block must contain at least one cron entry"
+
+    from croniter import croniter  # repo dependency, always available
+
+    for line in entry_lines:
+        schedule = " ".join(line.split()[:5])
+        assert croniter.is_valid(schedule), (
+            f"invalid schedule in block line: {line!r}"
+        )
+
+    try:
+        from crontab import CronTab
+    except ImportError:
+        CronTab = None  # type: ignore[assignment]
+
+    if CronTab is not None:
+        CronTab(tab=block)  # raises on syntax errors
+        return
+
+    crontab_bin = shutil.which("crontab")
+    if crontab_bin is not None and _crontab_n_supported(crontab_bin):
+        with tempfile.NamedTemporaryFile("w", suffix=".cron", delete=False) as tf:
+            tf.write(block)
+            temp_path = tf.name
+        try:
+            res = subprocess.run(
+                [crontab_bin, "-n", temp_path], capture_output=True, text=True
+            )
+            assert res.returncode == 0, (
+                f"crontab -n rejected the block: {res.stderr}"
+            )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        return
+    # No parser tools on this host (or `crontab -n` unsupported here): the
+    # croniter schedule checks above are the full validation. The test still
+    # asserts — it never skips.
+
+
+def test_crontab_syntax_validation_disposable_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Validates the *generated* managed block's syntax on a disposable temp file.
+
+    The block is rendered by the real scripts/install_native_crons.py against a
+    seeded temp store: no live crontab is read, no live state is asserted, and
+    nothing is installed. This replaces the old baked-in live-SHA-256 comparison,
+    which rotted whenever the live crontab legitimately changed.
+    """
+    block = _render_generated_block(monkeypatch, tmp_path)
+
+    # Export filtering: active crons land in the block; paused/manual/deleted do not.
+    assert "scripts/probe.py" in block
+    assert "/usr/local/bin/job.sh" in block
+    assert "never-paused.sh" not in block
+    assert "never-manual.sh" not in block
+    assert "never-deleted.sh" not in block
+
+    _assert_block_syntax_valid(block)
+
+
+@pytest.mark.live
+def test_live_crontab_managed_block_syntax() -> None:
+    """Live-environment probe (opt-in; skipped by default).
+
+    On the box that owns the crontab, extracts the installed
+    PRISMATIC_NATIVE_CRONS block (read-only `crontab -l`) and validates its
+    syntax. It makes no claim about the block's content, so it cannot rot when
+    the crontab legitimately changes. Run with PRISMATIC_RUN_LIVE_TESTS=1.
+    """
+    if os.environ.get("PRISMATIC_RUN_LIVE_TESTS") != "1":
+        pytest.skip("live-environment test; set PRISMATIC_RUN_LIVE_TESTS=1 to run")
+    crontab_bin = shutil.which("crontab")
+    if crontab_bin is None:
+        pytest.skip("crontab executable is unavailable on this host")
+    res = subprocess.run([crontab_bin, "-l"], capture_output=True, text=True)
+    if res.returncode != 0:
+        pytest.skip("no live user crontab is installed on this host")
+    live = res.stdout
+    if BEGIN_MARKER not in live or END_MARKER not in live:
+        pytest.skip("live crontab has no PRISMATIC_NATIVE_CRONS managed block")
+    inner = live.split(BEGIN_MARKER, 1)[1].split(END_MARKER, 1)[0]
+    _assert_block_syntax_valid(
+        f"{BEGIN_MARKER}\n{inner.strip()}\n{END_MARKER}\n", allow_empty=True
+    )
 
 
 def test_monkeypatched_mutation_tripwires(monkeypatch) -> None:
