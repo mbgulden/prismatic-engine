@@ -545,6 +545,51 @@ class DeployReceiverPipeline:
         """Build the real node executor (WS7). Test seam: inject a fake."""
         return NodeDeployer(node, repo)
 
+    @staticmethod
+    def _current_deployed_sha(runner: AtomicDeployRunner) -> str:
+        """SHA currently live on the release symlink, or "" when none.
+
+        The release symlink points at ``prismatic-engine-<sha>``; the SHA is
+        parsed from the target directory name. Any unreadable or unexpected
+        layout yields "" (first deploy / unknown state -> guard allows).
+        """
+        try:
+            target = Path(runner.release_symlink).resolve()
+        except OSError:
+            return ""
+        name = target.name
+        prefix = "prismatic-engine-"
+        return name[len(prefix):] if name.startswith(prefix) else ""
+
+    @staticmethod
+    def _is_strict_ancestor(
+        source_repo: Path, ancestor_sha: str, descendant_sha: str
+    ) -> bool | None:
+        """True when ancestor_sha is a strict ancestor of descendant_sha.
+
+        Returns None when the relationship cannot be determined (unknown
+        SHAs, git failure) so the caller can fail open with a warning.
+        """
+        if not ancestor_sha or not descendant_sha or ancestor_sha == descendant_sha:
+            return False
+        try:
+            proc = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", ancestor_sha, descendant_sha],
+                cwd=str(source_repo),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,  # returncode carries the answer (0/1); see below
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        # exit 0 -> is ancestor; exit 1 -> not ancestor; other -> undetermined
+        if proc.returncode == 0:
+            return True
+        if proc.returncode == 1:
+            return False
+        return None
+
     def _fail_closed_refusal(
         self,
         payload: dict[str, Any],
@@ -731,6 +776,44 @@ class DeployReceiverPipeline:
         logger.info(
             "pre-deploy mirror fetch for %s: %s", repo.full_name, pre_deploy_fetch
         )
+
+        # Monotonicity guard: refuse out-of-order hooks. A late-firing
+        # trigger for an older SHA must never move the release symlink
+        # backward (observed 2026-09-28: a stale #568 hook redeployed 6c766e4b
+        # over c66455bf). Same-SHA re-deploys stay allowed (idempotent
+        # restore); undeterminable order fails open with a warning so a
+        # stale mirror can never block a legitimate deploy. An explicit
+        # "force": true in the payload overrides (intentional rollback);
+        # the GitHub workflow never sends it.
+        if not bool(payload.get("force", False)):
+            live_sha = self._current_deployed_sha(runner)
+            if live_sha and pr_sha and pr_sha != live_sha:
+                older = self._is_strict_ancestor(source_repo_for, pr_sha, live_sha)
+                if older is True:
+                    reason = (
+                        f"out-of-order deploy refused: incoming {pr_sha[:8]} "
+                        f"is older than live {live_sha[:8]} "
+                        f"(set force=true to roll back intentionally)"
+                    )
+                    return self._fail_closed_refusal(
+                        payload,
+                        repo.full_name,
+                        reason,
+                        now_iso,
+                        start_time,
+                        deploy_id_suffix="stale",
+                        alert_summary=(
+                            f"Stale deploy hook refused for {repo.full_name}: "
+                            f"{pr_sha[:8]} < live {live_sha[:8]}"
+                        ),
+                    )
+                if older is None:
+                    logger.warning(
+                        "monotonicity guard: could not determine order of "
+                        "incoming %s vs live %s; allowing deploy",
+                        pr_sha[:8],
+                        live_sha[:8],
+                    )
 
         # Step 1: Execute atomic deploy
         success, version_dir, err_msg = runner.deploy(
