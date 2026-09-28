@@ -9,11 +9,12 @@ from unittest import mock
 
 import pytest
 
+# Repo root on sys.path so prismatic.shipped_plugins.pwp.* resolves
+# regardless of how the test harness is invoked.
 HERE = Path(__file__).resolve()
-PKG_ROOT = HERE.parents[3]
-SHIP_ROOT = HERE.parents[4]
-if str(SHIP_ROOT) not in sys.path:
-    sys.path.insert(0, str(SHIP_ROOT))
+REPO_ROOT = HERE.parents[6]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from prismatic.shipped_plugins.pwp.capabilities.provision_site.zapier_client import (  # noqa: E402
     FareHarborCompany,

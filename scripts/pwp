@@ -3,33 +3,17 @@
 from __future__ import annotations
 
 import sys
-import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SHIPPED_PLUGINS = REPO_ROOT / "prismatic" / "shipped_plugins"
 
-for path in (str(SHIPPED_PLUGINS), str(REPO_ROOT)):
-    if path in sys.path:
-        sys.path.remove(path)
-
+if str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(1, str(SHIPPED_PLUGINS))
 
-plugins_pkg = types.ModuleType("plugins")
-plugins_pkg.__path__ = [str(SHIPPED_PLUGINS)]
-sys.modules["plugins"] = plugins_pkg
-
-try:
-    import prismatic.shipped_plugins.pwp as pwp_mod
-    plugins_pkg.pwp = pwp_mod
-    sys.modules["plugins.pwp"] = pwp_mod
-except ImportError:
-    pass
-
-from plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
-from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
-from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

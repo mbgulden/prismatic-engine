@@ -37,11 +37,9 @@ EXTENDED_SITE = FIXTURE_DIR / "hd-engine-fixture.kpi.json"
 def _patch_sites(monkeypatch):
     """Point SITES_DIR at the local fixtures for the test."""
     import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
-    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as raw_inner
 
     monkeypatch.setattr(kpi_mod, "SITES_DIR", FIXTURE_DIR, raising=False)
     monkeypatch.setattr(inner, "SITES_DIR", FIXTURE_DIR, raising=False)
-    monkeypatch.setattr(raw_inner, "SITES_DIR", FIXTURE_DIR, raising=False)
 
 
 def test_list_sites_discovers_kpi_files(monkeypatch):

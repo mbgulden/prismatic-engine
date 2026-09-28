@@ -61,10 +61,7 @@ if SHIPPED_PLUGINS.is_dir():
         sys.path.remove(str(SHIPPED_PLUGINS))
     sys.path.insert(1, str(SHIPPED_PLUGINS))
 
-try:
-    from prismatic.shipped_plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
-except ImportError:
-    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
 
 
 def _resolve_publish_root(args) -> Path:
@@ -103,10 +100,7 @@ def cmd_list_sites(args) -> int:
         runtime = kpi.read_runtime_values(args.runtime_values_path)
     if runtime is None:
         # Run the pipeline ourselves so headline_value is populated.
-        try:
-            from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
-        except ImportError:
-            from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
         runtime = rv.build_runtime_values()
     summaries = kpi.build_all_site_summaries(runtime_values=runtime)
     print(json.dumps(summaries, indent=2, sort_keys=True))
@@ -147,10 +141,7 @@ def cmd_validate(args) -> int:
 
 def cmd_migrate(args) -> int:
     """Derive per-site *.kpi.json files from the registry."""
-    try:
-        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
-    except ImportError:
-        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
     rc = 1
     try:
         manifest = migrate.run(
@@ -176,10 +167,7 @@ def cmd_snapshot(args) -> int:
     have a live-mode adapter fill them). Existing files are NOT
     overwritten unless --force is passed.
     """
-    try:
-        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
-    except ImportError:
-        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
     sites_dir = Path(args.sites_dir) if args.sites_dir else rv.default_sites_dir()
     sites_dir.mkdir(parents=True, exist_ok=True)
     manifest = {"sites": [], "sites_dir": str(sites_dir), "force": args.force}
@@ -312,10 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Provisioning (Phase 1 Cloudflare-first MVP) — delegates to the
     # provision_site capability's operator_cli.attach_subparser().
-    try:
-        from prismatic.shipped_plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
-    except ImportError:
-        import prismatic.shipped_plugins.pwp.capabilities.provision_site.operator_cli as prov_cli
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
     prov_cli.attach_subparser(sub)
 
     return p
