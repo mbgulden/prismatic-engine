@@ -82,8 +82,8 @@ class TestDispatcherActivation(unittest.TestCase):
         mock_gql.return_value = _empty_comments()
 
         # One issue per agent label
-        def issues_for_label(label):
-            agent_name = label.replace("agent::", "")
+        def issues_for_label(label, **_kwargs):
+            agent_name = label.replace("agent:", "")
             return [
                 {
                     "id": f"issue_{agent_name}",
@@ -160,8 +160,8 @@ class TestDispatcherActivation(unittest.TestCase):
         mock_gql.return_value = _empty_comments()
 
         # Only AGY has an issue
-        def issues_for_label(label):
-            if label == "agent::agy":
+        def issues_for_label(label, **_kwargs):
+            if label == "agent:agy":
                 return [{"id": "agy_issue", "title": "AGY task", "identifier": "GRO-AGY", "labels": [label]}]
             return []
         mock_get_issues.side_effect = issues_for_label
@@ -263,7 +263,7 @@ class TestDispatcherActivation(unittest.TestCase):
         mock_gql.return_value = _empty_comments()
 
         def issues_for_label(label, **_kwargs):
-            if label == "agent::fred":
+            if label == "agent:fred":
                 return [{"id": "fred_issue", "title": "Fred task", "identifier": "GRO-FRED", "labels": [label]}]
             return []
 

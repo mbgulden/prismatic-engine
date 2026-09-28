@@ -95,8 +95,8 @@ def test_ttl_cache_prevents_repeated_same_label_scan_calls(monkeypatch, tmp_path
     budget = dispatcher.LinearCycleBudget(max_calls=6, cycle_number=1, poll_fallback_enabled=True)
     dispatcher._CURRENT_POLL_BUDGET = budget
     try:
-        first = dispatcher.get_issues_with_label("agent::fred")
-        second = dispatcher.get_issues_with_label("agent::fred")
+        first = dispatcher.get_issues_with_label("agent:fred")
+        second = dispatcher.get_issues_with_label("agent:fred")
     finally:
         dispatcher._CURRENT_POLL_BUDGET = None
 
