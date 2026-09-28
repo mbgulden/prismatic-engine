@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Stranded-verdict dry-run tick (T1 deterministic plan, item 3).
+"""Stranded-verdict tick (T1 deterministic plan, item 3).
 
-Lists open PRs (read-only) and runs the verdict pipeline in DRY-RUN
-mode, appending decision records to the dry-run log for Michael's
-review. Performs NO GitHub writes: never closes, merges, comments on,
-or labels any PR.
+Default: DRY-RUN. Lists open PRs (read-only), evaluates verdicts against the
+7-day no-strand line, appends decision records to the dry-run log, and
+refreshes the digest fragment the autonomy digest consumes. Performs NO
+GitHub writes.
 
-There is no live mode in this script. Live verdicts (comment + label +
-digest) require Michael's explicit review of the dry-run log and are
-not implemented here.
+Live mode (``--live``): posts a verdict comment and applies a label for
+``overdue`` / ``approaching`` PRs. Requires ``PRISMATIC_VERDICT_LIVE=1``
+AND a fresh dry-run log (see ``prismatic.review_factory.verdict_live``);
+refuses otherwise. Every live action is audited.
 
-Cron (installed dry-run, 7-day soak):
+Cron (dry-run, 7-day soak):
     15 6 * * * cd /home/ubuntu/work/prismatic-engine && \
       /home/ubuntu/.prismatic/venv_stable/bin/python scripts/stranded_verdict_tick.py \
       >> /home/ubuntu/.prismatic/audit/stranded-verdict-tick.log 2>&1
@@ -18,6 +19,7 @@ Cron (installed dry-run, 7-day soak):
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -26,9 +28,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from prismatic.review_factory.verdict import run_pipeline
+from prismatic.review_factory.verdict_live import (
+    DEFAULT_DIGEST_FRAGMENT,
+    DEFAULT_DRY_RUN_LOG,
+    DEFAULT_LIVE_LOG,
+    run_live_verdicts,
+    verdicts_for_digest,
+    write_digest_fragment,
+    VerdictLiveError,
+)
 
 REPO = "mbgulden/prismatic-engine"
-DEFAULT_LOG = "~/.prismatic/audit/stranded-verdict-dryrun.jsonl"
 
 
 def _list_open_prs(repo: str) -> list[dict]:
@@ -70,21 +80,63 @@ def _list_open_prs(repo: str) -> list[dict]:
     return prs
 
 
-def main() -> int:
-    log_path = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else Path(
-        DEFAULT_LOG
-    ).expanduser()
-    prs = _list_open_prs(REPO)
-    records = run_pipeline(prs, log_path=log_path)
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Issue live verdict actions (comments + labels). Requires "
+        "PRISMATIC_VERDICT_LIVE=1 and a fresh dry-run log; refuses otherwise.",
+    )
+    parser.add_argument("--repo", default=REPO)
+    parser.add_argument("--dry-run-log", default=DEFAULT_DRY_RUN_LOG)
+    parser.add_argument("--live-log", default=DEFAULT_LIVE_LOG)
+    parser.add_argument("--fragment", default=DEFAULT_DIGEST_FRAGMENT)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    prs = _list_open_prs(args.repo)
+    records = run_pipeline(prs, log_path=args.dry_run_log)
+
+    failures: list[dict] = []
+    if args.live:
+        try:
+            actions, failures = run_live_verdicts(
+                records,
+                args.repo,
+                live_log=args.live_log,
+                dry_run_log=args.dry_run_log,
+            )
+        except VerdictLiveError as exc:
+            print(f"live verdicts refused: {exc}", file=sys.stderr)
+            return 2
+        payload = verdicts_for_digest(actions, records)
+        payload["mode"] = "live"
+        issued = sum(1 for a in actions if a.get("action") == "verdict_issued")
+        skipped = sum(1 for a in actions if a.get("action") == "skipped")
+        detail = (
+            f"live: {issued} verdicts issued, {skipped} skipped, "
+            f"{len(failures)} failed"
+        )
+    else:
+        payload = verdicts_for_digest([], records)
+        payload["mode"] = "dry_run"
+        detail = "dry-run: no GitHub writes performed"
+
+    write_digest_fragment(payload, args.fragment)
+
     counts: dict[str, int] = {}
     for record in records:
         counts[record["verdict"]] = counts.get(record["verdict"], 0) + 1
     breakdown = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
     print(
-        f"dry-run: {len(records)} PRs evaluated ({breakdown}); "
-        f"log appended to {log_path}. No GitHub writes performed."
+        f"{len(records)} PRs evaluated ({breakdown}); "
+        f"dry-run log appended to {args.dry_run_log}; "
+        f"digest fragment written to {args.fragment}. {detail}."
     )
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

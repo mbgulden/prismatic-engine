@@ -1,0 +1,31 @@
+name: orphan-module-check
+
+# Recurring wiring audit (lesson of PR #505): flags merged-but-never-called
+# modules. REPORT-ONLY — this workflow never fails the build and opens no PRs.
+# A human triages the artifact: wire it, extract it, or remove it.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"  # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  orphan-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run orphan-module check (report-only)
+        run: |
+          python3 scripts/check_orphan_modules.py | tee orphan-report.md
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: orphan-module-report
+          path: orphan-report.md
+          retention-days: 90
