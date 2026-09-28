@@ -9,6 +9,11 @@ on:
     - cron: "0 9 * * 1"  # Mondays 09:00 UTC
   workflow_dispatch:
 
+# Report-only; latest wins.
+concurrency:
+  group: orphan-module-check
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

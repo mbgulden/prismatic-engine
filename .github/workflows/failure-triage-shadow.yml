@@ -34,6 +34,13 @@ on:
 
 # Least privilege: read the run's jobs via the API. Without actions:read
 # the jobs fetch 403s and the workflow can never succeed (Sep 22, 2026).
+
+# Serialize: triage runs must complete, never be dropped. Concurrent
+# runs race on the shared dedup store.
+concurrency:
+  group: failure-triage-shadow
+  cancel-in-progress: false
+
 permissions:
   contents: read
   actions: read
