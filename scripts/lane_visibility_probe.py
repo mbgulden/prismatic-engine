@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 """lane_visibility_probe.py — read-only dispatcher lane-visibility check (WI-6).
 
-The July blind-lane lesson: the dispatcher built ``agent::<name>``
-(double-colon) lane labels while Linear only had ``agent:<name>``
-(single-colon). Every lane scan silently matched nothing for ~2 months, and
-no liveness check could see it — the process was healthy, the *logic* was
-blind. (The 30s watchdog covers process-down; this probe covers logic-blind.)
+What it guards: box-side label drift. The dispatcher's lane scans match
+issues by Linear label (``agent:<name>``); when a lane label is renamed or
+deleted in the Linear UI, that lane's scans silently match nothing and no
+liveness check can see it — the process is healthy, the *logic* is blind.
+(The 30s watchdog covers process-down; this probe covers logic-blind from
+the box side.)
 
 What it does, per dispatcher lane:
-  1. builds the lane label with the same construction the dispatcher uses for
-     its label scans (``f"agent:{agent_name}"`` — see
+  1. builds the lane label with the same construction the dispatcher's
+     label scans use (``f"agent:{agent_name}"`` — see
      ``prismatic/dispatcher.py`` lane scan loop and label snapshot);
-  2. asserts the resolved label is canonical single-colon form;
-  3. asserts the label matches at least one known label on the box (the
-     team's Linear label list, fetched with the same read-only
-     ``GetTeamLabels`` query the dispatcher uses for lookups).
+  2. asserts the built label is canonical single-colon form — a spec
+     assertion on the probe's own construction contract;
+  3. asserts the label matches a known label on the box (the team's Linear
+     label list, fetched with the same read-only ``GetTeamLabels`` query the
+     dispatcher uses for lookups) — this is the drift check.
+
+What it does NOT guard: a dispatcher *code* regression (e.g. the July
+incident, where the dispatcher's code built ``agent::<name>`` double-colon
+labels while the box had ``agent:<name>``). This probe mirrors the
+construction with its own hardcoded f-string, so fed that scenario it would
+still exit 0 while lanes go blind. Closing that gap needs a shared label
+constructor or a source-bound check against the dispatcher's own code —
+follow-up work, not this probe.
 
 On any mismatch it prints an alert, best-effort emits an audit signal, and
 exits non-zero.
@@ -110,6 +120,10 @@ def dispatcher_lane_label(agent_name: str) -> str:
     (docs/proof-loop-demo-wedge.md). Kept as an explicit function (rather than
     an inline f-string at each call site) so the construction is injectable in
     tests and reviewable in one place.
+
+    Hardcoded mirror, not bound to the dispatcher source: a code regression
+    in the dispatcher would not be reflected here (see the module docstring's
+    residual-gap note).
     """
     return f"agent:{agent_name}"
 
@@ -117,8 +131,9 @@ def dispatcher_lane_label(agent_name: str) -> str:
 def is_canonical_lane_label(label: str) -> bool:
     """True when *label* is canonical single-colon dispatcher-lane form.
 
-    Rejects the pre-#572 double-colon bug class (``agent::fred``) as well as
-    empty lane names, whitespace, and extra colons.
+    Rejects the double-colon form (``agent::fred``) as well as empty lane
+    names, whitespace, and extra colons. This is a spec assertion on the
+    label string itself — it fires on whatever construction feeds the probe.
     """
     return bool(CANONICAL_LANE_LABEL_RE.match(label or ""))
 
@@ -131,12 +146,21 @@ def fetch_team_label_names(gql_fn, team_id: str) -> list[str]:
 
     Uses the same ``GetTeamLabels`` query the dispatcher uses for lookups.
     Never creates labels — there is no mutation in this path.
+
+    Raises ProbeError on an error-shaped payload (a GraphQL ``errors``
+    envelope passed through by a non-raising wrapper): treating that as an
+    empty label list would be a false "blind lanes" alarm (exit 1) for a
+    check that never ran — exit 2 is the honest code.
     """
     data = gql_fn(
         TEAM_LABELS_QUERY,
         {"teamId": team_id},
         source="lane_visibility_probe.team_labels",
     )
+    if isinstance(data, dict) and data.get("errors"):
+        raise ProbeError(
+            f"Linear label lookup returned GraphQL errors: {data['errors']}"
+        )
     nodes = data.get("team", {}).get("labels", {}).get("nodes", [])
     return [node.get("name", "") for node in nodes if node.get("name")]
 

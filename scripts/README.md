@@ -21,16 +21,20 @@ The pane uses the same operator contract as the rest of the dashboard. `--json` 
 ## Lane visibility probe
 
 Run `python3 scripts/lane_visibility_probe.py` (or `--json` for machine-readable
-output) to check that every dispatcher lane's label scan can actually see
-work — the check that would have caught the July blind-lane incident, when the
-dispatcher built `agent::<name>` (double-colon) labels while Linear only had
-`agent:<name>` (single-colon), so every lane silently matched nothing for ~2
-months. The 30s watchdog covers process-down; this probe covers logic-blind.
+output) to check that every dispatcher lane's label still exists on the box —
+the guard against box-side label drift (a lane label renamed or deleted in the
+Linear UI makes that lane's scans silently match nothing; the 30s watchdog
+covers process-down, this probe covers logic-blind from the box side).
 
 For each lane in the dispatcher's `AGENT_CONFIG` it builds the lane label with
 the same construction the dispatcher's label scans use, asserts the label is
-canonical single-colon form, and asserts it matches a known label on the box
-(read-only `GetTeamLabels` query — never creates labels, issues, or
-dispatches). Exit codes: 0 = all lanes visible, 1 = blind lane(s) found (alert
-printed, audit signal emitted best-effort), 2 = could not run (e.g. no Linear
-credentials). Intended to run hourly via the engine-health cron seed set.
+canonical single-colon form (a spec assertion on the probe's own construction
+contract), and asserts it matches a known label on the box (read-only
+`GetTeamLabels` query — never creates labels, issues, or dispatches). It does
+not guard against a dispatcher *code* regression: the construction is a
+hardcoded mirror, so a code-side repeat of the July `agent::<name>` incident
+would still exit 0 here — that gap needs a shared constructor or a
+source-bound check (follow-up). Exit codes: 0 = all lanes visible, 1 = blind
+lane(s) found (alert printed, audit signal emitted best-effort), 2 = could not
+run (e.g. no Linear credentials). Intended to run hourly via the engine-health
+cron seed set.

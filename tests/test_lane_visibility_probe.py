@@ -1,13 +1,22 @@
 """Tests for scripts/lane_visibility_probe.py (WI-6, cron overhaul plan).
 
-The probe is the check that would have caught the July blind-lane incident:
-the dispatcher built ``agent::<name>`` (double-colon) labels while Linear only
-had ``agent:<name>`` (single-colon), so every lane silently matched nothing.
+What the probe guards is box-side label drift: a lane label renamed or
+deleted in the Linear UI makes that lane's scans silently match nothing.
+It does NOT guard the July incident's code-side failure mode — the probe
+builds labels with its own hardcoded mirror construction, so fed the July
+scenario (dispatcher code building ``agent::<name>`` while the box had
+``agent:<name>``) it would still exit 0. Closing that gap needs a shared
+constructor or a source-bound check (follow-up, not this PR).
 
 Fail-first contract of this suite:
-  * a fixture reproducing the double-colon-era query construction MUST fail
-    the probe (bug class detected);
+  * a fixture feeding a non-canonical (double-colon) construction MUST fail
+    the probe — this guards the probe's own construction contract (the
+    canonical-form spec assertion), not the dispatcher incident;
   * a fixture reproducing the current single-colon construction MUST pass;
+  * a label missing from the box's label list MUST fail the probe — this is
+    the drift check the probe actually exists for;
+  * an error-shaped GraphQL payload MUST raise instead of reading as an
+    empty label list (exit 2, not a false exit-1 alarm);
   * with no Linear credentials the script must exit cleanly (code 2, no
     traceback) instead of crashing.
 
@@ -48,54 +57,59 @@ def probe():
     return load_probe()
 
 
-# ── Fixtures modelling the two eras of dispatcher query logic ──────────────
+# ── Fixtures: injected label constructions ─────────────────────────────────
+# NOTE: these fixtures inject a *construction*, not the dispatcher's code.
+# They exercise the probe's own canonical-form contract — they do not (and
+# cannot) reproduce the July code-side incident, which this probe cannot see.
 
 LANES = ["fred", "george", "kai"]
 
 
-def double_colon_era_label_for(agent_name: str) -> str:
-    """Pre-#572 dispatcher construction: ``agent::<name>`` (matched nothing)."""
+def double_colon_label_for(agent_name: str) -> str:
+    """Non-canonical construction: ``agent::<name>`` (violates the spec)."""
     return f"agent::{agent_name}"
 
 
 def current_label_for(agent_name: str) -> str:
-    """Current dispatcher construction: ``agent:<name>`` (canonical)."""
+    """Canonical construction: ``agent:<name>``."""
     return f"agent:{agent_name}"
 
 
 BOX_LABELS = ["agent:fred", "agent:george", "agent:kai", "dispatch:ready"]
 
 
-# ── Fail-first: the pre-#572 bug class must fail the probe ─────────────────
+# ── Fail-first: a non-canonical construction must fail the probe ────────────
+# This guards the probe's own construction contract (the canonical-form spec
+# assertion), not the July dispatcher incident.
 
 
-def test_double_colon_era_logic_fails_probe(probe):
+def test_noncanonical_construction_fails_probe(probe):
     checks = probe.probe_lanes(
-        LANES, double_colon_era_label_for, BOX_LABELS
+        LANES, double_colon_label_for, BOX_LABELS
     )
     assert len(checks) == 3
     for check in checks:
         assert check.ok is False
-        assert check.canonical is False  # non-canonical form is the bug
+        assert check.canonical is False  # non-canonical form is the violation
     report = probe.summarize(checks)
     assert report["ok"] is False
     assert report["blind_lanes"] == LANES
 
 
-def test_evaluate_returns_nonzero_exit_for_double_colon_era(probe):
+def test_evaluate_returns_nonzero_exit_for_noncanonical_construction(probe):
     report, exit_code = probe.evaluate(
-        LANES, double_colon_era_label_for, BOX_LABELS
+        LANES, double_colon_label_for, BOX_LABELS
     )
     assert exit_code == 1
     assert report["ok"] is False
 
 
-def test_canonical_check_catches_bug_even_if_box_had_double_colon(probe):
-    """Defense in depth: the canonical-form assertion must fire even when the
-    (buggy) labels happen to exist on the box, so a membership-only check
-    could never silently pass the pre-#572 bug class."""
-    box_with_bug = [f"agent::{name}" for name in LANES]
-    checks = probe.probe_lanes(LANES, double_colon_era_label_for, box_with_bug)
+def test_canonical_check_fires_even_if_box_has_noncanonical_label(probe):
+    """Defense in depth: the canonical-form assertion must fire even when
+    non-canonical labels happen to exist on the box, so a membership-only
+    check could never silently pass a malformed construction."""
+    box_with_noncanonical = [f"agent::{name}" for name in LANES]
+    checks = probe.probe_lanes(LANES, double_colon_label_for, box_with_noncanonical)
     assert all(check.ok is False for check in checks)
     assert all(check.canonical is False for check in checks)
 
@@ -152,7 +166,7 @@ def test_empty_lane_set_is_a_config_error(probe):
         ("agent:fred", True),
         ("agent:george-2", True),
         ("agent:kai_x", True),
-        ("agent::fred", False),  # the July bug
+        ("agent::fred", False),  # the July incident's label form
         ("agent:", False),
         ("agent: fred", False),
         ("agent:fred:extra", False),
@@ -194,6 +208,17 @@ def test_fetch_team_labels_uses_readonly_query(probe):
     assert calls[0]["variables"] == {"teamId": "team-123"}
 
 
+def test_fetch_team_labels_error_payload_raises(probe):
+    """An error-shaped GraphQL payload must raise (exit 2 upstream), not
+    read as an empty label list (which would be a false exit-1 alarm)."""
+
+    def error_gql(query, variables=None, *, source=""):
+        return {"errors": [{"message": "boom"}]}
+
+    with pytest.raises(probe.ProbeError):
+        probe.fetch_team_label_names(error_gql, "team-123")
+
+
 # ── Signal emission ────────────────────────────────────────────────────────
 
 
@@ -201,7 +226,7 @@ def test_signal_emitted_on_blind_lane_and_not_on_success(probe):
     emitted = []
     report, exit_code = probe.evaluate(
         LANES,
-        double_colon_era_label_for,
+        double_colon_label_for,
         BOX_LABELS,
         emit_signal_fn=emitted.append,
     )
