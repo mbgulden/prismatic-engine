@@ -191,6 +191,10 @@ class MergeInput:
     # ADR-0002: the candidate's verification receipt, independently
     # validated by the judge at decision time. Empty = refuse (fail closed).
     verification_receipt_id: str = ""
+    # Tree SHA the receipt is bound to when known. Empty = the judge binds
+    # on the head SHA only (the executor's authorization binding already
+    # covers the tree at merge time).
+    candidate_tree_sha: str = ""
 
 
 def evaluate_gates(policy: AutoMergePolicy, pr: MergeInput) -> list[GateResult]:
@@ -496,10 +500,17 @@ class MergeAuthority:
         # authorized on the manifest's claims alone. Runs after the cheap
         # deterministic refusals (gates/tier/rate) but always before the
         # Jev second opinion, mutex acquisition, or executor call.
-        receipt_ok, receipt_reason = self._get_receipt_judge().validate(
-            receipt_id=pr.verification_receipt_id,
-            expected_candidate_sha=pr.head_sha,
-        )
+        # A judge/store failure is an audited refusal, never an exception.
+        try:
+            receipt_ok, receipt_reason = self._get_receipt_judge().validate(
+                receipt_id=pr.verification_receipt_id,
+                expected_candidate_sha=pr.head_sha,
+                expected_tree_sha=pr.candidate_tree_sha or None,
+            )
+        except Exception as exc:
+            return self._refuse(
+                pr, f"receipt_judge_unavailable: {exc}", gates
+            )
         receipt_gate = GateResult(
             "receipt_validated",
             receipt_ok,

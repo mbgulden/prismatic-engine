@@ -96,6 +96,7 @@ def _green_input(**overrides):
         no_merge_conflicts=True,
         branch_protection_satisfied=True,
         verification_receipt_id="rcpt-1",
+        candidate_tree_sha="b" * 40,
     )
     kwargs.update(overrides)
     return MergeInput(**kwargs)
@@ -569,9 +570,23 @@ def test_judge_called_with_receipt_id_and_head_sha(
         {
             "receipt_id": "rcpt-1",
             "expected_candidate_sha": "f" * 40,
-            "expected_tree_sha": None,
+            "expected_tree_sha": "b" * 40,
         }
     ]
+
+
+def test_judge_failure_is_an_audited_refusal_not_an_exception(tmp_path):
+    class _ExplodingJudge:
+        def validate(self, **kwargs):
+            raise RuntimeError("store disk on fire")
+
+    auth = _enabled_with_judge(tmp_path, _ExplodingJudge())
+    decision = auth.request_merge(_green_input())
+    assert decision.decision == "refused"
+    assert decision.reason.startswith("receipt_judge_unavailable")
+    rows = _read_audit(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["decision"] == "refused"
 
 
 def test_receipt_refusal_is_audited_with_receipt_gate(tmp_path):

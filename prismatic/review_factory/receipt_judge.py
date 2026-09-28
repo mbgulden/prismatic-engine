@@ -9,17 +9,24 @@ candidate's verification receipt *before* it authorizes a merge. It is
 deliberately separate from the executor's ``_build_ci_checks`` (which trusts
 the manifest's claimed checks): the judge re-validates the stored receipt
 itself, fail-closed, using the :mod:`prismatic.verification.receipt_validator`
-primitives:
+and :mod:`prismatic.verification.attestation` primitives.
 
-- missing receipt id / unknown receipt id -> refuse (fail closed on missing)
-- receipt not bound to the exact head SHA -> refuse (ADR-0002 exact-head rule)
-- producer/verifier separation violated -> refuse (fail closed on
-  producer-only evidence)
-- receipt decision not ``pass`` / not merge-eligible -> refuse
-- stale (freshness) or expired -> refuse
-- revoked -> refuse
-- malformed receipt -> refuse (the validator primitives are non-raising and
-  fail-closed)
+Exactly what ``validate`` checks, in order:
+
+1. receipt id present and known to the store (fail closed on missing)
+2. receipt is a dict (fail closed on malformed)
+3. ``candidate_sha`` equals the expected head SHA — exact-head binding
+   (ADR-0002: a head change invalidates the receipt); ``tree_sha`` when
+   the caller supplies an expected tree
+4. producer and verifier identities both present and different
+   (fail closed on producer-only evidence)
+5. receipt decision is a passing, merge-eligible decision
+6. the receipt carries a non-empty attestation, cryptographically verified
+   against the stored policy's verifier key records (fail closed on
+   unsigned; any post-persist field tampering breaks the signature)
+7. freshness against the stored policy's ``freshness.max_age_seconds``
+   bound (constructor default is only the backstop for a malformed policy)
+8. revocation status and revocation store
 
 ``validate`` never raises: any internal error becomes a refusal reason, so a
 judge failure can never flip into an authorization.
@@ -31,6 +38,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from prismatic.verification.attestation import verify_receipt_attestation
 from prismatic.verification.receipt_store import VerificationReceiptStore
 from prismatic.verification.receipt_validator import (
     check_revocation,
@@ -109,11 +117,41 @@ class ReceiptJudge:
             if decision.get("merge_eligible") is not True:
                 return False, "decision_not_merge_eligible"
 
+            # Attestation: the receipt must carry a verifiable signature.
+            # Unsigned receipts fail closed here even when the proof policy
+            # does not require attestation — the merge path requires signed
+            # evidence. Cryptographic verification against the stored
+            # policy's verifier key records also closes post-persist DB
+            # tampering: any field change breaks the signature.
+            sig = receipt.get("signature_or_attestation")
+            if not isinstance(sig, dict) or not sig.get("value"):
+                return False, "missing_attestation"
+            att_ok, att_reason = verify_receipt_attestation(
+                receipt, stored.policy
+            )
+            if not att_ok:
+                return False, f"attestation_failed: {att_reason}"
+
             # Freshness and revocation are the time-dependent checks — the
             # reason the judge re-validates at decision time instead of
-            # trusting the persist-time verdict.
+            # trusting the persist-time verdict. The bound comes from the
+            # stored proof policy (the constructor default is only the
+            # backstop for a malformed policy).
+            policy = stored.policy if isinstance(stored.policy, dict) else {}
+            fresh_cfg = policy.get("freshness")
+            bound = (
+                fresh_cfg.get("max_age_seconds")
+                if isinstance(fresh_cfg, dict)
+                else None
+            )
+            if not (
+                isinstance(bound, int)
+                and not isinstance(bound, bool)
+                and 0 < bound <= 31536000
+            ):
+                bound = self.max_age_seconds
             fresh, freshness_reason = validate_receipt_freshness(
-                receipt, max_age_seconds=self.max_age_seconds
+                receipt, max_age_seconds=bound
             )
             if not fresh:
                 return False, f"freshness_failed: {freshness_reason}"
