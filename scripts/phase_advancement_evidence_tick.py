@@ -26,6 +26,11 @@ def latest_agreement(audit_dir: Path) -> Path | None:
     return files[-1] if files else None
 
 
+def latest_deterministic(audit_dir: Path) -> Path | None:
+    files = sorted(audit_dir.glob("deterministic-decisions-*.jsonl"))
+    return files[-1] if files else None
+
+
 def extract_records_jsonl(agreement_path: Path, tmpdir: Path) -> Path:
     """Write the agreement's ``records`` array to a temp JSONL file."""
     data = json.loads(agreement_path.read_text(encoding="utf-8"))
@@ -43,11 +48,17 @@ def build_pointers(audit_dir: Path, tmpdir: Path) -> dict:
         raise FileNotFoundError(f"no shadow-agreement-*.json in {audit_dir}")
     data = json.loads(agreement.read_text(encoding="utf-8"))
     records_jsonl = extract_records_jsonl(agreement, tmpdir)
-    return {
+    pointers = {
         "shadow_records": str(records_jsonl),
         "shadow_signals": str(audit_dir / "shadow-decisions.jsonl"),
         "bad_merge_calls": int(data.get("bad_merge_calls", 0)),
     }
+    # Deterministic-decisions evidence is optional: absent -> the
+    # deterministic exit path evaluates as not-met (fail-closed).
+    det = latest_deterministic(audit_dir)
+    if det is not None:
+        pointers["deterministic_decisions"] = str(det)
+    return pointers
 
 
 def run(audit_dir: Path = DEFAULT_AUDIT_DIR) -> int:
