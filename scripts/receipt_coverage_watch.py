@@ -205,6 +205,8 @@ def check_coverage(
             "title": pr.get("title") or "",
             "merged_at": pr.get("mergedAt") or "",
             "merge_sha": merge_oid,
+            "head_oid": head_oid,
+            "merged_by": (pr.get("mergedBy") or {}).get("login") or "",
             "head_ref": pr.get("headRefName") or "",
             "url": pr.get("url") or "",
             "status": "missing",
@@ -354,7 +356,7 @@ def resolve_backfill_fields(pr, *, git_dir):
     Returns None when the merge commit is absent from local git (base_sha
     cannot be established from git).
     """
-    merge_sha = (pr.get("mergeCommit") or {}).get("oid") or ""
+    merge_sha = (pr.get("mergeCommit") or {}).get("oid") or pr.get("merge_sha") or ""
     if not merge_sha:
         return None
     if _git(git_dir, "cat-file", "-t", merge_sha) != "commit":
@@ -365,12 +367,12 @@ def resolve_backfill_fields(pr, *, git_dir):
         candidate_sha = _git(git_dir, "rev-parse", merge_sha + "^2") or ""
     else:
         # squash merge: single parent; the PR head is the candidate
-        candidate_sha = pr.get("headRefOid") or ""
+        candidate_sha = pr.get("headRefOid") or pr.get("head_oid") or ""
     candidate_tree = ""
     if candidate_sha:
         candidate_tree = _git(git_dir, "rev-parse", candidate_sha + "^{tree}") or ""
     merged_by = pr.get("mergedBy") or {}
-    actor = merged_by.get("login") or "unknown"
+    actor = merged_by.get("login") or pr.get("merged_by") or "unknown"
     return {
         "number": pr.get("number"),
         "title": pr.get("title") or "",
