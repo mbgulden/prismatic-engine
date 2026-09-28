@@ -1,13 +1,16 @@
 """Tests for Gap 13 — Ship-Time Plugin Load Verification Gate.
 
-5 tests covering:
+6 tests covering:
 1. test_gate_passes_when_all_plugins_load — happy path
 2. test_gate_fails_on_version_mismatch — Gap 10 regression
 3. test_gate_fails_on_missing_manifest — discovery robustness
 4. test_gate_fails_on_broken_entry_point — import failure
 5. test_gate_includes_core_version_in_result — observability
+6. test_all_shipped_plugin_constraints_include_current_engine_version —
+   standing conformance assertion for the plugin<->engine compatibility contract
 
 Reference: okf/operations/gap13-plugin-load-gate-spec-2026-06-29.md
+Reference: docs/contracts/plugin-engine-compat-contract.md
 """
 
 from __future__ import annotations
@@ -295,3 +298,38 @@ def test_plugin_load_result_to_markdown():
     assert "0.2.0" in md
     assert "/tmp/plugins" in md
     print("PASS: PluginLoadResult.to_markdown() produces a useful report")
+def test_all_shipped_plugin_constraints_include_current_engine_version():
+    """Standing conformance assertion for the plugin<->engine compatibility contract.
+
+    Every real shipped manifest's core_version_constraint must include the
+    current engine version (prismatic.__version__, the contract's single
+    source of truth). If the engine version moves outside a plugin's declared
+    range, this goes red before the plugin ever ships.
+
+    Reference: docs/contracts/plugin-engine-compat-contract.md
+    """
+    import yaml
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    import prismatic
+    from prismatic.plugin_architecture import get_shipped_plugins_dir
+
+    engine_version = Version(prismatic.__version__)
+    manifests = discover_shipped_plugins(get_shipped_plugins_dir())
+    assert manifests, "no shipped plugin manifests discovered"
+
+    for manifest_path in manifests:
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        assert isinstance(data, dict), f"{manifest_path}: manifest is not a mapping"
+        name = str(data.get("name") or manifest_path.parent.name)
+        constraint = data.get("core_version_constraint")
+        assert constraint, f"{name}: missing required core_version_constraint"
+        assert engine_version in SpecifierSet(str(constraint)), (
+            f"{name}: engine version {prismatic.__version__} not in "
+            f"declared range {constraint}"
+        )
+    print(
+        f"PASS: all {len(manifests)} shipped plugin constraints "
+        f"include engine version {prismatic.__version__}"
+    )

@@ -3,6 +3,11 @@ name: Plugin Load Gate
 # Runs Gap 13's ship-time plugin load verification on every PR that
 # touches plugins/ or prismatic/core/registry.py. Fails the build if
 # any shipped plugin doesn't load in the current environment.
+#
+# pyproject.toml and prismatic/__init__.py are in the path filter so a
+# version-bump PR cannot skip the conformance check: the plugin<->engine
+# compatibility contract (docs/contracts/plugin-engine-compat-contract.md)
+# is versioned against the engine package version.
 
 on:
   pull_request:
@@ -14,6 +19,8 @@ on:
       - "prismatic/plugin_policy.py"
       - "prismatic/quality/plugin_load.py"
       - "tests/test_plugin_load_gate.py"
+      - "pyproject.toml"
+      - "prismatic/__init__.py"
   push:
     branches:
       - deploy-fresh
