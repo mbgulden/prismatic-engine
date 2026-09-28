@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -635,6 +638,112 @@ def export_system_crontab_lines(store: NativeCronStore | None = None) -> list[st
     return lines
 
 
+# ── WI-9: signed run receipts (cheap win extracted from the 5k system) ──
+# The recorder additionally appends a CronRunReceipt-shaped JSONL entry per
+# run, shaped by prismatic/cron_receipts/cron-run-receipt-v1.schema.json
+# (reused in place via the packaged dataclass — never copied).
+#
+# v1 has NO signature infrastructure: signing_key_id is "unsigned-local"
+# and the signature is the explicit "unsigned" placeholder. A truly empty
+# signature would not validate (the schema requires signature minLength 1).
+# The shape is what matters in v1; signing can come later if Michael wants it.
+# No authority adoption: cron_runner.py / cron_authority.py are untouched.
+
+CRON_RECEIPT_SIGNING_KEY_ID = "unsigned-local"
+CRON_RECEIPT_UNSIGNED_SIGNATURE = "unsigned"
+
+
+def default_cron_receipt_log_path() -> Path:
+    """JSONL file run receipts are appended to (env-overridable for tests)."""
+    return Path(
+        os.environ.get(
+            "PRISMATIC_CRON_RECEIPT_LOG",
+            str(Path.home() / ".prismatic" / "audit" / "cron-run-receipts.jsonl"),
+        )
+    ).expanduser()
+
+
+def _utc_z(dt: datetime) -> str:
+    """RFC 3339 UTC timestamp with Z suffix, as the receipt schema requires."""
+    return (
+        dt.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _runner_release_digest() -> str:
+    """Best-effort 64-hex digest identifying the recorder build.
+
+    The schema requires runner_release_digest as a SHA-256. There is no
+    release-artifact pipeline for native crons in v1, so the digest is taken
+    over this module's own bytes (stable per release); a fixed constant is
+    the fallback if the file cannot be read.
+    """
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError:
+        return hashlib.sha256(
+            b"prismatic.native_crons:record-run:unsigned-local"
+        ).hexdigest()
+
+
+def build_cron_run_receipt(
+    *,
+    cron_id: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    started_at: datetime,
+    finished_at: datetime,
+) -> dict[str, Any]:
+    """Build a CronRunReceipt v1 dict for a completed recorder run.
+
+    The receipt reuses the packaged ``CronRunReceipt`` dataclass in place
+    (schema validation happens in the constructor and via ``validate()``).
+    Raises on invalid input — callers treat receipt writing as best-effort.
+    """
+    from prismatic.cron_receipts.schema import CronRunReceipt
+
+    evidence = f"{stdout or ''}\n{stderr or ''}"
+    receipt = CronRunReceipt(
+        receipt_id=f"cronrun-{uuid.uuid4().hex}",
+        cron_id=cron_id,
+        execution_id=f"exec-{uuid.uuid4().hex}",
+        outcome="succeeded" if exit_code == 0 else "failed",
+        attempt=1,
+        runner_id=socket.gethostname() or "unknown",
+        runner_release_digest=_runner_release_digest(),
+        started_at=_utc_z(started_at),
+        finished_at=_utc_z(finished_at),
+        error_classification=None if exit_code == 0 else f"exit_code:{exit_code}",
+        evidence_digest=hashlib.sha256(
+            evidence.encode("utf-8", errors="replace")
+        ).hexdigest(),
+        signing_key_id=CRON_RECEIPT_SIGNING_KEY_ID,
+        signature=CRON_RECEIPT_UNSIGNED_SIGNATURE,
+    )
+    receipt.validate()
+    return receipt.to_dict()
+
+
+def append_cron_run_receipt(receipt: dict[str, Any], path: Path | None = None) -> bool:
+    """Append one receipt JSON object to the JSONL log.
+
+    Best-effort: returns True on success, logs to stderr and returns False
+    on any failure. Never raises.
+    """
+    target = Path(path) if path is not None else default_cron_receipt_log_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(receipt, separators=(",", ":")) + "\n")
+        return True
+    except OSError as exc:
+        print(f"record-run: failed to append run receipt: {exc}", file=sys.stderr)
+        return False
+
+
 def record_cron_run(
     cron_id: str, shell_command: str, store: NativeCronStore | None = None
 ) -> int:
@@ -645,7 +754,10 @@ def record_cron_run(
 
     Note: the write goes through a direct load/save — run records must not
     trigger a crontab re-export (``mutate()`` does that for state changes).
+    A signed CronRunReceipt (WI-9) is additionally appended to the receipt
+    JSONL log, best-effort and independent of the store writeback.
     """
+    started_dt = datetime.now(timezone.utc)
     ran_at = _now()
     started = time.monotonic()
     try:
@@ -657,6 +769,7 @@ def record_cron_run(
     except Exception as exc:  # e.g. the shell itself could not start
         exit_code, stdout, stderr = 127, "", f"record-run failed to launch job: {exc}"
     duration_s = time.monotonic() - started
+    finished_dt = datetime.now(timezone.utc)
     status = "success" if exit_code == 0 else "failed"
     try:
         st = store or NativeCronStore()
@@ -680,6 +793,24 @@ def record_cron_run(
             )
     except Exception as exc:
         print(f"record-run: failed to record run for {cron_id!r}: {exc}", file=sys.stderr)
+    try:
+        # WI-9: signed run receipt, independent of the store writeback above.
+        # Best-effort — it must never mask the job's own exit code.
+        append_cron_run_receipt(
+            build_cron_run_receipt(
+                cron_id=cron_id,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                started_at=started_dt,
+                finished_at=finished_dt,
+            )
+        )
+    except Exception as exc:
+        print(
+            f"record-run: failed to write run receipt for {cron_id!r}: {exc}",
+            file=sys.stderr,
+        )
     return exit_code
 
 
