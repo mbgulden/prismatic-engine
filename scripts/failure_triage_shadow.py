@@ -11,6 +11,16 @@ retries jobs, never rejects candidates, never pages anyone.
 The Jev call site stays default-off: unless ``SWARMJEV_ENABLED`` and
 ``SWARMJEV_CALLSITE_FAILURE_TRIAGE_ENABLED`` are both set in the runner
 environment, triage is deterministic-rules-only and no Jev call is made.
+
+Modes (``--mode``):
+
+- ``shadow`` (default): observe + log only. Byte-for-byte today's behavior:
+  one shadow audit signal per failure, no retries, no repairs, no pages.
+- ``active``: after emitting the shadow audit row, each triage result is
+  offered to the enabled triage-action executors
+  (``prismatic.review_factory.triage_actions``). Today only ``execute_retry``
+  exists, behind ``PRISMATIC_TRIAGE_RETRY_ENABLED`` (default off) — with the
+  flag off, active mode behaves exactly like shadow mode.
 """
 
 from __future__ import annotations
@@ -90,6 +100,19 @@ def main() -> int:
         default="failure-triage-shadow.jsonl",
         help="Where to write the shadow audit JSONL (uploaded as an artifact)",
     )
+    ap.add_argument(
+        "--mode",
+        choices=("shadow", "active"),
+        default="shadow",
+        help="shadow: observe + log only (default). active: also offer each "
+        "triage result to the enabled triage-action executors.",
+    )
+    ap.add_argument(
+        "--retry-state-path",
+        default=None,
+        help="Path to the retry idempotency state file. Defaults to "
+        "$PRISMATIC_TRIAGE_STATE_DIR/triage-retry-state.json.",
+    )
     args = ap.parse_args()
 
     event_path = os.environ.get("GITHUB_EVENT_PATH", "")
@@ -121,6 +144,34 @@ def main() -> int:
         FailureTriage,
         triage_ci_failure,
     )
+    from prismatic.review_factory.triage_actions import (
+        RetriedRunStore,
+        RetryRequest,
+        default_retry_store,
+        execute_retry,
+    )
+
+    def _active_retries(results, *, repo, run_id):
+        """Offer each triage result to execute_retry (active mode only)."""
+        store = (
+            RetriedRunStore(args.retry_state_path)
+            if args.retry_state_path
+            else default_retry_store()
+        )
+        for r in results:
+            req = RetryRequest(
+                repo=repo,
+                run_id=run_id,
+                failure_id=r.failure_id,
+                deterministic_verdict=r.deterministic_verdict,
+                deterministic_evidence=r.deterministic_evidence,
+            )
+            res = execute_retry(req, store=store, audit_log=args.audit_log)
+            print(
+                f"  {r.failure_id}: deterministic={r.deterministic_verdict} "
+                f"jev={r.jev.status}/{r.jev.choice} final={r.final_verdict} "
+                f"[active: retry executed={res.executed} reason={res.reason}]"
+            )
 
     triager = FailureTriage(audit_log=args.audit_log)
     if jobs is None:
@@ -144,10 +195,13 @@ def main() -> int:
                 },
             )
         )
-        print(
-            f"  {result.failure_id}: [shadow \u2014 jobs API unavailable, "
-            "no action taken]"
-        )
+        if args.mode == "active":
+            _active_retries([result], repo=repo, run_id=run_id)
+        else:
+            print(
+                f"  {result.failure_id}: [shadow \u2014 jobs API unavailable, "
+                "no action taken]"
+            )
         print(f"shadow audit log: {args.audit_log}")
         return 0
 
@@ -159,12 +213,15 @@ def main() -> int:
         failed_jobs=jobs,
         triager=triager,
     )
-    for r in results:
-        print(
-            f"  {r.failure_id}: deterministic={r.deterministic_verdict} "
-            f"jev={r.jev.status}/{r.jev.choice} final={r.final_verdict} "
-            "[shadow \u2014 no action taken]"
-        )
+    if args.mode == "active":
+        _active_retries(results, repo=repo, run_id=run_id)
+    else:
+        for r in results:
+            print(
+                f"  {r.failure_id}: deterministic={r.deterministic_verdict} "
+                f"jev={r.jev.status}/{r.jev.choice} final={r.final_verdict} "
+                "[shadow \u2014 no action taken]"
+            )
     print(f"shadow audit log: {args.audit_log}")
     return 0
 
