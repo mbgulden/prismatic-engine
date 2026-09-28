@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
+from prismatic.worktree_janitor import prismatic_entrypoint
+
 logger = logging.getLogger(__name__)
 
 # ── Cron lifecycle event emission (WI-4) ─────────────────────
@@ -805,7 +807,12 @@ def _wrapped_crontab_command(cron: NativeCron) -> str:
     stderr / duration) against the cron id, and exits with the job's exit code.
     """
     cwd = repo_root() / cron.cwd if not Path(cron.cwd).is_absolute() else Path(cron.cwd)
-    job = f"cd {shlex.quote(str(cwd))} && {' '.join(shlex.quote(part) for part in cron.command)}"
+    command = list(cron.command)
+    if command and command[0] == "prismatic":
+        # Cron's minimal PATH has no `prismatic` (exit 127); bake the absolute
+        # entry point for this interpreter instead (e.g. engine.doctor).
+        command[0] = prismatic_entrypoint()
+    job = f"cd {shlex.quote(str(cwd))} && {' '.join(shlex.quote(part) for part in command)}"
     return f"{_wrapper_prefix()} {shlex.quote(cron.id)} -- {shlex.quote(job)}"
 
 
