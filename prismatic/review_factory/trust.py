@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 EVENT_TYPES = {
     "merge_completed",
+    "merge_receipt_missing",
     "rollback_detected",
     "human_revert",
     "pause_resolved",
@@ -230,6 +231,41 @@ class TrustLedger:
 
     # ── convenience recorders ────────────────────────────────────────
 
+    def _find_outcome_event(
+        self, event_type: str, artifact_id: str
+    ) -> "Optional[dict[str, Any]]":
+        """Return the existing event for (event_type, artifact_id), if any.
+
+        Outcome events are idempotent on the logical artifact: recording the
+        same merge/rollback twice (retried callers, ad-hoc runs against the
+        production DB, a future bus subscriber) must not double-count in
+        the graduation streaks.
+        """
+        cur = self._db.conn.execute(
+            "SELECT event_id, ts, event_type, artifact_id, change_class,"
+            " tier_at_event, merged_by, deterministic_verdict, judgment, notes"
+            " FROM trust_ledger_events"
+            " WHERE event_type = ? AND artifact_id = ?"
+            " ORDER BY ts ASC, rowid ASC LIMIT 1",
+            (event_type, artifact_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "event_id": row["event_id"],
+            "ts": row["ts"],
+            "event_type": row["event_type"],
+            "artifact_id": row["artifact_id"],
+            "change_class": row["change_class"],
+            "tier_at_event": row["tier_at_event"],
+            "merged_by": row["merged_by"],
+            "deterministic_verdict": row["deterministic_verdict"],
+            "judgment": json.loads(row["judgment"]) if row["judgment"] else None,
+            "notes": row["notes"],
+            "duplicate_skipped": True,
+        }
+
     def record_merge_outcome(
         self,
         *,
@@ -240,7 +276,19 @@ class TrustLedger:
         judgment: Optional[Mapping[str, Any]] = None,
         notes: str = "",
     ) -> dict[str, Any]:
-        """Record a completed merge."""
+        """Record a completed merge.
+
+        Idempotent on ``artifact_id``: a second record for the same merge
+        returns the existing event instead of double-counting.
+        """
+        existing = self._find_outcome_event("merge_completed", artifact_id)
+        if existing is not None:
+            logger.info(
+                "trust ledger: merge_completed already recorded for %s; "
+                "skipping duplicate",
+                artifact_id,
+            )
+            return existing
         return self.record_event(
             "merge_completed",
             artifact_id=artifact_id,
@@ -249,6 +297,41 @@ class TrustLedger:
             deterministic_verdict=deterministic_verdict,
             judgment=judgment,
             notes=notes,
+        )
+
+    def record_merge_receipt_missing(
+        self,
+        *,
+        artifact_id: str,
+        change_class: str,
+        merge_sha: str = "",
+        notes: str = "",
+    ) -> dict[str, Any]:
+        """Record a merge commit that is live without a signed receipt.
+
+        Used when receipt emission failed and the CAS rollback was refused
+        or failed, so the commit stayed on the target. The attempt is
+        visible in the ledger but never counts as a clean merge
+        (``merge_outcomes()`` only counts ``merge_completed``). Idempotent
+        on ``artifact_id`` like the other outcome recorders.
+        """
+        existing = self._find_outcome_event("merge_receipt_missing", artifact_id)
+        if existing is not None:
+            logger.info(
+                "trust ledger: merge_receipt_missing already recorded for %s; "
+                "skipping duplicate",
+                artifact_id,
+            )
+            return existing
+        note = f"merge_sha={merge_sha}" if merge_sha else ""
+        if notes:
+            note = f"{note} {notes}".strip() if note else notes
+        return self.record_event(
+            "merge_receipt_missing",
+            artifact_id=artifact_id,
+            change_class=change_class,
+            merged_by="auto",
+            notes=note,
         )
 
     def record_rollback(
@@ -261,6 +344,14 @@ class TrustLedger:
     ) -> dict[str, Any]:
         """Record a rollback.  If the rolled-back work was auto-merged,
         revoke a tier immediately (mechanical — no proposal, no waiting)."""
+        existing = self._find_outcome_event("rollback_detected", artifact_id)
+        if existing is not None:
+            logger.info(
+                "trust ledger: rollback_detected already recorded for %s; "
+                "skipping duplicate",
+                artifact_id,
+            )
+            return existing
         event = self.record_event(
             "rollback_detected",
             artifact_id=artifact_id,
@@ -280,6 +371,14 @@ class TrustLedger:
         notes: str = "",
     ) -> dict[str, Any]:
         """Record a human revert.  Same mechanical revocation as a rollback."""
+        existing = self._find_outcome_event("human_revert", artifact_id)
+        if existing is not None:
+            logger.info(
+                "trust ledger: human_revert already recorded for %s; "
+                "skipping duplicate",
+                artifact_id,
+            )
+            return existing
         event = self.record_event(
             "human_revert",
             artifact_id=artifact_id,
@@ -312,18 +411,39 @@ class TrustLedger:
         to_tier: int,
         approver: str,
         rationale: str = "",
+        override_freeze: bool = False,
     ) -> dict[str, Any]:
         """Record an explicit tier promotion.  Approvals need a named
-        human — empty approver raises ValueError."""
+        human — empty approver raises ValueError.
+
+        A revocation-triggered promotion freeze blocks promotion for
+        ``PROMOTION_FREEZE_DAYS``; promoting during a freeze raises
+        ValueError unless ``override_freeze=True`` is passed explicitly
+        (the override is recorded in the event notes).
+        """
         if not approver or not str(approver).strip():
             raise ValueError("tier promotion requires a named approver")
         if to_tier not in TIERS:
             raise ValueError(f"to_tier must be one of {TIERS}, got {to_tier!r}")
+        freeze_until = self.tier_status().get("promotion_freeze_until")
+        if freeze_until is not None and not override_freeze:
+            raise ValueError(
+                "tier promotion blocked by active promotion freeze until "
+                f"{freeze_until}; pass override_freeze=True for an explicit "
+                "override"
+            )
+        notes = rationale
+        if freeze_until is not None and override_freeze:
+            notes = f"{rationale} [freeze overridden; was frozen until {freeze_until}]".strip()
         return self.record_event(
             "tier_promoted",
             tier_at_event=to_tier,
-            judgment={"to_tier": to_tier, "approver": approver},
-            notes=rationale,
+            judgment={
+                "to_tier": to_tier,
+                "approver": approver,
+                "override_freeze": bool(override_freeze),
+            },
+            notes=notes,
         )
 
     def record_brake_pulled(self, *, notes: str = "") -> dict[str, Any]:

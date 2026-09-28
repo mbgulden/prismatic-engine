@@ -125,9 +125,15 @@ def _install_phase12(
 
 
 def _remove_phase12(monkeypatch):
-    """Ensure the phase-1/2 modules are absent (fail-closed posture)."""
+    """Ensure the phase-1/2 modules are absent (fail-closed posture).
+
+    Deleting from sys.modules is not enough on its own: the consult's
+    from-import would silently re-import the real module from disk, so the
+    "absent module" case could never be observed. Storing None makes the
+    import machinery raise ImportError ("None in sys.modules") instead.
+    """
     for name in (_AUTONOMY_MODULE, _TRUST_MODULE):
-        monkeypatch.delitem(sys.modules, name, raising=False)
+        monkeypatch.setitem(sys.modules, name, None)
         monkeypatch.delattr(rf_pkg, name.rsplit(".", 1)[1], raising=False)
 
 
@@ -184,6 +190,7 @@ def _stage_job(**overrides):
         review_job_id="job-1",
         risk_tier=0,
         change_class="docs",
+        changed_paths_json='["docs/guide.md"]',
         deterministic_verdict="CLEAN",
     )
     for key, value in overrides.items():
@@ -210,8 +217,19 @@ def _isolated_stage(monkeypatch, queue):
 # ── classify_change_class ────────────────────────────────────────────
 
 
-def test_classify_change_class_passthrough():
-    assert classify_change_class(SimpleNamespace(change_class="docs")) == "docs"
+def test_classify_change_class_derives_from_changed_paths():
+    job = SimpleNamespace(changed_paths_json='["docs/guide.md"]')
+    assert classify_change_class(job) == "docs"
+
+
+def test_classify_change_class_ignores_self_attested_attribute():
+    # A caller-supplied change_class must never be trusted: classification
+    # is evidence-based (changed paths), never self-attestation.
+    job = SimpleNamespace(
+        change_class="docs",
+        changed_paths_json='["prismatic/gateway/auth.py"]',
+    )
+    assert classify_change_class(job) == "sensitive"
 
 
 def test_classify_change_class_missing_attr_is_sensitive():
@@ -443,7 +461,9 @@ def test_execute_failure_records_no_trust_outcome(monkeypatch):
 def test_execute_unknown_change_class_records_sensitive(monkeypatch):
     _, _, ledger, _ = _install_phase12(monkeypatch)
     executor = _succeeding_executor(monkeypatch, _exec_job(), _exec_auth())
-    executor.queue.db.job = _exec_job(change_class=None)
+    executor.queue.db.job = _exec_job(
+        change_class=None, changed_paths_json='["prismatic/some_module.py"]'
+    )
     result = executor.execute("job-1", manifest=SimpleNamespace())
     assert result.success
     assert ledger.merge_outcomes[0]["change_class"] == "sensitive"

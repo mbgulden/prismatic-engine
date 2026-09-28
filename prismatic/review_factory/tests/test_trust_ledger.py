@@ -254,6 +254,7 @@ def test_empty_approver_rejected(tmp_path):
 def test_constants_match_spec():
     assert EVENT_TYPES == {
         "merge_completed",
+        "merge_receipt_missing",
         "rollback_detected",
         "human_revert",
         "pause_resolved",
