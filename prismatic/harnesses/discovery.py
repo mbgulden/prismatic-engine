@@ -58,9 +58,10 @@ class HarnessDiscoveryManager:
     def discover_antigravity(self) -> list[DiscoveredHarness]:
         """Probe local Antigravity binary and available frontier reasoning models."""
         harnesses: list[DiscoveredHarness] = []
+        _local_bin = Path.home() / ".local" / "bin"
         binary_candidates = [
-            Path("/home/ubuntu/.local/bin/agy-bin"),
-            Path("/home/ubuntu/.local/bin/agy"),
+            _local_bin / "agy-bin",
+            _local_bin / "agy",
             Path(shutil.which("agy-bin") or "") if shutil.which("agy-bin") else None,
             Path(shutil.which("agy") or "") if shutil.which("agy") else None,
         ]
@@ -118,7 +119,7 @@ class HarnessDiscoveryManager:
     def discover_hermes_profiles(self) -> list[DiscoveredHarness]:
         """Probe local Hermes installation and active/stopped agent profiles."""
         harnesses: list[DiscoveredHarness] = []
-        hermes_bin = Path("/home/ubuntu/.local/bin/hermes")
+        hermes_bin = Path.home() / ".local" / "bin" / "hermes"
         if not (hermes_bin.is_file() and os.access(hermes_bin, os.X_OK)):
             which_h = shutil.which("hermes")
             if which_h:

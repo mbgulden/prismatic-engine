@@ -27,7 +27,7 @@ Usage::
     python -m prismatic.distributed_watchdog  [--check-interval 30]
 
 Environment:
-    PRISMATIC_HOME            — root path (default: /home/ubuntu)
+    PRISMATIC_HOME            — root path (default: $HOME)
     PRISMATIC_STATE_DIR       — state directory (default: ./prismatic_state)
     PRISMATIC_IPC_SOCKET      — Unix socket for IPC events
     DISTRIBUTED_TIMEOUT_S     — job timeout in seconds (default: 120)
@@ -38,11 +38,9 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import socket as sock_mod
 import sys
 import time
-import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,7 +51,7 @@ from typing import Any
 # Constants (env-overridable)
 # ═══════════════════════════════════════════════════════════════
 
-PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
+PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME") or str(Path.home()))
 STATE_DIR = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
 
 # Where the swarm node roster lives (written by the orchestrator)
