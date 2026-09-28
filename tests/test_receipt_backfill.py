@@ -203,3 +203,51 @@ def test_emit_missing_skips_ghost_commit(receipt_env, fake_git):
     assert len(summary["failed"]) == 1
     assert summary["failed"][0]["number"] == 999
     assert _log_rows(log) == []
+
+
+def test_report_entry_feeds_resolve(fake_git, receipt_env, tmp_path):
+    """Regression: entries from _coverage_report (the shape --emit-missing
+    actually consumes) must resolve in resolve_backfill_fields.
+
+    WR-3 shipped with resolve_backfill_fields reading only the raw gh shape
+    (mergeCommit.oid / headRefOid / mergedBy), while --emit-missing feeds it
+    report entries (merge_sha / head_oid / merged_by) — so every PR failed
+    with "merge commit not in local git" on the real run.
+    """
+    from scripts.receipt_coverage_watch import _coverage_report
+
+    report = _coverage_report(
+        [_squash_pr(), _true_merge_pr()], REPO, receipt_env["log"]
+    )
+    assert len(report["missing"]) == 2
+    squash_entry, true_entry = report["missing"]
+
+    squash_fields = resolve_backfill_fields(squash_entry, git_dir="/fake")
+    assert squash_fields is not None
+    assert squash_fields["merge_sha"] == SQUASH_MERGE
+    assert squash_fields["base_sha"] == SQUASH_BASE
+    assert squash_fields["candidate_sha"] == SQUASH_HEAD  # via head_oid
+    assert squash_fields["candidate_tree"] == SQUASH_TREE
+    assert squash_fields["actor"] == "mbgulden"
+
+    true_fields = resolve_backfill_fields(true_entry, git_dir="/fake")
+    assert true_fields is not None
+    assert true_fields["merge_sha"] == TRUE_MERGE
+    assert true_fields["candidate_sha"] == TRUE_HEAD  # ^2, not head_oid
+
+
+def test_emit_missing_accepts_report_entries(receipt_env, fake_git):
+    """End-to-end on the real wiring: _coverage_report -> emit_missing_receipts."""
+    from scripts.receipt_coverage_watch import _coverage_report
+
+    report = _coverage_report([_squash_pr()], REPO, receipt_env["log"])
+    summary = emit_missing_receipts(
+        report["missing"], repo=REPO, log_path=receipt_env["log"], git_dir="/fake"
+    )
+    assert len(summary["emitted"]) == 1
+    assert summary["failed"] == []
+    rows = _log_rows(receipt_env["log"])
+    assert len(rows) == 1
+    assert rows[0]["merge_sha"] == SQUASH_MERGE
+    assert rows[0]["actor"] == "mbgulden"
+    _assert_signed(rows[0], receipt_env["public_key"])
