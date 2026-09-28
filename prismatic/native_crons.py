@@ -1,21 +1,74 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
 logger = logging.getLogger(__name__)
+
+# ── Cron lifecycle event emission (WI-4) ─────────────────────
+# Best-effort fan-out of cron.mutated / cron.run_recorded to dashboard
+# clients. Mirrors prismatic/lock.py::_emit_lock_event: when called inside
+# a running asyncio loop (the gateway request path) the event is published
+# directly to the in-process EventBus — which the WebSocket broadcaster and
+# the /ws forwarder both consume; otherwise (CLI / crontab wrapper, a
+# separate process) it is pushed over the IPC bridge socket to the gateway.
+# Emission must never break cron operations, so it never raises.
+
+try:
+    from prismatic.gateway.ipc_bridge import send_event_via_socket
+
+    _HAS_IPC = True
+except ImportError:  # gateway extras not installed (bare worker)
+    _HAS_IPC = False
+
+
+def _emit_cron_event(event_type: str, payload: dict[str, Any]) -> None:
+    """Emit a cron lifecycle event to dashboard clients; never raises."""
+    if not _HAS_IPC:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+
+            bus = get_event_bus()
+            loop.create_task(
+                bus.publish(
+                    event_type=event_type,
+                    source="native-crons",
+                    payload=payload,
+                )
+            )
+            return
+        except Exception:
+            pass
+    try:
+        send_event_via_socket(
+            event_type=event_type,
+            source="native-crons",
+            payload=payload,
+        )
+    except Exception:
+        pass  # best-effort — emission must never break cron ops
 
 # Truncation policy for recorded stdout/stderr (shared by the `run` action
 # and the run-recorder wrapper).
@@ -250,6 +303,106 @@ SEO_NATIVE_CRONS: list[NativeCron] = [
 ]
 
 
+# ── WI-5: engine-health seed set for new users ─────────────────────────
+# DECISION-2 (cron-overhaul plan): SEO + engine-health seeds stay merged —
+# fresh stores get both groups; existing stores merge the new engine-health
+# seeds while keeping their own runtime fields (state, last_*).
+# Entry points verified on main: scripts/lane_visibility_probe.py (WI-6,
+# no required args), scripts/receipt_coverage_watch.py (WI-7, no required
+# args), `prismatic doctor` (prismatic/cli/__init__.py), and
+# scripts/silent_cron_detector.py (all-optional argparse CLI).
+
+ENGINE_HEALTH_CRONS: list[NativeCron] = [
+    NativeCron(
+        id="engine.lane-visibility-probe",
+        name="Engine health — Dispatcher lane visibility probe",
+        schedule="23 * * * *",
+        command=["python3", "scripts/lane_visibility_probe.py"],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "Read-only hourly check that every dispatcher lane can see "
+            "canonically labeled work — catches blind-lane logic bugs (the "
+            "July blind lane) within an hour instead of months."
+        ),
+        tags=["engine-health", "dispatcher", "lanes", "read-only"],
+    ),
+    NativeCron(
+        id="engine.receipt-coverage-watch",
+        name="Engine health — Merge receipt coverage watch",
+        schedule="30 6 * * *",
+        command=["python3", "scripts/receipt_coverage_watch.py"],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "Read-only daily watch for merged PRs lacking signed "
+            "merge-executor receipts (flags the known GitHub-UI-merge gap)."
+        ),
+        tags=["engine-health", "merge-receipts", "coverage", "read-only"],
+    ),
+    NativeCron(
+        id="engine.receipt-backfill",
+        name="Engine health — Merge receipt backfill",
+        schedule="15 6 * * *",
+        command=[
+            "python3",
+            "scripts/receipt_coverage_watch.py",
+            "--emit-missing",
+            "--limit",
+            "500",
+        ],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "WR-3 backstop: daily emission of signed merge receipts for any "
+            "merged PR lacking one (covers GitHub-UI merges the webhook "
+            "emitter missed, plus the full historical backlog on first run). "
+            "Idempotent on merge SHA; the 06:30 coverage watch verifies after."
+        ),
+        tags=["engine-health", "merge-receipts", "backfill"],
+    ),
+    NativeCron(
+        id="engine.doctor",
+        name="Engine health — Weekly doctor",
+        schedule="0 7 * * 1",
+        command=["prismatic", "doctor"],
+        cwd=".",
+        group="engine-health",
+        description="Weekly environment diagnostics via `prismatic doctor`.",
+        tags=["engine-health", "diagnostics"],
+    ),
+    NativeCron(
+        id="engine.silent-cron-detector",
+        name="Engine health — Silent cron detector",
+        schedule="45 6 * * *",
+        command=[
+            "python3",
+            "scripts/silent_cron_detector.py",
+            "--dry-run",
+            "--no-telegram",
+        ],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "Daily read-only sweep for silently failing or stale crons. "
+            "Seeded dry-run + no-telegram: reporting only, Linear/Telegram "
+            "alerting stays opt-in."
+        ),
+        tags=["engine-health", "silent-failures", "read-only"],
+    ),
+]
+
+#: Seed groups merged by ``NativeCronStore.ensure_seeded()``, in order.
+#: Resolved through a function (not a module constant) so the merge always
+#: reads the *current* module attributes — tests may monkeypatch the seed
+#: lists, and the merge must honor that.
+def _seed_cron_groups() -> tuple[tuple[str, list[NativeCron]], ...]:
+    return (
+        ("seo", SEO_NATIVE_CRONS),
+        ("engine-health", ENGINE_HEALTH_CRONS),
+    )
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -334,6 +487,11 @@ def create_native_cron(
     st.save(existing)
     # A new schedulable cron must reach the system crontab (best-effort).
     refresh_system_crontab(st)
+    # WI-4: the registry changed — the crons tab goes live on this too.
+    _emit_cron_event(
+        "cron.mutated",
+        {"cron_id": cron.id, "action": "create", "state": cron.state},
+    )
     return cron.to_dict()
 
 
@@ -437,7 +595,7 @@ class NativeCronStore:
 
     def ensure_seeded(self) -> None:
         if not self.path.exists():
-            self.save(SEO_NATIVE_CRONS)
+            self.save([cron for _group_name, group in _seed_cron_groups() for cron in group])
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -452,19 +610,20 @@ class NativeCronStore:
             "last_duration_s",
             "deactivated_at", "deleted_at", "paused_at", "updated_at",
         }
-        for default in SEO_NATIVE_CRONS:
-            existing_cron = existing_by_id.pop(default.id, None)
-            if existing_cron is None:
-                merged.append(default)
-                changed = True
-                continue
-            refreshed = NativeCron.from_dict({
-                **default.to_dict(),
-                **{field: getattr(existing_cron, field) for field in runtime_fields},
-            })
-            if refreshed.to_dict() != existing_cron.to_dict():
-                changed = True
-            merged.append(refreshed)
+        for _group_name, seed_group in _seed_cron_groups():
+            for default in seed_group:
+                existing_cron = existing_by_id.pop(default.id, None)
+                if existing_cron is None:
+                    merged.append(default)
+                    changed = True
+                    continue
+                refreshed = NativeCron.from_dict({
+                    **default.to_dict(),
+                    **{field: getattr(existing_cron, field) for field in runtime_fields},
+                })
+                if refreshed.to_dict() != existing_cron.to_dict():
+                    changed = True
+                merged.append(refreshed)
         if existing_by_id:
             merged.extend(existing_by_id.values())
         if changed:
@@ -524,6 +683,16 @@ class NativeCronStore:
                 cron.last_duration_s = result.get("duration_s")
                 crons[index] = cron
                 self.save(crons)
+                _emit_cron_event(
+                    "cron.mutated",
+                    {
+                        "cron_id": cron_id,
+                        "action": "run",
+                        "state": cron.state,
+                        "status": result["status"],
+                        "exit_code": result["exit_code"],
+                    },
+                )
                 return {"success": result["status"] == "success", "cron": cron.to_dict(), "run": result}
             elif action == "recover":
                 # Replay up to 3 missed executions
@@ -542,6 +711,16 @@ class NativeCronStore:
                 cron.last_duration_s = last_res.get("duration_s")
                 crons[index] = cron
                 self.save(crons)
+                _emit_cron_event(
+                    "cron.mutated",
+                    {
+                        "cron_id": cron_id,
+                        "action": "recover",
+                        "state": cron.state,
+                        "status": last_res["status"],
+                        "replays_count": len(replays),
+                    },
+                )
                 return {"success": last_res["status"] == "success", "cron": cron.to_dict(), "replays_count": len(replays), "replays": replays}
             else:
                 raise ValueError(f"Unsupported native cron action: {action}")
@@ -559,6 +738,10 @@ class NativeCronStore:
                     logger.warning(
                         "native-crons: post-mutate crontab refresh failed: %s", exc
                     )
+            _emit_cron_event(
+                "cron.mutated",
+                {"cron_id": cron_id, "action": action, "state": cron.state},
+            )
             return {"success": True, "cron": cron.to_dict(), "action": action}
         raise KeyError(cron_id)
 
@@ -635,6 +818,112 @@ def export_system_crontab_lines(store: NativeCronStore | None = None) -> list[st
     return lines
 
 
+# ── WI-9: signed run receipts (cheap win extracted from the 5k system) ──
+# The recorder additionally appends a CronRunReceipt-shaped JSONL entry per
+# run, shaped by prismatic/cron_receipts/cron-run-receipt-v1.schema.json
+# (reused in place via the packaged dataclass — never copied).
+#
+# v1 has NO signature infrastructure: signing_key_id is "unsigned-local"
+# and the signature is the explicit "unsigned" placeholder. A truly empty
+# signature would not validate (the schema requires signature minLength 1).
+# The shape is what matters in v1; signing can come later if Michael wants it.
+# No authority adoption: cron_runner.py / cron_authority.py are untouched.
+
+CRON_RECEIPT_SIGNING_KEY_ID = "unsigned-local"
+CRON_RECEIPT_UNSIGNED_SIGNATURE = "unsigned"
+
+
+def default_cron_receipt_log_path() -> Path:
+    """JSONL file run receipts are appended to (env-overridable for tests)."""
+    return Path(
+        os.environ.get(
+            "PRISMATIC_CRON_RECEIPT_LOG",
+            str(Path.home() / ".prismatic" / "audit" / "cron-run-receipts.jsonl"),
+        )
+    ).expanduser()
+
+
+def _utc_z(dt: datetime) -> str:
+    """RFC 3339 UTC timestamp with Z suffix, as the receipt schema requires."""
+    return (
+        dt.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _runner_release_digest() -> str:
+    """Best-effort 64-hex digest identifying the recorder build.
+
+    The schema requires runner_release_digest as a SHA-256. There is no
+    release-artifact pipeline for native crons in v1, so the digest is taken
+    over this module's own bytes (stable per release); a fixed constant is
+    the fallback if the file cannot be read.
+    """
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError:
+        return hashlib.sha256(
+            b"prismatic.native_crons:record-run:unsigned-local"
+        ).hexdigest()
+
+
+def build_cron_run_receipt(
+    *,
+    cron_id: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    started_at: datetime,
+    finished_at: datetime,
+) -> dict[str, Any]:
+    """Build a CronRunReceipt v1 dict for a completed recorder run.
+
+    The receipt reuses the packaged ``CronRunReceipt`` dataclass in place
+    (schema validation happens in the constructor and via ``validate()``).
+    Raises on invalid input — callers treat receipt writing as best-effort.
+    """
+    from prismatic.cron_receipts.schema import CronRunReceipt
+
+    evidence = f"{stdout or ''}\n{stderr or ''}"
+    receipt = CronRunReceipt(
+        receipt_id=f"cronrun-{uuid.uuid4().hex}",
+        cron_id=cron_id,
+        execution_id=f"exec-{uuid.uuid4().hex}",
+        outcome="succeeded" if exit_code == 0 else "failed",
+        attempt=1,
+        runner_id=socket.gethostname() or "unknown",
+        runner_release_digest=_runner_release_digest(),
+        started_at=_utc_z(started_at),
+        finished_at=_utc_z(finished_at),
+        error_classification=None if exit_code == 0 else f"exit_code:{exit_code}",
+        evidence_digest=hashlib.sha256(
+            evidence.encode("utf-8", errors="replace")
+        ).hexdigest(),
+        signing_key_id=CRON_RECEIPT_SIGNING_KEY_ID,
+        signature=CRON_RECEIPT_UNSIGNED_SIGNATURE,
+    )
+    receipt.validate()
+    return receipt.to_dict()
+
+
+def append_cron_run_receipt(receipt: dict[str, Any], path: Path | None = None) -> bool:
+    """Append one receipt JSON object to the JSONL log.
+
+    Best-effort: returns True on success, logs to stderr and returns False
+    on any failure. Never raises.
+    """
+    target = Path(path) if path is not None else default_cron_receipt_log_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(receipt, separators=(",", ":")) + "\n")
+        return True
+    except OSError as exc:
+        print(f"record-run: failed to append run receipt: {exc}", file=sys.stderr)
+        return False
+
+
 def record_cron_run(
     cron_id: str, shell_command: str, store: NativeCronStore | None = None
 ) -> int:
@@ -645,7 +934,10 @@ def record_cron_run(
 
     Note: the write goes through a direct load/save — run records must not
     trigger a crontab re-export (``mutate()`` does that for state changes).
+    A signed CronRunReceipt (WI-9) is additionally appended to the receipt
+    JSONL log, best-effort and independent of the store writeback.
     """
+    started_dt = datetime.now(timezone.utc)
     ran_at = _now()
     started = time.monotonic()
     try:
@@ -657,6 +949,7 @@ def record_cron_run(
     except Exception as exc:  # e.g. the shell itself could not start
         exit_code, stdout, stderr = 127, "", f"record-run failed to launch job: {exc}"
     duration_s = time.monotonic() - started
+    finished_dt = datetime.now(timezone.utc)
     status = "success" if exit_code == 0 else "failed"
     try:
         st = store or NativeCronStore()
@@ -672,6 +965,20 @@ def record_cron_run(
             cron.last_duration_s = duration_s
             crons[index] = cron
             st.save(crons)
+            # WI-4: a scheduled run just landed — tell dashboard clients so
+            # the crons tab refreshes without a manual reload. Best-effort;
+            # this runs in a crontab-spawned process, so the event crosses to
+            # the gateway over the IPC bridge socket.
+            _emit_cron_event(
+                "cron.run_recorded",
+                {
+                    "cron_id": cron_id,
+                    "status": status,
+                    "exit_code": exit_code,
+                    "ran_at": ran_at,
+                    "duration_s": duration_s,
+                },
+            )
             break
         else:
             print(
@@ -680,6 +987,24 @@ def record_cron_run(
             )
     except Exception as exc:
         print(f"record-run: failed to record run for {cron_id!r}: {exc}", file=sys.stderr)
+    try:
+        # WI-9: signed run receipt, independent of the store writeback above.
+        # Best-effort — it must never mask the job's own exit code.
+        append_cron_run_receipt(
+            build_cron_run_receipt(
+                cron_id=cron_id,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                started_at=started_dt,
+                finished_at=finished_dt,
+            )
+        )
+    except Exception as exc:
+        print(
+            f"record-run: failed to write run receipt for {cron_id!r}: {exc}",
+            file=sys.stderr,
+        )
     return exit_code
 
 

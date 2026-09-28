@@ -27,6 +27,12 @@ Stdlib only — no prismatic imports, so it runs anywhere ``gh`` does.
 Usage:
     python3 scripts/receipt_coverage_watch.py [--repo OWNER/REPO]
         [--limit N] [--receipts PATH] [--json] [--gh PATH]
+        [--emit-missing] [--git-dir PATH]
+
+With --emit-missing (WR-3), merged PRs lacking a receipt get one built,
+Ed25519-signed, and persisted via prismatic.verification.merge_receipt
+(the same builder the WR-2 webhook emitter uses). Watch mode without
+the flag stays stdlib-only and read-only.
 """
 
 from __future__ import annotations
@@ -126,7 +132,9 @@ def load_receipt_index(log_path: Path | str):
 # ── Merged PRs ────────────────────────────────────────────────────────
 
 
-_GH_JSON_FIELDS = "number,title,mergedAt,mergeCommit,headRefOid,headRefName,url"
+_GH_JSON_FIELDS = (
+    "number,title,mergedAt,mergeCommit,headRefOid,headRefName,url,mergedBy"
+)
 
 
 def fetch_merged_prs(
@@ -308,6 +316,138 @@ def format_json_report(report: dict) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+# -- Backfill emission (WR-3) ------------------------------------------------
+
+# The prismatic import below is lazy so watch mode stays stdlib-only; it only
+# runs when --emit-missing is passed.
+
+WR3_NON_CLAIMS = [
+    (
+        "backfilled post-merge by WR-3 receipt backfill; "
+        "merge did not go through merge_executor"
+    ),
+    "no Prismatic verification receipts exist for this merge",
+]
+
+WR3_POLICY_VERSION = "wr-3"
+WR3_CHANGE_CLASS = "github-ui-backfill"
+WR3_AUTHORIZATION_ID = "github-ui-manual-merge"
+
+
+def _git(git_dir, *args):
+    """Run git in git_dir; return stripped stdout, or None on any failure."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", git_dir, *args],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def resolve_backfill_fields(pr, *, git_dir):
+    """Derive receipt fields for one merged PR from gh data + local git.
+
+    Returns None when the merge commit is absent from local git (base_sha
+    cannot be established from git).
+    """
+    merge_sha = (pr.get("mergeCommit") or {}).get("oid") or ""
+    if not merge_sha:
+        return None
+    if _git(git_dir, "cat-file", "-t", merge_sha) != "commit":
+        return None
+    base_sha = _git(git_dir, "rev-parse", merge_sha + "^1") or ""
+    parents = (_git(git_dir, "log", "--format=%P", "-n", "1", merge_sha) or "").split()
+    if len(parents) >= 2:
+        candidate_sha = _git(git_dir, "rev-parse", merge_sha + "^2") or ""
+    else:
+        # squash merge: single parent; the PR head is the candidate
+        candidate_sha = pr.get("headRefOid") or ""
+    candidate_tree = ""
+    if candidate_sha:
+        candidate_tree = _git(git_dir, "rev-parse", candidate_sha + "^{tree}") or ""
+    merged_by = pr.get("mergedBy") or {}
+    actor = merged_by.get("login") or "unknown"
+    return {
+        "number": pr.get("number"),
+        "title": pr.get("title") or "",
+        "merged_at": pr.get("mergedAt") or "",
+        "merge_sha": merge_sha,
+        "base_sha": base_sha,
+        "candidate_sha": candidate_sha,
+        "candidate_tree": candidate_tree,
+        "actor": actor,
+    }
+
+
+def emit_missing_receipts(missing, *, repo, log_path, git_dir):
+    """Build, sign, and persist a receipt for each missing merged PR.
+
+    Idempotent on merge_sha: skips when a receipt already exists. Returns a
+    summary dict {"emitted": [...], "skipped_duplicate": [...],
+    "failed": [...]}. Never raises -- per-PR failures are collected.
+    """
+    try:
+        from prismatic.verification.merge_receipt import (
+            build_merge_receipt,
+            find_merge_receipts,
+            persist_merge_receipt,
+            sign_merge_receipt,
+        )
+    except ImportError as exc:
+        raise WatcherError(
+            "--emit-missing requires the prismatic package "
+            f"(prismatic.verification.merge_receipt): {exc}"
+        ) from exc
+
+    summary = {"emitted": [], "skipped_duplicate": [], "failed": []}
+    for pr in missing:
+        number = pr.get("number")
+        try:
+            fields = resolve_backfill_fields(pr, git_dir=git_dir)
+            if fields is None:
+                summary["failed"].append(
+                    {"number": number, "reason": "merge commit not in local git"}
+                )
+                continue
+            merge_sha = fields["merge_sha"]
+            if find_merge_receipts(merge_sha=merge_sha, log_path=log_path):
+                summary["skipped_duplicate"].append(number)
+                continue
+            receipt = build_merge_receipt(
+                repository=repo,
+                candidate_sha=fields["candidate_sha"],
+                candidate_tree=fields["candidate_tree"],
+                base_sha=fields["base_sha"],
+                merge_sha=merge_sha,
+                actor=fields["actor"],
+                authorization_id=WR3_AUTHORIZATION_ID,
+                job_id=f"github-backfill:{merge_sha[:12]}",
+                task_id=(f"PR-{number}") if number else "",
+                policy_version=WR3_POLICY_VERSION,
+                change_class=WR3_CHANGE_CLASS,
+            )
+            receipt.setdefault("explicit_non_claims", []).extend(WR3_NON_CLAIMS)
+            sign_merge_receipt(receipt)
+            receipt_id = persist_merge_receipt(receipt, log_path=log_path)
+            if receipt_id is None:
+                summary["failed"].append(
+                    {"number": number, "reason": "persist failed"}
+                )
+                continue
+            summary["emitted"].append(
+                {"number": number, "receipt_id": receipt_id,
+                 "merge_sha": merge_sha}
+            )
+        except Exception as exc:  # noqa: BLE001 -- never break the sweep on one PR
+            summary["failed"].append({"number": number, "reason": str(exc)})
+    return summary
+
+
+
 # ── CLI ───────────────────────────────────────────────────────────────
 
 
@@ -327,7 +467,39 @@ def build_parser() -> argparse.ArgumentParser:
                         help="machine-readable JSON report on stdout")
     parser.add_argument("--gh", default="gh",
                         help="gh binary to invoke (default: gh)")
+    parser.add_argument("--emit-missing", action="store_true",
+                        help="WR-3: build, sign, and persist merge receipts "
+                             "for merged PRs lacking one (requires the "
+                             "prismatic package and signing key; idempotent)")
+    parser.add_argument("--git-dir", default=None,
+                        help="git working tree used to resolve merge parents "
+                             "for --emit-missing (default: current directory)")
     return parser
+
+
+def _coverage_report(prs, repo, log_path):
+    """Assemble the coverage report dict (shared by watch and emit flows)."""
+    by_merge_sha, by_candidate_sha, stats = load_receipt_index(log_path)
+    report = check_coverage(prs, by_merge_sha, by_candidate_sha)
+    report["repo"] = repo
+    report["log_path"] = str(log_path)
+    report["log_exists"] = stats["log_exists"]
+    report["receipt_stats"] = stats
+    return report
+
+
+def format_emit_summary(summary, log_path):
+    lines = [
+        "",
+        "BACKFILL (--emit-missing):",
+        f"  emitted: {len(summary['emitted'])}",
+        f"  skipped_duplicate: {len(summary['skipped_duplicate'])}",
+        f"  failed: {len(summary['failed'])}",
+        f"  receipt log: {log_path}",
+    ]
+    for f in summary["failed"]:
+        lines.append(f"  FAILED #{f['number']}: {f['reason']}")
+    return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -335,12 +507,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         prs = fetch_merged_prs(gh_bin=args.gh, repo=args.repo, limit=args.limit)
         log_path = resolve_receipt_log_path(args.receipts)
-        by_merge_sha, by_candidate_sha, stats = load_receipt_index(log_path)
-        report = check_coverage(prs, by_merge_sha, by_candidate_sha)
-        report["repo"] = args.repo
-        report["log_path"] = str(log_path)
-        report["log_exists"] = stats["log_exists"]
-        report["receipt_stats"] = stats
+        report = _coverage_report(prs, args.repo, log_path)
+        emit_summary = None
+        if args.emit_missing and report["missing"]:
+            emit_summary = emit_missing_receipts(
+                report["missing"],
+                repo=args.repo,
+                log_path=log_path,
+                git_dir=args.git_dir or os.getcwd(),
+            )
+            report = _coverage_report(prs, args.repo, log_path)
+            report["emit_summary"] = emit_summary
     except WatcherError as exc:
         print(f"receipt_coverage_watch: error: {exc}", file=sys.stderr)
         return EXIT_TOOL_ERROR
@@ -350,10 +527,12 @@ def main(argv: list[str] | None = None) -> int:
         print(
             format_human_report(
                 report, repo=args.repo,
-                log_path=log_path, log_exists=stats["log_exists"],
+                log_path=log_path, log_exists=report["log_exists"],
             ),
             end="",
         )
+        if emit_summary is not None:
+            print(format_emit_summary(emit_summary, log_path), end="")
     return EXIT_OK if not report["missing"] else EXIT_COVERAGE_GAP
 
 

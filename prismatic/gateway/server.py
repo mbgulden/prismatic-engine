@@ -190,6 +190,7 @@ from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import (
     UnixSocketListener,
     create_event_ingest_route,
+    cron_event_ws_forwarder,
     deploy_event_ws_forwarder,
 )
 from prismatic.gateway.workspace_tree import (
@@ -209,6 +210,7 @@ from prismatic.gateway.verification_daemon import (
     start_verification_daemon,
     stop_verification_daemon,
 )
+from prismatic.gateway.webhook_receipt_emitter import handle_github_webhook_event
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     get_linear_rate_limit_snapshot,
@@ -421,6 +423,17 @@ async def lifespan(app: FastAPI):
     # this forwards deploy.* on to the /ws subscribers so the portal
     # updates live instead of polling the alert log.
     await get_event_bus().subscribe(deploy_event_ws_forwarder(broadcast_ws_json))
+
+    # WR-2: signed merge receipts for GitHub-UI merges. The /api/gateway/github
+    # route HMAC-verifies deliveries and publishes them to the bus; this
+    # subscriber builds/signs/persists a merge receipt for default-branch
+    # pushes (idempotent on merge SHA), closing the receipt gap for merges
+    # that bypass merge_executor.
+    await get_event_bus().subscribe(handle_github_webhook_event)
+
+    # Cron overhaul WI-4: forward cron.mutated / cron.run_recorded to the
+    # dashboard's /ws clients so the crons tab goes live.
+    await get_event_bus().subscribe(cron_event_ws_forwarder(broadcast_ws_json))
 
     # Start Gateway HTTP Unix socket proxy
     port = int(os.environ.get("PRISMATIC_PORT", "9000"))

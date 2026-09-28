@@ -272,6 +272,12 @@ async def required_role(request: Request) -> str | None:
     if (
         request.method.upper() in _READ_ONLY_METHODS
         or _is_webhook_boundary(path)
+        # WR-2: vendor webhooks authenticate via HMAC (fail-closed in the
+        # route handler), not via control credentials — GitHub cannot
+        # present a Bearer <redacted> Exempting the route here leaves the HMAC
+        # check as the auth boundary; without this, every GitHub delivery
+        # 401s in the middleware before HMAC is ever evaluated.
+        or path == "/api/gateway/github"
         or path.startswith("/api/skills")
         or path.startswith("/api/gateway/skills")
         or path.startswith("/api/signals")
