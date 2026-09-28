@@ -556,7 +556,7 @@ def git(repo: Path, cmd: list[str]) -> str:
         res = subprocess.run(
             ["git", "-C", str(repo), *cmd], capture_output=True, text=True, check=False
         )
-        output = (res.stdout or res.stderr or "").strip()
+        output = (res.stdout or "").strip()
         if res.returncode and "not a git repository" in output.lower():
             return ""
         return output if res.returncode == 0 else ""
@@ -663,13 +663,17 @@ def extract_cron_signals(path: Path) -> list[dict[str, Any]]:
 
 
 def _parse_log_timestamp(line: str) -> dt.datetime | None:
-    match = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})", line)
+    match = re.match(
+        r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)",
+        line,
+    )
     if not match:
         return None
     try:
-        return dt.datetime.fromisoformat(" ".join(match.groups())).replace(
-            tzinfo=dt.timezone.utc
-        )
+        seen = dt.datetime.fromisoformat(match.group(1))
+        if seen.tzinfo is None:
+            return seen.replace(tzinfo=dt.timezone.utc)
+        return seen.astimezone(dt.timezone.utc)
     except ValueError:
         return None
 
