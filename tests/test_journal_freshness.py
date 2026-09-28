@@ -245,3 +245,37 @@ def test_read_recent_text_returns_empty_for_non_positive_limit(
 
     assert read_recent_text(log, limit=0) == ""
     assert read_recent_text(log, limit=-5) == ""
+
+
+def test_extract_log_signals_normalizes_z_and_numeric_offsets(
+    monkeypatch, tmp_path: Path
+) -> None:
+    now = datetime(2026, 7, 23, 6, 20, tzinfo=timezone.utc)
+    _freeze_now(monkeypatch, now)
+    log = tmp_path / "offsets.log"
+    log.write_text(
+        "2026-07-23T06:20:00Z ERROR z\n"
+        "2026-07-23T06:20:00.123456Z ERROR z fractional\n"
+        "2026-07-23T08:20:00+02:00 ERROR positive\n"
+        "2026-07-23T01:20:00-05:00 ERROR negative\n"
+    )
+
+    signals = extract_log_signals(log)
+
+    assert signals[0]["count"] == 4
+
+
+def test_git_uses_stdout_only_never_stderr(monkeypatch, tmp_path: Path) -> None:
+    """git() must not journal Git stderr: a successful command with empty
+    stdout returns "", even when stderr is non-empty."""
+    from prismatic import journal
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = ""
+        stderr = "warning: some git warning\n"
+
+    monkeypatch.setattr(
+        journal.subprocess, "run", lambda *args, **kwargs: FakeCompleted()
+    )
+    assert journal.git(tmp_path, ["status", "--short"]) == ""
