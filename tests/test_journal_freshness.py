@@ -235,3 +235,13 @@ def test_read_recent_text_seeded_byte_tail_oracle(tmp_path: Path) -> None:
         assert actual == expected
         assert len(actual) <= max(limit, 0)
         assert not actual or actual.endswith("\n")
+
+
+def test_read_recent_text_returns_empty_for_non_positive_limit(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "tail.log"
+    log.write_text("old\nnew\n")
+
+    assert read_recent_text(log, limit=0) == ""
+    assert read_recent_text(log, limit=-5) == ""
