@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-import plugins.pwp.capabilities.publish_kpi_tracker as kpi_mod  # noqa: E402
-from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
+import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker as kpi_mod  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     aggregate,
     list_sites,
     load_site,
@@ -36,12 +36,10 @@ EXTENDED_SITE = FIXTURE_DIR / "hd-engine-fixture.kpi.json"
 
 def _patch_sites(monkeypatch):
     """Point SITES_DIR at the local fixtures for the test."""
-    import plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
-    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as raw_inner
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker as inner
 
     monkeypatch.setattr(kpi_mod, "SITES_DIR", FIXTURE_DIR, raising=False)
     monkeypatch.setattr(inner, "SITES_DIR", FIXTURE_DIR, raising=False)
-    monkeypatch.setattr(raw_inner, "SITES_DIR", FIXTURE_DIR, raising=False)
 
 
 def test_list_sites_discovers_kpi_files(monkeypatch):
@@ -212,7 +210,7 @@ def test_format_value_percent_multiplies_by_100():
     0.0638 (fraction) → 6.38% (display). This is the contract used by the
     canonical active-oahu.kpi.json formula `booking_complete / booking_click`.
     """
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
     assert _format_value(0.0638, "percent") == "6.38%"
     assert _format_value(0.0, "percent") == "0.00%"
     assert _format_value(1.0, "percent") == "100.00%"
@@ -225,7 +223,7 @@ def test_format_value_percent_is_audit_safe():
     back to 6.38, which divided by 100 gives the original 0.0638.
     A wrong implementation would either fail this round-trip or
     produce a number that's off by 100x."""
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
     raw = 0.0638
     rendered = _format_value(raw, "percent")
     # Rendered must contain "%", must NOT contain "0.06%" (the old bug).
@@ -238,14 +236,14 @@ def test_format_value_percent_is_audit_safe():
 
 
 def test_format_value_handles_missing():
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
     assert _format_value(None) == "—"
     assert _format_value(None, "percent") == "—"
     assert _format_value(None, "currency") == "—"
 
 
 def test_format_value_renders_deterministic_outputs():
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
     # Same input -> same output (deterministic).
     a = _format_value(1234, "number")
     b = _format_value(1234, "number")
@@ -263,7 +261,7 @@ def test_format_value_renders_deterministic_outputs():
 
 
 def test_format_value_falls_back_to_str_on_typeerror():
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
     # Strings pass through.
     assert _format_value("abc") == "abc"
     # Garbage that can't be coerced falls back to str(value).

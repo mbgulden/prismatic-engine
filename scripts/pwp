@@ -3,33 +3,18 @@
 from __future__ import annotations
 
 import sys
-import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SHIPPED_PLUGINS = REPO_ROOT / "prismatic" / "shipped_plugins"
 
-for path in (str(SHIPPED_PLUGINS), str(REPO_ROOT)):
-    if path in sys.path:
-        sys.path.remove(path)
-
+if str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(1, str(SHIPPED_PLUGINS))
 
-plugins_pkg = types.ModuleType("plugins")
-plugins_pkg.__path__ = [str(SHIPPED_PLUGINS)]
-sys.modules["plugins"] = plugins_pkg
-
-try:
-    import prismatic.shipped_plugins.pwp as pwp_mod
-    plugins_pkg.pwp = pwp_mod
-    sys.modules["plugins.pwp"] = pwp_mod
-except ImportError:
-    pass
-
-from plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
-from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
-from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
+from prismatic.shipped_plugins.pwp.site_crawler import main as site_crawl_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -40,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
         return theme_validate_main(args[2:])
     if len(args) >= 2 and args[0] == "theme" and args[1] in {"diff", "check-compat"}:
         return theme_diff_main(args[1:])
+    if len(args) >= 2 and args[0] == "site" and args[1] == "crawl":
+        return site_crawl_main(args[2:])
     if len(args) >= 1 and args[0] == "integration":
         from prismatic.pwp_integration import (
             connect_pwp,
@@ -77,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         "pwp theme validate <path> [--json] | "
         "pwp theme diff --from <path> --to <path> [--engine-version <semver>] [--json] | "
         "pwp theme check-compat <path> --engine-version <semver> [--json] | "
+        "pwp site crawl <dist-dir> [--site-url <url>] [--json] | "
         "pwp integration status|connect|disconnect|refresh | "
         "pwp lifecycle demo [--keep-connected]",
         file=sys.stderr,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from plugins.pwp.capabilities.publish_kpi_tracker.pending_changes import (
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.pending_changes import (
     PendingChange,
     render_pending_changes_html,
     scan_provision_state,

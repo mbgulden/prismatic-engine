@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -116,12 +115,7 @@ def trigger_migrate(slug: str, publish_root: Optional[Path] = None) -> Dict[str,
         tmp_registry = Path(f.name)
 
     try:
-        # Ensure the plugins path is importable.
-        plugins_root = Path(__file__).resolve().parents[5] / "plugins"
-        if str(plugins_root) not in sys.path:
-            sys.path.insert(0, str(plugins_root))
-
-        from plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate
 
         manifest = operator_migrate.run(
             dry_run=False,

@@ -22,11 +22,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
-from plugins.pwp.capabilities.provision_site.steps.github import (
+from prismatic.shipped_plugins.pwp.capabilities.provision_site.steps.github import (
     _domain_to_slug,
     step_github_checkout,
 )
-from plugins.pwp.capabilities.provision_site import auth_loader
+from prismatic.shipped_plugins.pwp.capabilities.provision_site import auth_loader
 
 
 def _mock_user_response(login: str = "mbgulden"):
@@ -132,7 +132,7 @@ def test_step_soft_fails_without_credentials(monkeypatch, tmp_path: Path) -> Non
     for k in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):
         monkeypatch.delenv(k, raising=False)
     with patch(
-        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        "prismatic.shipped_plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=auth_loader.AuthResult(
             value=None,
             source="none",
@@ -159,7 +159,7 @@ def test_step_soft_fails_without_credentials(monkeypatch, tmp_path: Path) -> Non
 def test_step_happy_path_uses_login_plus_slug(monkeypatch, tmp_path: Path) -> None:
     """When no kpi or prior_outputs repo is set, fall back to login/slug."""
     # No env vars — but the test patches from_env to bypass auth_loader
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
         GitHubRepo,
         GitHubCommit,
@@ -215,7 +215,7 @@ def test_step_happy_path_uses_login_plus_slug(monkeypatch, tmp_path: Path) -> No
 
 def test_step_persists_to_kpi_collections(monkeypatch, tmp_path: Path) -> None:
     """After a successful step, kpi-collections.json must have the github block."""
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
         GitHubRepo,
         GitHubCommit,
@@ -286,7 +286,7 @@ def test_step_persists_to_kpi_collections(monkeypatch, tmp_path: Path) -> None:
 
 def test_resolution_rule1_explicit_prior_outputs(monkeypatch, tmp_path: Path) -> None:
     """prior_outputs['github_repo_full_name'] overrides everything."""
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
         GitHubRepo,
     )
@@ -331,7 +331,7 @@ def test_resolution_rule1_explicit_prior_outputs(monkeypatch, tmp_path: Path) ->
 
 def test_resolution_rule2_kpi_collections_repo(monkeypatch, tmp_path: Path) -> None:
     """Rule 2: kpi-collections.json external_sources.github.repo wins over convention."""
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
         GitHubRepo,
     )
@@ -388,7 +388,7 @@ def test_resolution_rule2_kpi_collections_repo(monkeypatch, tmp_path: Path) -> N
 
 def test_step_handles_repo_404(monkeypatch, tmp_path: Path) -> None:
     """When GitHubClient.get_repo() raises 404, soft-fail with reason=repo_not_found."""
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
         GitHubError,
     )
@@ -415,7 +415,7 @@ def test_step_handles_repo_404(monkeypatch, tmp_path: Path) -> None:
 
 def test_step_handles_auth_failure(monkeypatch, tmp_path: Path) -> None:
     """When GitHubClient.validate() raises 401, soft-fail with reason=auth_failed."""
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
         GitHubError,
     )
@@ -440,7 +440,7 @@ def test_step_handles_auth_failure(monkeypatch, tmp_path: Path) -> None:
 
 def test_step_handles_no_repo_resolution(monkeypatch, tmp_path: Path) -> None:
     """When no rule produces a full_name AND no GitHub login, soft-fail."""
-    from plugins.pwp.capabilities.provision_site.github_client import (
+    from prismatic.shipped_plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
     )
 
