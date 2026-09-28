@@ -8,10 +8,11 @@ receipt. The known gap: merges performed in the GitHub UI never pass through
 This script is the watcher that notices. It is strictly read-only:
 
 1. lists recently merged PRs via ``gh pr list --state merged``,
-2. reads the merge-receipts JSONL log written by
-   ``prismatic.verification.merge_receipt`` (``$PRISMATIC_MERGE_RECEIPTS``,
-   ``$PRISMATIC_STATE_DIR/merge-receipts.jsonl``, or
-   ``~/.prismatic/merge-receipts.jsonl``),
+2. reads the merge-receipts JSONL logs written by
+   ``prismatic.verification.merge_receipt`` -- the union of the env-resolved
+   path and the historical ``~/.prismatic/merge-receipts.jsonl`` fallback
+   (the store was once split across both; a single-path reader
+   false-alarms). ``--receipts PATH`` still reads one explicit file.
 3. reports every merged PR with no matching receipt.
 
 A PR is *covered* when a receipt's ``merge_sha`` equals the PR's merge-commit
@@ -81,54 +82,97 @@ def resolve_receipt_log_path(explicit: str | None = None) -> Path:
     return Path.home() / ".prismatic" / RECEIPTS_FILENAME
 
 
-def load_receipt_index(log_path: Path | str):
+def resolve_receipt_log_paths(explicit: str | None = None) -> list[Path]:
+    """Resolve every known merge-receipt log location (union reader).
+
+    The receipt store was split across two files: the WR-2 webhook emitter
+    honors ``$PRISMATIC_STATE_DIR`` (production: ``~/.prismatic/db``) while
+    the WR-3 backfill ran without it and wrote to the ``~/.prismatic``
+    fallback. A single-path reader false-alarms on one side or the other,
+    so with no explicit ``--receipts`` we read BOTH locations and merge
+    them (deduped on receipt SHAs). An explicit path (``--receipts`` or
+    ``$PRISMATIC_MERGE_RECEIPTS``) keeps single-file semantics for tests
+    and one-off inspection.
+    """
+    if explicit:
+        return [Path(explicit)]
+    # $PRISMATIC_MERGE_RECEIPTS pins one file (tests); treat it as explicit.
+    override = os.environ.get("PRISMATIC_MERGE_RECEIPTS")
+    if override:
+        return [Path(override)]
+    paths = [resolve_receipt_log_path(None)]
+    fallback = Path.home() / ".prismatic" / RECEIPTS_FILENAME
+    if fallback not in paths:
+        paths.append(fallback)
+    return paths
+
+
+def load_receipt_index(log_path):
     """Index merge receipts by merge_sha and candidate_sha.
 
-    Returns ``(by_merge_sha, by_candidate_sha, stats)``. Only rows carrying
+    Accepts one log path or a list of paths (union read -- see
+    :func:`resolve_receipt_log_paths`). Returns
+    ``(by_merge_sha, by_candidate_sha, stats)``. Across files the first
+    file wins on duplicate ``merge_sha``/``candidate_sha``; duplicates are
+    counted in ``stats["duplicate_receipts_skipped"]``. Only rows carrying
     the merge-receipt marker count; malformed lines and foreign rows are
-    counted in ``stats`` and skipped. A missing log is not an error — it
+    counted in ``stats`` and skipped. A missing log is not an error -- it
     simply means zero receipts on record (flagged as such in the report).
     """
-    path = Path(log_path)
+    paths = [log_path] if isinstance(log_path, (str, Path)) else list(log_path)
+    by_merge_sha = {}
+    by_candidate_sha = {}
     stats = {
-        "log_path": str(path),
-        "log_exists": path.exists(),
+        "log_path": str(paths[0]) if paths else "",
+        "log_paths": [str(p) for p in paths],
+        "log_exists": any(Path(p).exists() for p in paths),
         "lines": 0,
         "receipts": 0,
         "malformed_lines": 0,
         "skipped_non_receipt_lines": 0,
+        "duplicate_receipts_skipped": 0,
+        "per_path": [],
     }
-    by_merge_sha: dict[str, dict] = {}
-    by_candidate_sha: dict[str, dict] = {}
-    if not path.exists():
-        return by_merge_sha, by_candidate_sha, stats
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise WatcherError(f"cannot read receipt log {path}: {exc}") from exc
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        stats["lines"] += 1
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            stats["malformed_lines"] += 1
-            continue
-        if not isinstance(row, dict) or row.get("marker") != MERGE_RECEIPT_MARKER:
-            stats["skipped_non_receipt_lines"] += 1
-            continue
-        stats["receipts"] += 1
-        merge_sha = row.get("merge_sha") or ""
-        candidate_sha = row.get("candidate_sha") or ""
-        if merge_sha and merge_sha not in by_merge_sha:
-            by_merge_sha[merge_sha] = row
-        if candidate_sha and candidate_sha not in by_candidate_sha:
-            by_candidate_sha[candidate_sha] = row
+    for raw in paths:
+        path = Path(raw)
+        per = {"path": str(path), "exists": path.exists(),
+               "lines": 0, "receipts": 0}
+        if path.exists():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise WatcherError(
+                    "cannot read receipt log %s: %s" % (path, exc)) from exc
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                stats["lines"] += 1
+                per["lines"] += 1
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    stats["malformed_lines"] += 1
+                    continue
+                if not isinstance(row, dict) or row.get("marker") != MERGE_RECEIPT_MARKER:
+                    stats["skipped_non_receipt_lines"] += 1
+                    continue
+                stats["receipts"] += 1
+                per["receipts"] += 1
+                merge_sha = row.get("merge_sha") or ""
+                candidate_sha = row.get("candidate_sha") or ""
+                if merge_sha:
+                    if merge_sha not in by_merge_sha:
+                        by_merge_sha[merge_sha] = row
+                    else:
+                        stats["duplicate_receipts_skipped"] += 1
+                if candidate_sha:
+                    if candidate_sha not in by_candidate_sha:
+                        by_candidate_sha[candidate_sha] = row
+                    else:
+                        stats["duplicate_receipts_skipped"] += 1
+        stats["per_path"].append(per)
     return by_merge_sha, by_candidate_sha, stats
-
-
 # ── Merged PRs ────────────────────────────────────────────────────────
 
 
@@ -253,7 +297,7 @@ def _short(sha: str, n: int = 8) -> str:
 
 
 def format_human_report(report: dict, *, repo: str, log_path: Path,
-                        log_exists: bool) -> str:
+                        log_exists: bool, log_paths: list | None = None) -> str:
     lines = [
         f"Merge-receipt coverage for {repo}: "
         f"{report['covered']}/{report['total']} "
@@ -262,6 +306,11 @@ def format_human_report(report: dict, *, repo: str, log_path: Path,
         + ("" if log_exists else " (missing — no receipts on record)"),
         "",
     ]
+    union = log_paths if log_paths and len(log_paths) > 1 else None
+    if union:
+        lines[1:3] = [f"Receipt logs (union of {len(union)}):"] + \
+            [f"  {p}" for p in union] + \
+            ([] if log_exists else ["  (all missing — no receipts on record)"])
     if report["total"] == 0:
         lines.append("No merged PRs in the window — nothing to check.")
         return "\n".join(lines) + "\n"
@@ -313,6 +362,7 @@ def format_json_report(report: dict) -> str:
             for e in report.get("missing", [])
         ],
         "log_path": report.get("log_path", ""),
+        "log_paths": report.get("log_paths", []),
         "log_exists": report.get("log_exists", False),
     }
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -464,7 +514,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"recent merged PRs to check (default {DEFAULT_LIMIT})")
     parser.add_argument("--receipts", default=None,
                         help="explicit merge-receipts JSONL path "
-                             "(default: env override or ~/.prismatic/merge-receipts.jsonl)")
+                             "(default: union of env-resolved path and "
+                             "~/.prismatic/merge-receipts.jsonl)")
     parser.add_argument("--json", action="store_true",
                         help="machine-readable JSON report on stdout")
     parser.add_argument("--gh", default="gh",
@@ -479,12 +530,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _coverage_report(prs, repo, log_path):
+def _coverage_report(prs, repo, log_paths):
     """Assemble the coverage report dict (shared by watch and emit flows)."""
-    by_merge_sha, by_candidate_sha, stats = load_receipt_index(log_path)
+    paths = [log_paths] if isinstance(log_paths, (str, Path)) else list(log_paths)
+    by_merge_sha, by_candidate_sha, stats = load_receipt_index(paths)
     report = check_coverage(prs, by_merge_sha, by_candidate_sha)
     report["repo"] = repo
-    report["log_path"] = str(log_path)
+    report["log_path"] = str(paths[0]) if paths else ""
+    report["log_paths"] = [str(p) for p in paths]
     report["log_exists"] = stats["log_exists"]
     report["receipt_stats"] = stats
     return report
@@ -508,8 +561,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         prs = fetch_merged_prs(gh_bin=args.gh, repo=args.repo, limit=args.limit)
-        log_path = resolve_receipt_log_path(args.receipts)
-        report = _coverage_report(prs, args.repo, log_path)
+        log_paths = resolve_receipt_log_paths(args.receipts)
+        log_path = log_paths[0]
+        report = _coverage_report(prs, args.repo, log_paths)
         emit_summary = None
         if args.emit_missing and report["missing"]:
             emit_summary = emit_missing_receipts(
@@ -530,6 +584,7 @@ def main(argv: list[str] | None = None) -> int:
             format_human_report(
                 report, repo=args.repo,
                 log_path=log_path, log_exists=report["log_exists"],
+                log_paths=report["log_paths"],
             ),
             end="",
         )

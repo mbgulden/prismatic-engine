@@ -23,6 +23,7 @@ from scripts.receipt_coverage_watch import (
     load_receipt_index,
     main,
     resolve_receipt_log_path,
+    resolve_receipt_log_paths,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -341,3 +342,135 @@ def test_format_json_report_round_trips():
     payload = json.loads(format_json_report(report))
     assert payload["coverage_pct"] == 50.0
     assert payload["missing_pr_numbers"] == [570]
+
+
+# ── Union-reader tests (receipt-store consolidation) ──────────────────
+
+
+def test_union_reader_merges_split_stores(tmp_path):
+    """Receipts split across the env path and the fallback are all seen."""
+    a = tmp_path / "a.jsonl"
+    b = tmp_path / "b.jsonl"
+    prs = _nine_prs()
+    _write_receipts(a, [_receipt(p["mergeCommit"]["oid"], p["headRefOid"]) for p in prs[:5]])
+    _write_receipts(b, [_receipt(p["mergeCommit"]["oid"], p["headRefOid"]) for p in prs[5:]])
+    by_merge, by_candidate, stats = load_receipt_index([a, b])
+    assert len(by_merge) == 9
+    assert stats["receipts"] == 9
+    assert stats["duplicate_receipts_skipped"] == 0
+    assert [p["path"] for p in stats["per_path"]] == [str(a), str(b)]
+    report = check_coverage(prs, by_merge, by_candidate)
+    assert report["covered"] == 9 and not report["missing"]
+
+
+def test_union_reader_tolerates_missing_file(tmp_path):
+    a = tmp_path / "a.jsonl"
+    missing = tmp_path / "nope.jsonl"
+    prs = _nine_prs()[:3]
+    _write_receipts(a, [_receipt(p["mergeCommit"]["oid"]) for p in prs])
+    by_merge, _, stats = load_receipt_index([a, missing])
+    assert len(by_merge) == 3
+    assert stats["log_exists"] is True
+    assert stats["per_path"][1] == {
+        "path": str(missing), "exists": False, "lines": 0, "receipts": 0,
+    }
+
+
+def test_union_reader_all_missing_means_zero_coverage(tmp_path):
+    by_merge, by_candidate, stats = load_receipt_index(
+        [tmp_path / "x.jsonl", tmp_path / "y.jsonl"]
+    )
+    assert by_merge == {} and by_candidate == {}
+    assert stats["log_exists"] is False
+    assert stats["receipts"] == 0
+    assert stats["log_path"] == str(tmp_path / "x.jsonl")
+
+
+def test_union_reader_dedups_across_files_first_file_wins(tmp_path):
+    a = tmp_path / "a.jsonl"
+    b = tmp_path / "b.jsonl"
+    sha = "a" * 40
+    _write_receipts(a, [_receipt(sha, receipt_id="rcpt-first")])
+    _write_receipts(b, [_receipt(sha, receipt_id="rcpt-second")])
+    by_merge, _, stats = load_receipt_index([a, b])
+    assert len(by_merge) == 1
+    assert by_merge[sha]["receipt_id"] == "rcpt-first"
+    assert stats["duplicate_receipts_skipped"] >= 1
+
+
+def test_union_reader_loses_no_receipts(tmp_path):
+    """Union of N files holds every unique merge_sha (no receipt lost)."""
+    files = []
+    shas = set()
+    for i in range(3):
+        p = tmp_path / f"r{i}.jsonl"
+        recs = [_receipt("%040x" % (1000 + i * 10 + j)) for j in range(4)]
+        _write_receipts(p, recs)
+        files.append(p)
+        shas.update(r["merge_sha"] for r in recs)
+    by_merge, _, stats = load_receipt_index(files)
+    assert set(by_merge) == shas
+    assert stats["receipts"] == 12
+
+
+def test_resolve_receipt_log_paths_explicit_is_single(monkeypatch, tmp_path):
+    assert resolve_receipt_log_paths(str(tmp_path / "x.jsonl")) == [
+        tmp_path / "x.jsonl"
+    ]
+
+
+def test_resolve_receipt_log_paths_unions_env_and_fallback(monkeypatch, tmp_path):
+    monkeypatch.delenv("PRISMATIC_MERGE_RECEIPTS", raising=False)
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    paths = resolve_receipt_log_paths(None)
+    assert paths == [
+        tmp_path / "state" / "merge-receipts.jsonl",
+        tmp_path / "home" / ".prismatic" / "merge-receipts.jsonl",
+    ]
+
+
+def test_resolve_receipt_log_paths_dedupes_without_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("PRISMATIC_MERGE_RECEIPTS", raising=False)
+    monkeypatch.delenv("PRISMATIC_STATE_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    paths = resolve_receipt_log_paths(None)
+    assert paths == [tmp_path / "home" / ".prismatic" / "merge-receipts.jsonl"]
+
+
+def test_main_union_covers_split_stores(monkeypatch, tmp_path, capsys):
+    """End-to-end: receipts split across state dir + fallback => exit 0."""
+    monkeypatch.delenv("PRISMATIC_MERGE_RECEIPTS", raising=False)
+    state = tmp_path / "state"
+    home = tmp_path / "home"
+    state.mkdir()
+    (home / ".prismatic").mkdir(parents=True)
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state))
+    monkeypatch.setenv("HOME", str(home))
+    prs = _nine_prs()
+    _write_receipts(
+        state / "merge-receipts.jsonl",
+        [_receipt(p["mergeCommit"]["oid"]) for p in prs[:5]],
+    )
+    _write_receipts(
+        home / ".prismatic" / "merge-receipts.jsonl",
+        [_receipt(p["mergeCommit"]["oid"]) for p in prs[5:]],
+    )
+    import scripts.receipt_coverage_watch as mod
+
+    monkeypatch.setattr(mod, "fetch_merged_prs", lambda **kw: prs)
+    rc = main(["--repo", "mbgulden/prismatic-engine"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "9/9" in out
+    assert "union of 2" in out
+
+
+def test_main_json_includes_log_paths(monkeypatch, tmp_path, capsys):
+    prs = _nine_prs()
+    receipts = [_receipt(prs[0]["mergeCommit"]["oid"])]
+    rc = _run_main(monkeypatch, tmp_path, prs, receipts, argv_extra=("--json",))
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert "log_paths" in payload
+    assert payload["log_paths"] == [payload["log_path"]]
