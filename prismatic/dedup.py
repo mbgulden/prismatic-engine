@@ -339,17 +339,34 @@ def get_dedup(db_path: str | None = None) -> EventRouterDedup:
 # Max dispatch caps (GRO-2979 regression prevention)
 # ---------------------------------------------------------------------------
 
+def _int_env(name: str, default: int) -> int:
+    """Read an int env var; fall back to *default* with a warning on garbage.
+
+    Import-time ``int(os.environ.get(...))`` turns a typo'd env var into a
+    ValueError that kills the whole module import. Prefer a loud default.
+    Mirrors prismatic.dispatcher._int_env (kept local: dedup must not
+    import the heavy dispatcher module).
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        print(
+            f"[dedup] WARNING: {name}={raw!r} is not an integer; "
+            f"using default {default}"
+        )
+        return default
+
+
 # Hard cap on dispatches per issue — anything beyond is auto-marked stuck.
 # Defends against retry storms (GRO-2051 re-dispatched 178 times).
-MAX_DISPATCH_COUNT_PER_ISSUE = int(
-    os.environ.get("PRISMATIC_MAX_DISPATCH_PER_ISSUE", "20")
-)
+MAX_DISPATCH_COUNT_PER_ISSUE = _int_env("PRISMATIC_MAX_DISPATCH_PER_ISSUE", 20)
 
 # Window for the "stuck in <48h" rule. If dispatches >= cap within this
 # many hours AND no closure row exists, mark stuck.
-MAX_DISPATCH_WINDOW_HOURS = int(
-    os.environ.get("PRISMATIC_MAX_DISPATCH_WINDOW_HOURS", "48")
-)
+MAX_DISPATCH_WINDOW_HOURS = _int_env("PRISMATIC_MAX_DISPATCH_WINDOW_HOURS", 48)
 
 
 # ---------------------------------------------------------------------------

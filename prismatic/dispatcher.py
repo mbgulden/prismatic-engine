@@ -523,9 +523,33 @@ CODEX_PATH: str = os.environ.get("CODEX_PATH", "codex")
 
 # Polling interval (seconds)
 POLL_INTERVAL: int = int(os.environ.get("PRISMATIC_POLL_INTERVAL", "30"))
-MAX_CYCLES_BEFORE_RECOVER: int = int(
-    os.environ.get("PRISMATIC_MAX_CYCLES_BEFORE_RECOVER", "6")
+def _int_env(name: str, default: int) -> int:
+    """Read an int env var; fall back to *default* with a warning on garbage.
+
+    Import-time ``int(os.environ.get(...))`` turns a typo'd env var into a
+    ValueError that kills the whole module import. Prefer a loud default.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        print(
+            f"[dispatcher] WARNING: {name}={raw!r} is not an integer; "
+            f"using default {default}"
+        )
+        return default
+
+
+MAX_CYCLES_BEFORE_RECOVER: int = _int_env(
+    "PRISMATIC_MAX_CYCLES_BEFORE_RECOVER", 6
 )
+
+# Page size for the stalled-AGY label scan. Tracker pruning below only runs
+# when the fetch was NOT truncated (len < this), since a full page may hide
+# more stalled issues.
+_STALL_SCAN_MAX_ISSUES = 20
 
 # Nudge directory for file-based signal providers
 NUDGE_DIR: str = os.environ.get("PRISMATIC_NUDGE_DIR", "/tmp/prismatic")
@@ -3919,7 +3943,25 @@ def recover_stalled_agy(
         # Canonical Linear label is single-colon (docs/proof-loop-demo-wedge.md);
         # the old double-colon query matched nothing, so stalled AGY work was
         # never recovered.
-        issues = get_issues_with_label("agent:agy")
+        issues = get_issues_with_label(
+            "agent:agy", max_issues=_STALL_SCAN_MAX_ISSUES
+        )
+
+        # Prune tracker rows for issues no longer carrying agent:agy so a
+        # future stall episode starts with a fresh count. Skipped when the
+        # fetch was truncated (a full page may hide more stalled issues).
+        if len(issues) < _STALL_SCAN_MAX_ISSUES:
+            seen_ids = [issue["id"] for issue in issues]
+            if seen_ids:
+                placeholders = ",".join("?" * len(seen_ids))
+                cursor.execute(
+                    "DELETE FROM agy_stall_tracker "
+                    f"WHERE issue_id NOT IN ({placeholders})",
+                    seen_ids,
+                )
+            else:
+                cursor.execute("DELETE FROM agy_stall_tracker")
+            conn.commit()
 
         for issue in issues:
             issue_id = issue["id"]
@@ -3936,37 +3978,84 @@ def recover_stalled_agy(
             else:
                 cycle_count = 1
 
+            # Preserve a prior escalation: INSERT OR REPLACE would reset
+            # escalated=0 every cycle and re-trigger the full escalation.
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO agy_stall_tracker
+                INSERT INTO agy_stall_tracker
                     (issue_id, cycle_count, last_seen, escalated)
                 VALUES (?, ?, ?, 0)
+                ON CONFLICT(issue_id) DO UPDATE SET
+                    cycle_count = excluded.cycle_count,
+                    last_seen = excluded.last_seen
                 """,
                 (issue_id, cycle_count, datetime.now(timezone.utc).isoformat()),
             )
             conn.commit()
+            cursor.execute(
+                "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
+                (issue_id,),
+            )
+            already_escalated = bool(cursor.fetchone()[0])
 
             if cycle_count >= max_retries:
-                transition = ("execute", "review")
-                if not mode_switch.request_approval(
-                    *transition,
-                    is_escalation=True,
-                    reason=f"AGY stalled after {max_retries} cycles",
-                ):
-                    add_comment(
-                        issue_id,
-                        f"Transition paused: Escalation {transition[0]} -> {transition[1]} after AGY stalled. Comment /approve to continue.",
+                identifier = issue.get("identifier", issue_id)
+                if already_escalated:
+                    # A previous escalation attempt did not clear the
+                    # agent:agy label (its label transition likely failed).
+                    # Complete it WITHOUT repeating the kill-all: retry only
+                    # the transition, then the notify/launch steps.
+                    try:
+                        transition_label(
+                            issue_id,
+                            remove_label="agent:agy",
+                            add_label=f"agent:{escalate_to}",
+                        )
+                    except Exception as exc:  # noqa: BLE001 - best-effort recovery
+                        print(
+                            f"[dispatcher] stuck-AGY label re-transition "
+                            f"failed for {identifier}: {exc}"
+                        )
+                        continue
+                    print(
+                        f"[dispatcher] stuck-AGY label transition recovered "
+                        f"for {identifier}; completing escalation"
                     )
-                    continue
-                # Escalate — kill AGY and transition to escalate_to agent
-                cleanup_stale_agy(max_age_minutes=0)  # Kill all AGY processes
-
-                # Transition label
-                transition_label(
-                    issue_id,
-                    remove_label="agent:agy",
-                    add_label=f"agent:{escalate_to}",
-                )
+                else:
+                    transition = ("execute", "review")
+                    if not mode_switch.request_approval(
+                        *transition,
+                        is_escalation=True,
+                        reason=f"AGY stalled after {max_retries} cycles",
+                    ):
+                        add_comment(
+                            issue_id,
+                            f"Transition paused: Escalation {transition[0]} -> {transition[1]} after AGY stalled. Comment /approve to continue.",
+                        )
+                        continue
+                    # Record the attempt BEFORE side effects: if the
+                    # transition fails below, later cycles complete the
+                    # escalation instead of re-killing every AGY process.
+                    cursor.execute(
+                        "UPDATE agy_stall_tracker SET escalated = 1 "
+                        "WHERE issue_id = ?",
+                        (issue_id,),
+                    )
+                    conn.commit()
+                    # Escalate — kill AGY and transition to escalate_to agent
+                    cleanup_stale_agy(max_age_minutes=0)  # Kill all AGY procs
+                    try:
+                        transition_label(
+                            issue_id,
+                            remove_label="agent:agy",
+                            add_label=f"agent:{escalate_to}",
+                        )
+                    except Exception as exc:  # noqa: BLE001 - best-effort recovery
+                        print(
+                            f"[dispatcher] escalation label transition "
+                            f"failed for {identifier}: {exc}"
+                        )
+                        continue
 
                 # Post escalation comment
                 add_comment(
@@ -3974,13 +4063,6 @@ def recover_stalled_agy(
                     f"⚠️ **AGY stalled** after {max_retries} cycles. "
                     f"Escalating to **{escalate_to}**.",
                 )
-
-                # Mark as escalated
-                cursor.execute(
-                    "UPDATE agy_stall_tracker SET escalated = 1 WHERE issue_id = ?",
-                    (issue_id,),
-                )
-                conn.commit()
 
                 # Signal the escalation target
                 launcher = AGENT_LAUNCHERS.get(escalate_to)
@@ -3993,7 +4075,7 @@ def recover_stalled_agy(
 
                 print(
                     f"[dispatcher] Escalated stalled AGY issue "
-                    f"{issue.get('identifier', issue_id)} to {escalate_to}"
+                    f"{identifier} to {escalate_to}"
                 )
 
             else:
@@ -4106,11 +4188,11 @@ class EventRouterDedup:
     # Same env vars and defaults as prismatic.dedup so the dispatcher
     # enforces the same policy as the canonical dedup layer. Read at
     # import time, matching dedup.py.
-    MAX_DISPATCH_COUNT_PER_ISSUE = int(
-        os.environ.get("PRISMATIC_MAX_DISPATCH_PER_ISSUE", "20")
+    MAX_DISPATCH_COUNT_PER_ISSUE = _int_env(
+        "PRISMATIC_MAX_DISPATCH_PER_ISSUE", 20
     )
-    MAX_DISPATCH_WINDOW_HOURS = int(
-        os.environ.get("PRISMATIC_MAX_DISPATCH_WINDOW_HOURS", "48")
+    MAX_DISPATCH_WINDOW_HOURS = _int_env(
+        "PRISMATIC_MAX_DISPATCH_WINDOW_HOURS", 48
     )
 
     def __init__(self, db_path: str | None = None):
@@ -4119,7 +4201,10 @@ class EventRouterDedup:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self._db_path)
+        # check_same_thread=False: all DB access is serialized by
+        # self._lock (every method takes it); without this, any
+        # cross-thread use raises sqlite3.ProgrammingError.
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -4173,71 +4258,127 @@ class EventRouterDedup:
 
     def is_processed(self, issue_id: str, agent_label: str, cycle_id: str) -> bool:
         """Check if this issue+agent+cycle was already processed."""
-        cursor = self._conn.execute(
-            "SELECT 1 FROM dedup_log WHERE issue_id=? AND agent_label=? AND cycle_id=?",
-            (issue_id, agent_label, cycle_id),
-        )
-        return cursor.fetchone() is not None
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT 1 FROM dedup_log WHERE issue_id=? AND agent_label=? AND cycle_id=?",
+                (issue_id, agent_label, cycle_id),
+            )
+            return cursor.fetchone() is not None
 
     def mark_processed(self, issue_id: str, agent_label: str, cycle_id: str) -> None:
         """Record that this issue+agent+cycle was processed."""
-        self._conn.execute(
-            """
-            INSERT OR IGNORE INTO dedup_log (issue_id, agent_label, cycle_id, processed_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (issue_id, agent_label, cycle_id, datetime.now(timezone.utc).isoformat()),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO dedup_log (issue_id, agent_label, cycle_id, processed_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (issue_id, agent_label, cycle_id, datetime.now(timezone.utc).isoformat()),
+            )
+            self._conn.commit()
 
     def get_cycle_count(self, issue_id: str, agent_label: str) -> int:
         """Count how many cycles this issue has been sitting on a label."""
-        cursor = self._conn.execute(
-            "SELECT COUNT(*) FROM dedup_log WHERE issue_id=? AND agent_label=?",
-            (issue_id, agent_label),
-        )
-        return cursor.fetchone()[0]
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT COUNT(*) FROM dedup_log WHERE issue_id=? AND agent_label=?",
+                (issue_id, agent_label),
+            )
+            return cursor.fetchone()[0]
 
     def snapshot_labels(
         self, issue_id: str, label_names: list[str], cycle_id: str
     ) -> None:
         """Record the current label set for an issue in this cycle."""
-        now = datetime.now(timezone.utc).isoformat()
-        self._conn.executemany(
-            """
-            INSERT OR IGNORE INTO label_snapshots
-            (issue_id, label_name, cycle_id, seen_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            [(issue_id, name, cycle_id, now) for name in label_names],
-        )
-        self._conn.commit()
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            self._conn.executemany(
+                """
+                INSERT OR IGNORE INTO label_snapshots
+                (issue_id, label_name, cycle_id, seen_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [(issue_id, name, cycle_id, now) for name in label_names],
+            )
+            self._conn.commit()
 
     def had_label(self, issue_id: str, label_name: str) -> bool:
         """Check if an issue ever had a specific label in any cycle."""
-        cursor = self._conn.execute(
-            "SELECT 1 FROM label_snapshots WHERE issue_id=? AND label_name=?",
-            (issue_id, label_name),
-        )
-        return cursor.fetchone() is not None
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT 1 FROM label_snapshots WHERE issue_id=? AND label_name=?",
+                (issue_id, label_name),
+            )
+            return cursor.fetchone() is not None
 
     def had_labels(self, issue_id: str, label_names: list[str]) -> bool:
         """Check if an issue ever had ALL of the specified labels."""
-        placeholders = ",".join("?" * len(label_names))
-        params = [issue_id] + label_names
-        cursor = self._conn.execute(
-            f"SELECT COUNT(DISTINCT label_name) FROM label_snapshots "
-            f"WHERE issue_id=? AND label_name IN ({placeholders})",
-            params,
-        )
-        count = cursor.fetchone()[0]
-        return count == len(label_names)
+        with self._lock:
+            placeholders = ",".join("?" * len(label_names))
+            params = [issue_id] + label_names
+            cursor = self._conn.execute(
+                f"SELECT COUNT(DISTINCT label_name) FROM label_snapshots "
+                f"WHERE issue_id=? AND label_name IN ({placeholders})",
+                params,
+            )
+            count = cursor.fetchone()[0]
+            return count == len(label_names)
 
     # ── Dispatch cap (GRO-2979) ─────────────────────────────────────
     # Ported from prismatic.dedup, adapted to this class's tuple-row
     # style. Guards against retry storms (GRO-2051 re-dispatched 178
     # times): an issue re-dispatched past the cap inside the window is
     # auto-marked stuck by the dispatcher's cap check.
+
+    def _ensure_dispatch_counts_table(self) -> None:
+        """Create dispatch_counts (with stuck_notified_at) if missing.
+
+        Must be called with self._lock held. Migrates older tables that
+        predate the stuck-notification column.
+        """
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                issue_id TEXT PRIMARY KEY,
+                count INTEGER NOT NULL DEFAULT 0,
+                last_dispatched_at REAL,
+                first_dispatched_at REAL,
+                stuck_notified_at REAL
+            )"""
+        )
+        cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(dispatch_counts)")
+        }
+        if "stuck_notified_at" not in cols:
+            self._conn.execute(
+                "ALTER TABLE dispatch_counts ADD COLUMN stuck_notified_at REAL"
+            )
+        self._conn.commit()
+
+    def stuck_notified(self, issue_id: str) -> bool:
+        """True if the stuck comment was already posted for this episode."""
+        with self._lock:
+            self._ensure_dispatch_counts_table()
+            row = self._conn.execute(
+                "SELECT stuck_notified_at FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            return bool(row and row[0])
+
+    def mark_stuck_notified(self, issue_id: str) -> None:
+        """Record that the stuck comment was posted for this episode."""
+        with self._lock:
+            self._ensure_dispatch_counts_table()
+            now = time.time()
+            self._conn.execute(
+                """INSERT INTO dispatch_counts
+                       (issue_id, count, stuck_notified_at)
+                   VALUES (?, 0, ?)
+                   ON CONFLICT(issue_id) DO UPDATE SET
+                       stuck_notified_at = ?""",
+                (issue_id, now, now),
+            )
+            self._conn.commit()
 
     def _count_dispatches(self, issue_id: str) -> int:
         """Return the total recorded dispatch count for *issue_id*.
@@ -4246,14 +4387,7 @@ class EventRouterDedup:
         it doesn't exist. Returns 0 if the issue was never dispatched.
         """
         with self._lock:
-            self._conn.execute(
-                """CREATE TABLE IF NOT EXISTS dispatch_counts (
-                    issue_id TEXT PRIMARY KEY,
-                    count INTEGER NOT NULL DEFAULT 0,
-                    last_dispatched_at REAL,
-                    first_dispatched_at REAL
-                )"""
-            )
+            self._ensure_dispatch_counts_table()
             row = self._conn.execute(
                 "SELECT count FROM dispatch_counts WHERE issue_id = ?",
                 (issue_id,),
@@ -4267,14 +4401,7 @@ class EventRouterDedup:
         exactly once.
         """
         with self._lock:
-            self._conn.execute(
-                """CREATE TABLE IF NOT EXISTS dispatch_counts (
-                    issue_id TEXT PRIMARY KEY,
-                    count INTEGER NOT NULL DEFAULT 0,
-                    last_dispatched_at REAL,
-                    first_dispatched_at REAL
-                )"""
-            )
+            self._ensure_dispatch_counts_table()
             now = time.time()
             self._conn.execute(
                 """INSERT INTO dispatch_counts
@@ -4282,7 +4409,8 @@ class EventRouterDedup:
                    VALUES (?, 1, ?, ?)
                    ON CONFLICT(issue_id) DO UPDATE SET
                        count = count + 1,
-                       last_dispatched_at = ?""",
+                       last_dispatched_at = ?,
+                       stuck_notified_at = NULL""",
                 (issue_id, now, now, now),
             )
             self._conn.commit()
@@ -4306,14 +4434,7 @@ class EventRouterDedup:
         if window_hours is None:
             window_hours = self.MAX_DISPATCH_WINDOW_HOURS
         with self._lock:
-            self._conn.execute(
-                """CREATE TABLE IF NOT EXISTS dispatch_counts (
-                    issue_id TEXT PRIMARY KEY,
-                    count INTEGER NOT NULL DEFAULT 0,
-                    last_dispatched_at REAL,
-                    first_dispatched_at REAL
-                )"""
-            )
+            self._ensure_dispatch_counts_table()
             row = self._conn.execute(
                 "SELECT count, last_dispatched_at FROM dispatch_counts "
                 "WHERE issue_id = ?",
@@ -4807,16 +4928,23 @@ def dispatch_once(
                         f"(cap={dedup.MAX_DISPATCH_COUNT_PER_ISSUE}). "
                         f"Skipping dispatch; needs human triage."
                     )
+                    # Notify once per episode: the comment is the
+                    # human-visible stuck mark; reposting it every cycle
+                    # is spam. record_dispatch() clears the flag when a
+                    # dispatch goes through, so a new storm re-notifies.
                     try:
-                        add_comment(
-                            issue_id,
-                            f"⚠️ **Auto-marked stuck**: {stuck_count} "
-                            f"dispatches in "
-                            f"{dedup.MAX_DISPATCH_WINDOW_HOURS}h with no "
-                            f"closure. Cap is "
-                            f"{dedup.MAX_DISPATCH_COUNT_PER_ISSUE}. "
-                            f"Pausing dispatch — needs review.",
-                        )
+                        if not dedup.stuck_notified(issue_id):
+                            posted = add_comment(
+                                issue_id,
+                                f"⚠️ **Auto-marked stuck**: {stuck_count} "
+                                f"dispatches in "
+                                f"{dedup.MAX_DISPATCH_WINDOW_HOURS}h with no "
+                                f"closure. Cap is "
+                                f"{dedup.MAX_DISPATCH_COUNT_PER_ISSUE}. "
+                                f"Pausing dispatch — needs review.",
+                            )
+                            if posted:
+                                dedup.mark_stuck_notified(issue_id)
                     except Exception:
                         pass
                     counts.setdefault("stuck", 0)
