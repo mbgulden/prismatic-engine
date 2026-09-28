@@ -174,10 +174,14 @@ def main() -> int:
             )
 
     triager = FailureTriage(audit_log=args.audit_log)
-    if jobs is None:
-        # Degraded path: the jobs API was unreadable, so triage the run by
-        # name only. The workflow still emits its one shadow audit signal
-        # (uploaded as the artifact) instead of crashing.
+    # A failed run always has at least one failed job: an empty list means
+    # the jobs API returned nothing usable (observed 2026-09-28), not "no
+    # failures". Degrade to names-only triage rather than silently triaging
+    # zero jobs and emitting zero audit rows.
+    if not jobs:
+        # Degraded path: the jobs API was unreadable or returned no jobs,
+        # so triage the run by name only. The workflow still emits its one
+        # shadow audit signal (uploaded as the artifact) instead of crashing.
         result = triager.triage(
             FailureInput(
                 failure_id=f"ci:{run_id}:jobs-unavailable",
