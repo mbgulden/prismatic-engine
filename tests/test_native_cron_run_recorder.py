@@ -230,3 +230,24 @@ def test_cli_record_run_propagates_failure(tmp_path: Path, monkeypatch: pytest.M
     updated = NativeCronStore(path=store_path).get("test.cli-fail")
     assert updated.last_status == "failed"
     assert updated.last_exit_code == 9
+
+
+# ── rendered block crontab syntax ─────────────────────────────────────
+
+
+def test_rendered_block_lines_have_valid_schedule_fields(tmp_path: Path) -> None:
+    """Every non-comment line of the rendered managed block must start with a
+    valid 5-field schedule (WI-1 must not corrupt the crontab schedule field)."""
+    from prismatic.native_crons import render_crontab_block, validate_cron_schedule
+
+    store, _ = _store_with_cron(tmp_path)
+    block = render_crontab_block(store)
+    lines = [
+        line
+        for line in block.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert lines, "managed block rendered no cron lines"
+    for line in lines:
+        schedule = " ".join(line.split(" ", 5)[:5])
+        validate_cron_schedule(schedule)  # raises on anything malformed
