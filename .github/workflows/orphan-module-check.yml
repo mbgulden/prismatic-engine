@@ -9,12 +9,17 @@ on:
     - cron: "0 9 * * 1"  # Mondays 09:00 UTC
   workflow_dispatch:
 
+# Report-only; latest wins.
+concurrency:
+  group: orphan-module-check
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   orphan-scan:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

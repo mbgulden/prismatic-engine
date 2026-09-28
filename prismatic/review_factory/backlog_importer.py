@@ -33,6 +33,7 @@ import argparse
 import logging
 import os
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -133,6 +134,28 @@ class BacklogImporter:
             logger.warning("Import error for %s: %s", row.id, exc)
         return result.enqueued == 1
 
+    def _enqueue_idempotent(self, result: ImportResult, **kwargs) -> None:
+        """Enqueue, tolerating a lost check-then-act race.
+
+        Two concurrent drains can both pass the get_job_by_completed_work_id
+        check; the loser's INSERT then hits the completed_work_id UNIQUE
+        constraint. That is a duplicate, not an error: count it as
+        skipped_duplicate instead of recording an error.
+        """
+        try:
+            job_id = self.queue.enqueue_completed_work(**kwargs)
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE constraint failed: review_jobs.completed_work_id" in str(exc):
+                logger.info(
+                    "Concurrent drain race on %s; counting as duplicate",
+                    kwargs.get("completed_work_id"),
+                )
+                result.skipped_duplicate += 1
+                return
+            raise
+        if job_id:
+            result.enqueued += 1
+
     def _process_row(self, row: CompletedWorkRow, result: ImportResult) -> None:
         """Process a single CompletedWorkRow for import."""
         # Filter 1: integration classification
@@ -197,7 +220,8 @@ class BacklogImporter:
             result.skipped_duplicate += 1
             return
 
-        job_id = self.queue.enqueue_completed_work(
+        self._enqueue_idempotent(
+            result,
             completed_work_id=completed_work_id,
             task_id=task_id,
             repository=repository,
@@ -208,8 +232,6 @@ class BacklogImporter:
             changed_paths=changed_paths,
             result_packet_path=result_packet_path,
         )
-        if job_id:
-            result.enqueued += 1
 
     def import_from_manifest_dir(self, manifest_dir: Path) -> ImportResult:
         """Import from a directory of merge_candidate.json files.
@@ -259,7 +281,8 @@ class BacklogImporter:
             result.skipped_duplicate += 1
             return
 
-        job_id = self.queue.enqueue_completed_work(
+        self._enqueue_idempotent(
+            result,
             completed_work_id=work_id,
             task_id=manifest.issue_id,
             repository=manifest.repository,
@@ -268,9 +291,6 @@ class BacklogImporter:
             changed_paths=list(manifest.changed_paths),
             result_packet_path=str(manifest_path),
         )
-
-        if job_id:
-            result.enqueued += 1
 
 
 # ── CLI entry point ──
