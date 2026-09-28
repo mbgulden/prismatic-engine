@@ -619,3 +619,177 @@ def test_discover_active_policy_picks_highest_version(tmp_path):
 def test_discover_active_policy_fail_closed_on_missing(tmp_path):
     with pytest.raises(PhaseAdvancementError):
         discover_active_policy(tmp_path / "empty")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 0 -> 1 deterministic exit path (T1 deterministic entry)
+# ─────────────────────────────────────────────────────────────────────
+
+from prismatic.review_factory.phase_advancement import (
+    DETERMINISTIC_CONSECUTIVE_CLEAN,
+    EXIT_PATH_AGREEMENT,
+    EXIT_PATH_DETERMINISTIC,
+    EXIT_PATH_EITHER,
+    check_phase0_exit_deterministic,
+    deterministic_clean_streak,
+)
+
+
+def _det_decision(i, change_class="docs", clean=True, **overrides):
+    d = {
+        "pr": 500 + i,
+        "change_class": change_class,
+        "timestamp": f"2026-09-27T17:{i:02d}:00Z",
+        "ci_green": True,
+        "novelty_clean": True,
+        "no_policy_exclusions": True,
+        "deterministic_clean": True,
+        "receipt_emitted": True,
+    }
+    if not clean:
+        d["ci_green"] = False
+    d.update(overrides)
+    return d
+
+
+def _det_evidence(n=20, **kw):
+    return {
+        "deterministic_decisions": [_det_decision(i, **kw) for i in range(n)],
+        "bad_merge_calls": 0,
+        "shadow_signals": [_shadow_signal(900 + i) for i in range(3)],
+        "watchdog": {"enabled": True, "mode": "monitor-only"},
+    }
+
+
+def test_deterministic_path_met_on_20_consecutive_clean():
+    result = check_phase0_exit_deterministic(_det_evidence(20))
+    assert result.met is True
+    assert result.checks["min_consecutive_deterministic_clean"] is True
+    assert result.checks["zero_bad_merge_calls"] is True
+    assert result.checks["watchdog_armed_monitor_only"] is True
+    assert result.checks["all_shadow_signals_complete"] is True
+
+
+def test_deterministic_path_fails_below_streak_bar():
+    result = check_phase0_exit_deterministic(_det_evidence(19))
+    assert result.met is False
+    assert result.checks["min_consecutive_deterministic_clean"] is False
+
+
+def test_deterministic_streak_breaks_on_unclean_decision():
+    ev = _det_evidence(20)
+    ev["deterministic_decisions"][10] = _det_decision(10, clean=False)
+    assert deterministic_clean_streak(ev["deterministic_decisions"]) == 9
+    result = check_phase0_exit_deterministic(ev)
+    assert result.met is False
+
+
+def test_deterministic_streak_ignores_non_t1_classes():
+    # agent_standard decisions never count toward the T1 streak.
+    ev = _det_evidence(20)
+    ev["deterministic_decisions"].append(_det_decision(20, change_class="agent_standard"))
+    assert deterministic_clean_streak(ev["deterministic_decisions"]) == 0
+    assert check_phase0_exit_deterministic(ev).met is False
+
+
+def test_deterministic_path_fail_closed_on_missing_evidence():
+    result = check_phase0_exit_deterministic({})
+    assert result.met is False
+    assert result.checks["min_consecutive_deterministic_clean"] is False
+
+
+def test_deterministic_path_refuses_bad_merge_calls():
+    ev = _det_evidence(20)
+    ev["bad_merge_calls"] = 1
+    result = check_phase0_exit_deterministic(ev)
+    assert result.met is False
+    assert result.checks["zero_bad_merge_calls"] is False
+
+
+def test_deterministic_path_requires_monitor_only_watchdog():
+    ev = _det_evidence(20)
+    ev["watchdog"] = {"enabled": True, "mode": "enforcing"}
+    result = check_phase0_exit_deterministic(ev)
+    assert result.met is False
+    assert result.checks["watchdog_armed_monitor_only"] is False
+
+
+def test_evaluate_exit_criteria_dispatches_on_exit_path():
+    ev = _det_evidence(20)
+    ev["exit_path"] = EXIT_PATH_DETERMINISTIC
+    result = evaluate_exit_criteria(0, 1, ev)
+    assert result.met is True
+    assert "exit_path=deterministic" in result.detail
+
+
+def test_evaluate_exit_criteria_defaults_to_legacy_agreement():
+    ev = _phase0_evidence_met()
+    # No exit_path key: legacy agreement behavior preserved.
+    result = evaluate_exit_criteria(0, 1, ev)
+    assert result.met is True
+    assert "n_decided=30" in result.detail
+
+
+def test_evaluate_exit_criteria_rejects_unknown_exit_path():
+    ev = _det_evidence(20)
+    ev["exit_path"] = "teleport"
+    result = evaluate_exit_criteria(0, 1, ev)
+    assert result.met is False
+    assert result.checks["known_exit_path"] is False
+
+
+def test_evaluate_exit_criteria_either_path():
+    # Agreement fails (2.2%-style), deterministic passes -> either met.
+    ev = _phase0_evidence_met(n=30, agreed=1)
+    det = _det_evidence(20)
+    ev.update(
+        {
+            "deterministic_decisions": det["deterministic_decisions"],
+            "watchdog": det["watchdog"],
+            "exit_path": EXIT_PATH_EITHER,
+        }
+    )
+    result = evaluate_exit_criteria(0, 1, ev)
+    assert result.met is True
+    assert "exit_path=either" in result.detail
+
+
+def test_phase_policy_rejects_unknown_exit_path():
+    with pytest.raises(PhaseAdvancementError):
+        PhasePolicy.from_dict(
+            {
+                "version": "phase-vX",
+                "phase": 0,
+                "advancements_enabled": False,
+                "approver": "mbgulden",
+                "exit_path": "teleport",
+            }
+        )
+
+
+def test_phase_policy_defaults_exit_path_to_agreement():
+    policy = PhasePolicy.from_dict(
+        {
+            "version": "phase-vX",
+            "phase": 0,
+            "advancements_enabled": False,
+            "approver": "mbgulden",
+        }
+    )
+    assert policy.exit_path == EXIT_PATH_AGREEMENT
+
+
+def test_phase_policy_v3_selects_deterministic(tmp_path):
+    import shutil
+
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    v3 = HERE.parent.parent / "spec" / "phase_policy_v3.yaml"
+    assert v3.exists(), "phase_policy_v3.yaml must ship with this change"
+    shutil.copy(v3, spec_dir / "phase_policy_v3.yaml")
+    policy = discover_active_policy(spec_dir)
+    assert policy.version == "phase-v3"
+    assert policy.phase == 0
+    assert policy.exit_path == EXIT_PATH_DETERMINISTIC
+    assert policy.advancements_enabled is False  # still hard-disabled
+    assert policy.approver == "mbgulden"
