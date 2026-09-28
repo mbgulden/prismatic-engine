@@ -520,7 +520,18 @@ def default_core_crons() -> list[dict[str, Any]]:
             "command": "prismatic worktrees janitor --repo ${PRISMATIC_REPO_DIR:-.} --quiet",
             "description": "Removes only clean+merged stale worktrees; dirty work is reported/manifested, never deleted by cron.",
             "silent_when_clean": True,
-        }
+        },
+        # WI-5: branch GC, seeded report-only (never deletes unless a human
+        # re-runs with --mode apply). Flags pinned explicitly so a future
+        # default change cannot silently turn a seeded cron destructive.
+        {
+            "id": "prismatic.worktree-janitor-gc.weekly",
+            "name": "Prismatic Worktree Janitor GC (branch GC)",
+            "schedule": "31 3 * * 0",
+            "command": "prismatic worktrees janitor-gc --repo ${PRISMATIC_REPO_DIR:-.} --mode report-only --grace-days 7",
+            "description": "Report-only branch GC: classifies merged, aged local branches and logs decisions; never deletes in this mode.",
+            "silent_when_clean": True,
+        },
     ]
 
 

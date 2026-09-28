@@ -303,6 +303,85 @@ SEO_NATIVE_CRONS: list[NativeCron] = [
 ]
 
 
+# ── WI-5: engine-health seed set for new users ─────────────────────────
+# DECISION-2 (cron-overhaul plan): SEO + engine-health seeds stay merged —
+# fresh stores get both groups; existing stores merge the new engine-health
+# seeds while keeping their own runtime fields (state, last_*).
+# Entry points verified on main: scripts/lane_visibility_probe.py (WI-6,
+# no required args), scripts/receipt_coverage_watch.py (WI-7, no required
+# args), `prismatic doctor` (prismatic/cli/__init__.py), and
+# scripts/silent_cron_detector.py (all-optional argparse CLI).
+
+ENGINE_HEALTH_CRONS: list[NativeCron] = [
+    NativeCron(
+        id="engine.lane-visibility-probe",
+        name="Engine health — Dispatcher lane visibility probe",
+        schedule="23 * * * *",
+        command=["python3", "scripts/lane_visibility_probe.py"],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "Read-only hourly check that every dispatcher lane can see "
+            "canonically labeled work — catches blind-lane logic bugs (the "
+            "July blind lane) within an hour instead of months."
+        ),
+        tags=["engine-health", "dispatcher", "lanes", "read-only"],
+    ),
+    NativeCron(
+        id="engine.receipt-coverage-watch",
+        name="Engine health — Merge receipt coverage watch",
+        schedule="30 6 * * *",
+        command=["python3", "scripts/receipt_coverage_watch.py"],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "Read-only daily watch for merged PRs lacking signed "
+            "merge-executor receipts (flags the known GitHub-UI-merge gap)."
+        ),
+        tags=["engine-health", "merge-receipts", "coverage", "read-only"],
+    ),
+    NativeCron(
+        id="engine.doctor",
+        name="Engine health — Weekly doctor",
+        schedule="0 7 * * 1",
+        command=["prismatic", "doctor"],
+        cwd=".",
+        group="engine-health",
+        description="Weekly environment diagnostics via `prismatic doctor`.",
+        tags=["engine-health", "diagnostics"],
+    ),
+    NativeCron(
+        id="engine.silent-cron-detector",
+        name="Engine health — Silent cron detector",
+        schedule="45 6 * * *",
+        command=[
+            "python3",
+            "scripts/silent_cron_detector.py",
+            "--dry-run",
+            "--no-telegram",
+        ],
+        cwd=".",
+        group="engine-health",
+        description=(
+            "Daily read-only sweep for silently failing or stale crons. "
+            "Seeded dry-run + no-telegram: reporting only, Linear/Telegram "
+            "alerting stays opt-in."
+        ),
+        tags=["engine-health", "silent-failures", "read-only"],
+    ),
+]
+
+#: Seed groups merged by ``NativeCronStore.ensure_seeded()``, in order.
+#: Resolved through a function (not a module constant) so the merge always
+#: reads the *current* module attributes — tests may monkeypatch the seed
+#: lists, and the merge must honor that.
+def _seed_cron_groups() -> tuple[tuple[str, list[NativeCron]], ...]:
+    return (
+        ("seo", SEO_NATIVE_CRONS),
+        ("engine-health", ENGINE_HEALTH_CRONS),
+    )
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -495,7 +574,7 @@ class NativeCronStore:
 
     def ensure_seeded(self) -> None:
         if not self.path.exists():
-            self.save(SEO_NATIVE_CRONS)
+            self.save([cron for _group_name, group in _seed_cron_groups() for cron in group])
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -510,19 +589,20 @@ class NativeCronStore:
             "last_duration_s",
             "deactivated_at", "deleted_at", "paused_at", "updated_at",
         }
-        for default in SEO_NATIVE_CRONS:
-            existing_cron = existing_by_id.pop(default.id, None)
-            if existing_cron is None:
-                merged.append(default)
-                changed = True
-                continue
-            refreshed = NativeCron.from_dict({
-                **default.to_dict(),
-                **{field: getattr(existing_cron, field) for field in runtime_fields},
-            })
-            if refreshed.to_dict() != existing_cron.to_dict():
-                changed = True
-            merged.append(refreshed)
+        for _group_name, seed_group in _seed_cron_groups():
+            for default in seed_group:
+                existing_cron = existing_by_id.pop(default.id, None)
+                if existing_cron is None:
+                    merged.append(default)
+                    changed = True
+                    continue
+                refreshed = NativeCron.from_dict({
+                    **default.to_dict(),
+                    **{field: getattr(existing_cron, field) for field in runtime_fields},
+                })
+                if refreshed.to_dict() != existing_cron.to_dict():
+                    changed = True
+                merged.append(refreshed)
         if existing_by_id:
             merged.extend(existing_by_id.values())
         if changed:

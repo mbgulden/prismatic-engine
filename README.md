@@ -85,6 +85,42 @@ prismatic agy customizations install --workspace /path/to/project
 
 Installation is explicit, idempotent, conflict-preserving, and secret-free; it does not modify global AGY state. See [Portable Antigravity customizations](docs/contracts/antigravity-customizations.md).
 
+### Scheduled jobs (cron setup)
+
+Prismatic schedules background work through two complementary layers:
+
+- **Core crons** (`prismatic crons`) — scheduler-neutral manifests emitted by the
+  CLI: the worktree janitor (hourly) and the report-only branch GC (weekly).
+- **Native crons** — a JSON registry (`prismatic/native_crons.py`) with a managed
+  crontab block, dashboard tab, and hub API. Fresh installs seed the 12 SEO crons
+  plus 4 engine-health crons: the dispatcher lane-visibility probe (hourly), the
+  merge-receipt coverage watch (daily), `prismatic doctor` (weekly), and the
+  silent-cron detector (daily, report-only).
+
+```bash
+# 1. Install the engine's core cron manifests into your user crontab
+prismatic crons install --yes
+
+# 2. Seed the native cron registry and install its managed crontab block
+python -m prismatic.native_crons list
+python scripts/install_native_crons.py
+```
+
+Native cron quickstart:
+
+```bash
+python -m prismatic.native_crons list            # show seeded crons and their state
+python -m prismatic.native_crons export-crontab  # preview the managed crontab block
+python -m prismatic.native_crons run <cron-id>   # run one now (records the outcome)
+python -m prismatic.native_crons mutate <cron-id> pause|resume|deactivate|activate|delete
+python -m prismatic.native_crons add --id my.job --name "My job" \
+    --schedule "0 6 * * *" --command python3 scripts/my_job.py --group custom
+```
+
+Both layers are idempotent: re-running `install --yes` or the native installer
+replaces only Prismatic's own managed blocks and leaves your other crontab
+lines alone.
+
 ---
 
 ## Minimal demo
