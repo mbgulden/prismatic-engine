@@ -105,7 +105,7 @@ python3 scripts/pwp credentials refresh ubersuggest --no-verify
 PWP plugin tool definitions:
 
 ```python
-from plugins.pwp.plugin import PWPDesignTokenPlugin
+from prismatic.shipped_plugins.pwp.plugin import PWPDesignTokenPlugin
 
 plugin = PWPDesignTokenPlugin()
 plugin.register_tools()

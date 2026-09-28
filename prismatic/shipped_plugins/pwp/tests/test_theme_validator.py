@@ -12,7 +12,7 @@ _REPO_ROOT = next((p for p in _THIS_DIR.parents if (p / "pyproject.toml").exists
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from plugins.pwp.theme_validator import validate_theme_package  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_validator import validate_theme_package  # noqa: E402
 
 VALID_THEME = _THIS_DIR / "fixtures" / "pwp_theme" / "valid_theme"
 

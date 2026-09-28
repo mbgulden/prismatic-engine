@@ -18,12 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
-from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     operator_migrate as mig,
     pwp_kpi_site_registry as reg,
 )
-from plugins.pwp.capabilities.publish_kpi_tracker.site_builder import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.site_builder import (  # noqa: E402
     write_site_collection,
 )
 
@@ -297,7 +297,7 @@ def test_run_merge_adds_registry_metrics_to_existing_file(tmp_path: Path):
 def test_run_merge_does_not_overwrite_curated_metric():
     """Even if the registry and curated file both have the same metric_key,
     the curated version wins."""
-    from plugins.pwp.capabilities.publish_kpi_tracker.operator_migrate import (
+    from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.operator_migrate import (
         _merge_into_existing,
     )
     existing = {
