@@ -22,10 +22,28 @@ Exit codes: 0 = 100% coverage; 1 = coverage < 100% (gap found);
 2 = tool/data error (gh unavailable or failed, bad arguments) — deliberately
 distinct from a coverage gap so a broken watcher never reads as "all clear".
 
-Stdlib only — no prismatic imports, so it runs anywhere ``gh`` does.
+``--backfill`` mode: for each merged PR with no receipt, build, Ed25519-sign,
+and persist a *backfilled* merge receipt via
+``prismatic.verification.merge_receipt`` (build/sign/persist reused, not
+reimplemented). Backfilled receipts carry a top-level ``backfill`` block
+(source + timestamp) and explicit non-claims, so they are distinguishable
+from live ``merge_executor`` receipts — the attestation *metadata* (including
+the backfill block) is what gets signed. Backfill is idempotent: PRs that
+already have receipts are skipped, so re-running is a no-op. Backfill
+requires a configured signing key (``$PRISMATIC_MERGE_RECEIPT_SIGNING_KEY``
+PEM text or ``$PRISMATIC_MERGE_RECEIPT_KEY_FILE``); without one it exits 2
+rather than writing unsigned backfills. Exit codes in backfill mode:
+0 = every missing PR backfilled (or nothing was missing), 1 = some PRs could
+not be backfilled, 2 = tool error.
+
+Stdlib only — no prismatic imports, so it runs anywhere ``gh`` does — except
+in ``--backfill`` mode, which lazily imports ``prismatic.verification`` (the
+repo root is added to ``sys.path`` from the script location if needed).
 
 Usage:
     python3 scripts/receipt_coverage_watch.py [--repo OWNER/REPO]
+        [--limit N] [--receipts PATH] [--json] [--gh PATH]
+    python3 scripts/receipt_coverage_watch.py --backfill [--repo OWNER/REPO]
         [--limit N] [--receipts PATH] [--json] [--gh PATH]
 """
 
@@ -127,10 +145,13 @@ def load_receipt_index(log_path: Path | str):
 
 
 _GH_JSON_FIELDS = "number,title,mergedAt,mergeCommit,headRefOid,headRefName,url"
+# Extra fields needed only for backfill (who merged, onto what base).
+_GH_JSON_FIELDS_BACKFILL = _GH_JSON_FIELDS + ",author,mergedBy,baseRefOid"
 
 
 def fetch_merged_prs(
-    *, gh_bin: str = "gh", repo: str = DEFAULT_REPO, limit: int = DEFAULT_LIMIT
+    *, gh_bin: str = "gh", repo: str = DEFAULT_REPO, limit: int = DEFAULT_LIMIT,
+    json_fields: str = _GH_JSON_FIELDS,
 ) -> list[dict]:
     """List recently merged PRs via ``gh``. Raises WatcherError on failure."""
     if limit < 1:
@@ -140,7 +161,7 @@ def fetch_merged_prs(
         "--state", "merged",
         "--limit", str(limit),
         "--repo", repo,
-        "--json", _GH_JSON_FIELDS,
+        "--json", json_fields,
     ]
     try:
         proc = subprocess.run(
@@ -308,13 +329,239 @@ def format_json_report(report: dict) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+# ── Backfill ──────────────────────────────────────────────────────────
+
+BACKFILL_SOURCE = "scripts/receipt_coverage_watch.py --backfill"
+BACKFILL_JOB_PREFIX = "receipt-coverage-watch/backfill"
+
+
+def _import_merge_receipt():
+    """Lazily import ``prismatic.verification.merge_receipt``.
+
+    The watcher module itself stays stdlib-only; only ``--backfill`` mode
+    needs the prismatic package. Falls back to adding the repo root (the
+    script's parent) to ``sys.path`` so the script works when invoked as
+    ``python3 scripts/receipt_coverage_watch.py`` from a checkout.
+    Raises WatcherError when the package is not importable.
+    """
+    try:
+        from prismatic.verification import merge_receipt
+        return merge_receipt
+    except ImportError:
+        pass
+    repo_root = str(Path(__file__).resolve().parents[1])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    try:
+        from prismatic.verification import merge_receipt
+        return merge_receipt
+    except ImportError as exc:
+        raise WatcherError(
+            "backfill mode needs the prismatic package "
+            f"(tried repo root {repo_root}): {exc}"
+        ) from exc
+
+
+def _signing_key_available(mr) -> bool:
+    """Probe whether merge-receipt signing is configured, via public API.
+
+    Signs a scratch receipt with ``sign_merge_receipt`` and checks the
+    attestation landed. No private helpers, no key material handled here —
+    key loading stays inside ``prismatic.verification.merge_receipt``.
+    """
+    probe = mr.build_merge_receipt(
+        repository="probe",
+        candidate_sha="0" * 40,
+        candidate_tree="",
+        base_sha="0" * 40,
+        merge_sha="0" * 40,
+        actor="probe",
+        authorization_id="",
+        job_id="probe",
+    )
+    mr.sign_merge_receipt(probe)
+    return probe.get("signature_or_attestation") is not None
+
+
+def build_backfill_receipt(mr, *, pr: dict, repo: str) -> dict:
+    """Build one backfilled merge receipt for a merged PR lacking one.
+
+    Reuses ``merge_receipt.build_merge_receipt``; fields that are not
+    recoverable for a historical merge (candidate_tree, authorization_id,
+    manifest_digest, policy_version, change_class, verified_receipt_refs)
+    are recorded empty and disclaimed in ``explicit_non_claims``. The
+    receipt is marked with a top-level ``backfill`` block (source +
+    timestamp) — signed along with everything else — so it is
+    distinguishable from live ``merge_executor`` receipts.
+    """
+    number = pr.get("number")
+    merge_oid = (pr.get("mergeCommit") or {}).get("oid") or ""
+    head_oid = pr.get("headRefOid") or ""
+    base_oid = pr.get("baseRefOid") or ""
+    merged_by = (pr.get("mergedBy") or {}).get("login") or ""
+    author = (pr.get("author") or {}).get("login") or ""
+    actor = merged_by or author or "unknown"
+    receipt = mr.build_merge_receipt(
+        repository=repo,
+        candidate_sha=head_oid,
+        candidate_tree="",
+        base_sha=base_oid,
+        merge_sha=merge_oid,
+        actor=actor,
+        authorization_id="",
+        job_id=f"{BACKFILL_JOB_PREFIX}#{number}",
+    )
+    receipt["backfill"] = {
+        "source": BACKFILL_SOURCE,
+        "backfilled_at": datetime.now(timezone.utc).isoformat(),
+        "reason": (
+            "GitHub-UI merge had no merge_executor receipt; "
+            "reconstructed attestation from the GitHub merge record"
+        ),
+        "pr_number": number,
+        "pr_url": pr.get("url") or "",
+        "pr_title": pr.get("title") or "",
+    }
+    receipt.setdefault("explicit_non_claims", []).extend([
+        "backfilled attestation: reconstructed from the GitHub merge "
+        "record, not live merge_executor evidence",
+        "candidate_tree, authorization_id, manifest_digest, policy_version, "
+        "change_class, and verified_receipt_refs are not recoverable for "
+        "historical merges and are recorded empty",
+    ])
+    return receipt
+
+
+def run_backfill(args) -> int:
+    """Backfill signed receipts for merged PRs lacking them.
+
+    Idempotent: PRs already covered by the receipt index — re-checked fresh
+    per PR right before persisting — are skipped. Exit 0 = every missing PR
+    backfilled (or nothing was missing); 1 = some PRs could not be
+    backfilled; 2 = tool error (fetch/index/key failure).
+    """
+    try:
+        mr = _import_merge_receipt()
+        if not _signing_key_available(mr):
+            raise WatcherError(
+                "no merge-receipt signing key configured: set "
+                "PRISMATIC_MERGE_RECEIPT_SIGNING_KEY (PEM text) or "
+                "PRISMATIC_MERGE_RECEIPT_KEY_FILE; refusing to write "
+                "unsigned backfills"
+            )
+        prs = fetch_merged_prs(
+            gh_bin=args.gh, repo=args.repo, limit=args.limit,
+            json_fields=_GH_JSON_FIELDS_BACKFILL,
+        )
+        log_path = resolve_receipt_log_path(args.receipts)
+        by_merge_sha, by_candidate_sha, stats = load_receipt_index(log_path)
+        report = check_coverage(prs, by_merge_sha, by_candidate_sha)
+    except WatcherError as exc:
+        print(f"receipt_coverage_watch: error: {exc}", file=sys.stderr)
+        return EXIT_TOOL_ERROR
+
+    backfilled: list[int] = []
+    skipped: list[int] = []
+    failed: list[dict] = []
+    for entry in report["missing"]:
+        number = entry["number"]
+        pr = next((p for p in prs if p.get("number") == number), None)
+        if pr is None:
+            failed.append({"number": number,
+                           "reason": "PR vanished from fetch results"})
+            continue
+        merge_sha = (pr.get("mergeCommit") or {}).get("oid") or ""
+        head_sha = pr.get("headRefOid") or ""
+        if not merge_sha and not head_sha:
+            # A receipt binds via merge_sha (primary) or candidate_sha
+            # (fallback); with neither sha on the PR nothing can bind it.
+            failed.append({"number": number,
+                           "reason": "no merge-commit or head sha on PR; "
+                                     "cannot bind a receipt"})
+            continue
+        # Fresh per-PR idempotency guard: skip if a receipt landed since the
+        # index was loaded (re-run safety, concurrent writers).
+        if merge_sha and mr.find_merge_receipts(
+            merge_sha=merge_sha, log_path=log_path
+        ):
+            skipped.append(number)
+            continue
+        receipt = build_backfill_receipt(mr, pr=pr, repo=args.repo)
+        mr.sign_merge_receipt(receipt)
+        if receipt.get("signature_or_attestation") is None:
+            failed.append({"number": number,
+                           "reason": "signing produced no attestation"})
+            continue
+        receipt_id = mr.persist_merge_receipt(receipt, log_path=log_path)
+        if not receipt_id:
+            failed.append({"number": number,
+                           "reason": f"persist failed for {log_path}"})
+            continue
+        backfilled.append(number)
+
+    result = {
+        "mode": "backfill",
+        "repo": args.repo,
+        "checked_at": report["checked_at"],
+        "total": report["total"],
+        "already_covered": report["covered"],
+        "backfilled": backfilled,
+        "skipped_already_covered": skipped,
+        "failed": failed,
+        "log_path": str(log_path),
+    }
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True) + "\n", end="")
+    else:
+        print(_format_human_backfill(result), end="")
+    if failed:
+        return EXIT_COVERAGE_GAP
+    return EXIT_OK
+
+
+def _format_human_backfill(result: dict) -> str:
+    lines = [
+        f"Backfill for {result['repo']}: "
+        f"{len(result['backfilled'])} backfilled, "
+        f"{len(result['skipped_already_covered'])} already covered, "
+        f"{len(result['failed'])} failed "
+        f"({result['already_covered']}/{result['total']} were covered before).",
+        f"Receipt log: {result['log_path']}",
+        "",
+    ]
+    if result["backfilled"]:
+        lines.append("BACKFILLED:")
+        lines.extend(f"  #{n}" for n in result["backfilled"])
+        lines.append("")
+    if result["skipped_already_covered"]:
+        lines.append("SKIPPED (receipt already on record):")
+        lines.extend(f"  #{n}" for n in result["skipped_already_covered"])
+        lines.append("")
+    if result["failed"]:
+        lines.append("FAILED:")
+        for f in result["failed"]:
+            lines.append(f"  #{f['number']} — {f['reason']}")
+        lines.append("")
+    if not result["backfilled"] and not result["failed"]:
+        lines.append("Nothing to do — every merged PR already has a receipt.")
+        lines.append("")
+    lines.append(
+        "Backfilled receipts are marked attestations "
+        "(top-level \"backfill\" block + explicit non-claims), signed by the "
+        "merge-receipt key — distinguishable from live merge_executor receipts."
+    )
+    return "\n".join(lines) + "\n"
+
+
 # ── CLI ───────────────────────────────────────────────────────────────
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Watch merge-receipt coverage: flag merged PRs with no "
-                    "signed merge-executor receipt. Read-only."
+                    "signed merge-executor receipt (watch mode, read-only), "
+                    "or backfill signed receipts for those PRs "
+                    "(--backfill, writes to the receipt log)."
     )
     parser.add_argument("--repo", default=DEFAULT_REPO,
                         help=f"GitHub repo (default {DEFAULT_REPO})")
@@ -327,11 +574,24 @@ def build_parser() -> argparse.ArgumentParser:
                         help="machine-readable JSON report on stdout")
     parser.add_argument("--gh", default="gh",
                         help="gh binary to invoke (default: gh)")
+    parser.add_argument("--backfill", action="store_true",
+                        help="backfill mode: for merged PRs lacking receipts, "
+                             "build, sign and persist backfilled merge "
+                             "receipts (marked as backfill attestations). "
+                             "Writes to the receipt log; idempotent. "
+                             "Requires a merge-receipt signing key "
+                             "($PRISMATIC_MERGE_RECEIPT_SIGNING_KEY or "
+                             "$PRISMATIC_MERGE_RECEIPT_KEY_FILE). "
+                             "Exit 0 = all missing PRs backfilled (or none "
+                             "missing), 1 = some PRs could not be backfilled, "
+                             "2 = tool error.")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.backfill:
+        return run_backfill(args)
     try:
         prs = fetch_merged_prs(gh_bin=args.gh, repo=args.repo, limit=args.limit)
         log_path = resolve_receipt_log_path(args.receipts)
