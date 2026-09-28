@@ -10,7 +10,10 @@ Regression: the lane scan queried ``agent::<name>`` (double colon), which
 matches no Linear label — every lane perpetually reported STARVED.
 """
 
+import os
+import sqlite3
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -77,6 +80,153 @@ class TestDispatcherLabelContract(unittest.TestCase):
                     "::", label,
                     f"lane scan queried non-canonical double-colon label {label!r}",
                 )
+
+
+class TestRecoverStalledAgyLabelContract(unittest.TestCase):
+    """recover_stalled_agy must query AND transition canonical labels.
+
+    Regression: it queried ``"agent::agy"`` (matches nothing in Linear, so
+    stalled AGY work was never recovered) and transitioned with double-colon
+    labels. transition_label -> get_label_id CREATES missing labels, so a
+    query-only fix would mint bogus ``agent::<name>`` labels in Linear —
+    both must change together.
+    """
+
+    @patch("prismatic.dispatcher.AGENT_LAUNCHERS", {})
+    @patch("prismatic.dispatcher.cleanup_stale_agy")
+    @patch("prismatic.dispatcher.add_comment")
+    @patch("prismatic.dispatcher.transition_label")
+    @patch("prismatic.dispatcher.get_issues_with_label")
+    def test_recover_queries_and_transitions_single_colon(
+        self,
+        mock_get_issues,
+        mock_transition,
+        mock_add_comment,
+        mock_cleanup,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "recover.db")
+            # Seed the stall tracker so this issue escalates on this cycle.
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE agy_stall_tracker ("
+                "issue_id TEXT PRIMARY KEY, cycle_count INTEGER DEFAULT 0, "
+                "last_seen TEXT, escalated INTEGER DEFAULT 0)"
+            )
+            conn.execute(
+                "INSERT INTO agy_stall_tracker VALUES (?, ?, ?, 0)",
+                ("issue-1", 2, "2026-01-01T00:00:00+00:00"),
+            )
+            conn.commit()
+            conn.close()
+
+            mock_get_issues.return_value = [
+                {"id": "issue-1", "identifier": "GRO-1", "title": "stalled"}
+            ]
+            with (
+                patch.object(dispatcher, "DEFAULT_DB_PATH", db_path),
+                patch.object(
+                    dispatcher.mode_switch, "request_approval", return_value=True
+                ),
+            ):
+                dispatcher.recover_stalled_agy(max_retries=3, escalate_to="fred")
+
+        queried = [call.args[0] for call in mock_get_issues.call_args_list]
+        self.assertEqual(
+            queried,
+            ["agent:agy"],
+            "recover_stalled_agy must query the canonical label agent:agy",
+        )
+        for label in queried:
+            self.assertNotIn("::", label)
+
+        mock_transition.assert_called_once()
+        kwargs = mock_transition.call_args.kwargs
+        self.assertEqual(kwargs["remove_label"], "agent:agy")
+        self.assertEqual(kwargs["add_label"], "agent:fred")
+        self.assertNotIn("::", kwargs["remove_label"])
+        self.assertNotIn("::", kwargs["add_label"])
+
+
+class TestDetectOriginCompletionsLabelContract(unittest.TestCase):
+    """detect_origin_completions must signal on canonical single-colon history.
+
+    Regression: origin detection compared ``f"agent::{agent_name}"``
+    against label snapshots that only ever contain single-colon names, so
+    origin signals never fired. The skip-list comparison against
+    ``("agent:agy", "agent:fred", "agent:done")`` was dead code for the same
+    reason.
+    """
+
+    @patch("prismatic.dispatcher._get_signal_provider")
+    @patch("prismatic.dispatcher.get_issues_with_label")
+    def test_origin_signal_fires_on_single_colon_history(
+        self, mock_get_issues, mock_provider_factory
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            dedup = dispatcher.EventRouterDedup(os.path.join(tmp, "dedup.db"))
+            try:
+                # Prior cycles: the issue went kai -> agy -> fred.
+                dedup.snapshot_labels("issue-1", ["agent:kai"], "cycle-1")
+                dedup.snapshot_labels("issue-1", ["agent:agy"], "cycle-2")
+
+                def fake_get_issues(label_name, **kwargs):
+                    if label_name == "agent:fred":
+                        return [
+                            {
+                                "id": "issue-1",
+                                "identifier": "GRO-1",
+                                "title": "reviewed",
+                                "labels": ["agent:fred"],
+                            }
+                        ]
+                    return []
+
+                mock_get_issues.side_effect = fake_get_issues
+                provider = MagicMock()
+                provider.send_work.return_value = True
+                mock_provider_factory.return_value = provider
+
+                # Neutralize DynamicAgentConfigDict._ensure_fresh: without
+                # this, the first AGENT_CONFIG iteration inside
+                # detect_origin_completions would wipe the seeded fixture
+                # and replace it with live-discovered agents (TTL refresh),
+                # making the test pass for the wrong reason (or fail in a
+                # clean environment without discovery).
+                with (
+                    patch.dict(
+                        dispatcher.AGENT_CONFIG,
+                        {"agy": {}, "fred": {}, "kai": {}},
+                        clear=True,
+                    ),
+                    patch.object(
+                        dispatcher.AGENT_CONFIG, "_ensure_fresh", lambda: None
+                    ),
+                ):
+                    self.assertEqual(
+                        set(dispatcher.AGENT_CONFIG.keys()),
+                        {"agy", "fred", "kai"},
+                        "AGENT_CONFIG fixture was not hermetic",
+                    )
+                    signalled = dispatcher.detect_origin_completions(
+                        dedup, "cycle-3"
+                    )
+
+                self.assertEqual(
+                    signalled,
+                    1,
+                    "origin completion was not signalled for kai -> agy -> fred",
+                )
+                provider.send_work.assert_called_once()
+                send_kwargs = provider.send_work.call_args.kwargs
+                self.assertEqual(send_kwargs["target"], "kai")
+                self.assertEqual(send_kwargs["signal_type"], "review_complete")
+
+                # The snapshot loop must not query dead double-colon labels.
+                for call in mock_get_issues.call_args_list:
+                    self.assertNotIn("::", call.args[0])
+            finally:
+                dedup.close()
 
 
 if __name__ == "__main__":

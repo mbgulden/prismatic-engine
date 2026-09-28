@@ -875,7 +875,7 @@ def get_label_id(label_name: str, *, team_id: str | None = None) -> str | None:
     automatically.
 
     Args:
-        label_name: Display name of the label (e.g. ``"agent::fred"``).
+        label_name: Display name of the label (e.g. ``"agent:fred"``).
         team_id: Team ID override. Falls back to ``TEAM_ID`` constant.
 
     Returns:
@@ -1109,8 +1109,8 @@ def transition_label(
 
     Args:
         issue_id: Linear issue UUID.
-        remove_label: Name of the label to remove (e.g. ``"agent::fred"``).
-        add_label: Name of the label to add (e.g. ``"agent::kai"``).
+        remove_label: Name of the label to remove (e.g. ``"agent:fred"``).
+        add_label: Name of the label to add (e.g. ``"agent:kai"``).
         team_id: Team ID for label resolution.
 
     Returns:
@@ -3885,7 +3885,7 @@ def recover_stalled_agy(
     """Retry stalled AGY tasks, then escalate to another agent.
 
     A stalled AGY task is one where the issue still has an
-    ``agent::agy`` label after ``MAX_CYCLES_BEFORE_RECOVER``
+    ``agent:agy`` label after ``MAX_CYCLES_BEFORE_RECOVER``
     dispatcher cycles with no visible progress.
 
     .. note::
@@ -3915,8 +3915,11 @@ def recover_stalled_agy(
     )
 
     try:
-        # Find issues with agent::agy label that have been seen multiple cycles
-        issues = get_issues_with_label("agent::agy")
+        # Find issues with agent:agy label that have been seen multiple cycles.
+        # Canonical Linear label is single-colon (docs/proof-loop-demo-wedge.md);
+        # the old double-colon query matched nothing, so stalled AGY work was
+        # never recovered.
+        issues = get_issues_with_label("agent:agy")
 
         for issue in issues:
             issue_id = issue["id"]
@@ -3961,8 +3964,8 @@ def recover_stalled_agy(
                 # Transition label
                 transition_label(
                     issue_id,
-                    remove_label="agent::agy",
-                    add_label=f"agent::{escalate_to}",
+                    remove_label="agent:agy",
+                    add_label=f"agent:{escalate_to}",
                 )
 
                 # Post escalation comment
@@ -4251,11 +4254,9 @@ def detect_origin_completions(
 
     # 1. Snapshot: record current labels for issues the dispatcher
     #    has seen (builds label history over cycles)
-    agent_labels = [f"agent::{name}" for name in AGENT_CONFIG] + [
-        # Also track single-colon variants (actual Linear label names)
-        f"agent:{name}"
-        for name in AGENT_CONFIG
-    ]
+    # Canonical Linear labels are single-colon (docs/proof-loop-demo-wedge.md).
+    # Double-colon variants match nothing in Linear, so they are not queried.
+    agent_labels = [f"agent:{name}" for name in AGENT_CONFIG]
     for label_name in agent_labels:
         try:
             issues = get_issues_with_label(label_name, max_issues=50)
@@ -4299,7 +4300,11 @@ def detect_origin_completions(
         # (b) is NOT the current reviewer (agy) or the terminal (fred)
         origin_agent = None
         for agent_name in AGENT_CONFIG:
-            label = f"agent::{agent_name}"
+            # Single-colon: the skip-list below compares against the
+            # canonical label names, so this must match Linear reality.
+            # (Double-colon here could never match a real snapshot, and the
+            # skip-list comparison was dead code.)
+            label = f"agent:{agent_name}"
             if label in ("agent:agy", "agent:fred", "agent:done"):
                 continue
             if dedup.had_label(issue_id, label):
