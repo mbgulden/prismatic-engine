@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Autonomy Tiers &mdash; Prismatic Engine</title>
 <meta name="description" content="Earned autonomy for AI agents: T0 manual today, T1 deterministic behind a twofold brake, T2/T3 unbuilt by decision. Promotion stays human.">
+<link rel="canonical" href="https://prismaticengine.com/autonomy-tiers.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Prismatic Engine">
+<meta property="og:title" content="Autonomy Tiers — Prismatic Engine">
+<meta property="og:description" content="Earned autonomy for AI agents: T0 manual today, T1 deterministic behind a twofold brake, T2/T3 unbuilt by decision. Promotion stays human.">
+<meta property="og:url" content="https://prismaticengine.com/autonomy-tiers.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Autonomy Tiers — Prismatic Engine">
+<meta name="twitter:description" content="Earned autonomy for AI agents: T0 manual today, T1 deterministic behind a twofold brake, T2/T3 unbuilt by decision. Promotion stays human.">
+<meta name="theme-color" content="#080809">
+<script>document.documentElement.classList.add('js');</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&family=Geist:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -228,6 +239,11 @@ section { padding: 5rem 0; }
   display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 4rem; align-items: center;
   margin-top: 3rem;
 }
+.card-grid { display: grid; gap: 1.5rem; margin-top: 3rem; }
+.card-grid-2 { grid-template-columns: repeat(2, 1fr); }
+.card-grid-3 { grid-template-columns: repeat(3, 1fr); }
+.card-grid-4 { grid-template-columns: repeat(4, 1fr); }
+
 .what-left h2 { font-size: 2.25rem; line-height: 1.3; margin-bottom: 1.5rem; }
 .what-left p { color: var(--text-muted); line-height: 1.7; font-size: 1.05rem; }
 
@@ -391,32 +407,18 @@ section { padding: 5rem 0; }
   text-align: center;
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: 0 4px 20px var(--glass-shadow);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
-  height: 100%;
 }
 .agent-card-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  height: 100%;
+  text-align: center;
 }
 .agent-card:hover {
   transform: translateY(-4px);
   border-color: var(--border-active);
 }
-.agent-card:nth-child(1):hover { border-color: var(--color-agy); box-shadow: 0 10px 30px rgba(231,76,60,0.12), inset 0 0 15px rgba(231,76,60,0.05); }
-.agent-card:nth-child(2):hover { border-color: var(--color-jules); box-shadow: 0 10px 30px rgba(243,156,18,0.12), inset 0 0 15px rgba(243,156,18,0.05); }
-.agent-card:nth-child(3):hover { border-color: var(--color-bolt); box-shadow: 0 10px 30px rgba(241,196,15,0.12), inset 0 0 15px rgba(241,196,15,0.05); }
-.agent-card:nth-child(4):hover { border-color: var(--color-hermes); box-shadow: 0 10px 30px rgba(46,204,113,0.12), inset 0 0 15px rgba(46,204,113,0.05); }
-.agent-card:nth-child(5):hover { border-color: var(--color-codex); box-shadow: 0 10px 30px rgba(52,152,219,0.12), inset 0 0 15px rgba(52,152,219,0.05); }
-.agent-card:nth-child(6):hover { border-color: var(--color-research); box-shadow: 0 10px 30px rgba(155,89,182,0.12), inset 0 0 15px rgba(155,89,182,0.05); }
 
 .agent-dot {
-  width: 10px; height: 10px; border-radius: 50%; margin-bottom: 0.75rem;
-  box-shadow: 0 0 8px currentColor;
+  width: 10px; height: 10px; border-radius: 50%; margin: 0 auto 0.75rem;
+  background: #E8E8ED; box-shadow: 0 0 8px rgba(232,232,237,0.6);
 }
 .agent-dot.red { background: var(--color-agy); color: var(--color-agy); }
 .agent-dot.amber { background: var(--color-jules); color: var(--color-jules); }
@@ -598,22 +600,41 @@ box-shadow: 0 0 30px rgba(213,0,249,0.2)
 }
 
 /* Scroll Reveal */
+/* Scroll Reveal: visible by default; animated only when JS is available */
 .scroll-reveal {
-  opacity: 0;
-  transform: translateY(20px);
+  opacity: 1;
   transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.scroll-reveal.revealed {
+html.js .scroll-reveal {
+  opacity: 0;
+  transform: translateY(20px);
+}
+html.js .scroll-reveal.revealed {
   opacity: 1;
   transform: translateY(0);
 }
+@media (prefers-reduced-motion: reduce) {
+  html.js .scroll-reveal { opacity: 1; transform: none; }
+  .scroll-reveal { transition: none; }
+}
+
+
+/* Accessibility: skip link + focus */
+.skip-link {
+  position: absolute; left: -9999px; top: 0; z-index: 9999;
+  background: #E8E8ED; color: #080809; font-weight: 700;
+  padding: 0.75rem 1.25rem; border-radius: 0 0 6px 0;
+  font-size: 0.9rem; text-decoration: none;
+}
+.skip-link:focus { left: 0; }
+:focus-visible { outline: 2px solid #E8E8ED; outline-offset: 3px; }
 
 /* Footer */
 footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; background: rgba(10,10,11,0.5); }
 .footer-grid { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2rem; }
 .footer-brand { display: flex; align-items: center; gap: 0.75rem; }
 .footer-brand span { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; }
-.footer-links { display: flex; gap: 2.5rem; }
+.footer-links { display: flex; gap: 2.5rem; flex-wrap: wrap; }
 .footer-links a { color: var(--text-muted); text-decoration: none; font-size: 0.85rem; transition: color 0.2s; }
 .footer-links a:hover { color: var(--text-primary); }
 .footer-bottom { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border-steel); color: var(--text-muted); font-size: 0.8rem; }
@@ -622,6 +643,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
 @media (max-width: 1023px) {
   .spectrum-grid { grid-template-columns: repeat(3, 1fr); gap: 1rem; }
   .what-grid { grid-template-columns: 1fr; gap: 3rem; }
+  .card-grid-2, .card-grid-3, .card-grid-4 { grid-template-columns: 1fr; }
   .how-pipeline { grid-template-columns: 1fr; gap: 1rem; }
   .pipeline-arrow { transform: rotate(90deg); padding: 0.5rem 0; text-align: center; animation: arrow-bounce-v 2s infinite ease-in-out; }
   .nav-links { display: none; }
@@ -656,10 +678,11 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <nav>
   <div class="container">
     <a href="/" class="nav-logo">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28" style="display:block;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28" style="display:block;" aria-hidden="true">
         <defs>
           <linearGradient id="logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
@@ -699,6 +722,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     </div>
   </div>
 </nav>
+<main id="main-content">
 <section class="page-hero">
   <div class="container">
     <div class="hero-label">Autonomy tiers</div>
@@ -710,10 +734,10 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     <div class="section-label">The tiers</div>
     <h2 class="section-title">Three tiers. One brake: a human.</h2>
     
-    <div class="what-grid">
+    <div class="card-grid card-grid-3">
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">T0 &mdash; ACTIVE TODAY</div>
           <div class="agent-name">Manual.</div>
           <div class="agent-details">Every merge is human-approved. The machinery verifies; you decide.</div>
@@ -721,7 +745,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">T1 &mdash; DEFINED AND APPROVED</div>
           <div class="agent-name">Deterministic.</div>
           <div class="agent-details">Docs, chores, and dependency bumps auto-merge only when CI is green, novelty is clean, and a signed receipt exists &mdash; behind a twofold brake. Arming stays a human decision.</div>
@@ -729,7 +753,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#d500f9"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">T2 / T3 &mdash; DEFINED, UNBUILT</div>
           <div class="agent-name">On purpose.</div>
           <div class="agent-details">The spec exists. We won&rsquo;t build them until the evidence says they&rsquo;re safe.</div>
@@ -752,11 +776,12 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     <ul class="rule-list"><li>Production deploys.</li><li>Auth and security paths.</li><li>Irreversible actions.</li></ul>
   </div>
 </section>
+</main>
 <footer>
   <div class="container">
     <div class="footer-grid">
       <div class="footer-brand">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" style="display:block;opacity:0.6;" style="display:block;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" style="display:block;opacity:0.6;" aria-hidden="true"> style="display:block;">
         <defs>
           <linearGradient id="logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
