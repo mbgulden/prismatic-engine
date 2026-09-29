@@ -16,6 +16,11 @@ from prismatic.harnesses.agy_sdk import (
     is_sdk_available,
 )
 
+pytestmark = pytest.mark.skipif(
+    not is_sdk_available(),
+    reason="google-antigravity SDK not installed (opt-in 'antigravity' extra)",
+)
+
 
 class MockUsageMetadata:
     def __init__(self, prompt: int = 150, candidates: int = 50, total: int = 200, thinking: int = 20):
