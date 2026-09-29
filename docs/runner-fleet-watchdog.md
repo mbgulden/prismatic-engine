@@ -55,7 +55,10 @@ On the runner host, as a user with passwordless sudo for the two runner units:
 Type=oneshot
 ExecStart=/usr/bin/python3 /opt/prismatic-engine/scripts/runner_fleet_watchdog.py \
   --repo mbgulden/prismatic-engine --no-dry-run
-Environment=GITHUB_TOKEN_FILE=/etc/prismatic/github-token
+# /etc/prismatic/github-token contains one line: GITHUB_TOKEN=<token>
+# (0400 perms). systemd reads it into the environment; the script itself
+# only honors $GITHUB_TOKEN / --token.
+EnvironmentFile=/etc/prismatic/github-token
 ```
 
 ```ini
@@ -73,8 +76,9 @@ watchdog-user ALL=(root) NOPASSWD: /bin/systemctl restart actions.runner.mbgulde
 Notes:
 
 - The token needs only `actions:read` on the repo. It is read from
-  `$GITHUB_TOKEN` / `--token`; prefer a token file with `0400` perms, never
-  bake it into the unit file.
+  `$GITHUB_TOKEN` / `--token` only — never bake it into the unit file.
+  Under systemd, supply it via `EnvironmentFile=` pointing at a `0400`
+  file containing a `GITHUB_TOKEN=<token>` line, as shown above.
 - Every recovery, aborted recovery, and offline runner appends a JSON line to
   the alert log (default `~/.prismatic/runner-fleet-watchdog/alerts.jsonl`)
   and prints to stdout (captured by the journal under systemd).
