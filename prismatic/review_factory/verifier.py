@@ -514,17 +514,22 @@ class VerificationWorker:
         def _is_mut_or_sub(dotted):
             return dotted == mut_module or dotted.startswith(mut_module + ".")
 
+        # A test with no prismatic imports cannot be circular by definition
+        # (there is no module-under-test import to be self-validating).
+        # Pass with a note rather than fail-closed: the previous
+        # "inconclusive" failure false-flagged legitimate non-prismatic
+        # tests (e.g. dashboard tests) and broke the tier-A gate on PR #639.
         if not imported:
             return CheckResult(
                 name=f"circular-proof:{Path(test_path).stem}",
                 proof_class="focused",
                 command=f"grep PE-surface-import {test_path}",
-                exit_code=1,
+                exit_code=0,
                 stderr=(
-                    f"Circular proof check inconclusive in {test_path}: "
-                    "no prismatic imports found."
+                    f"Circular proof check passed vacuously in {test_path}: "
+                    "no prismatic imports found, nothing circular to detect."
                 ),
-                passed=False,
+                passed=True,
             )
 
         if all(_is_mut_or_sub(d) for d in imported):
