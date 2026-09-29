@@ -84,8 +84,23 @@ def stub_swarmmerge(monkeypatch):
 
 @pytest.fixture()
 def no_swarmmerge(monkeypatch):
-    """Guarantee the primitive is absent: clear the lazy cache and drop any
-    stub from sys.modules, so _swarmmerge_or_raise() must fail."""
+    """Simulate the primitive being absent via an import hook.
+
+    swarmmerge ships as a base dependency, so merely dropping it from
+    sys.modules no longer reproduces "not installed" — the lazy import
+    inside _swarmmerge_or_raise() would succeed. Block the import itself
+    so the clear-error path is genuinely exercised.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _blocked_import(name, *args, **kwargs):
+        if name == "swarmmerge" or name.startswith("swarmmerge."):
+            raise ImportError("blocked by no_swarmmerge fixture (simulated absence)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked_import)
     monkeypatch.setattr(merge_plugin, "_swarmmerge", None)
     monkeypatch.delitem(sys.modules, "swarmmerge", raising=False)
     monkeypatch.delitem(sys.modules, "swarmmerge.strategies", raising=False)
