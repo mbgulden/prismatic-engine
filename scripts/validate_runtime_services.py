@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -67,18 +68,24 @@ EXECUTION_PATH_FIELDS = frozenset(
         "working_directory",
     }
 )
+# Canonical templates in {PRISMATIC_HOME} placeholder form: one shipped manifest
+# validates identically on every machine. Resolved against the effective home
+# at validation time (never at import — import must stay side-effect free).
 MUTABLE_EXECUTION_PREFIXES = (
-    "/home/ubuntu/work/",
-    "/home/ubuntu/.prismatic/runtime/",
-    "/home/ubuntu/.hermes/profiles/",
+    "{PRISMATIC_HOME}/work/",
+    "{PRISMATIC_HOME}/.prismatic/runtime/",
+    "{PRISMATIC_HOME}/.hermes/profiles/",
 )
-ENGINE_RELEASE_TEMPLATE = "/home/ubuntu/.prismatic/releases/{release_id}"
-SEPARATE_RELEASE_PREFIX = "/home/ubuntu/.prismatic/components/merge-daemon/releases/"
+ENGINE_RELEASE_TEMPLATE = "{PRISMATIC_HOME}/.prismatic/releases/{release_id}"
+SEPARATE_RELEASE_PREFIX = (
+    "{PRISMATIC_HOME}/.prismatic/components/merge-daemon/releases/"
+)
 STATE_ROOTS = (
-    "/home/ubuntu/.prismatic/",
+    "{PRISMATIC_HOME}/.prismatic/",
     "/archive/agy_sandboxes",
-    "/home/ubuntu/mounts/synology-agentic-context/agy_sandboxes",
+    "{PRISMATIC_HOME}/mounts/synology-agentic-context/agy_sandboxes",
 )
+HOME_PLACEHOLDER = "{PRISMATIC_HOME}"
 SECRET_MARKER = re.compile(
     r"(?:\btoken\b|\bpassword\b|\bsecret\b|private[-_ ]key|begin private key)",
     re.IGNORECASE,
@@ -142,7 +149,50 @@ def _plain_key_set(
     return frozenset(keys), None
 
 
-def _validate_component(component: dict[str, Any], index: int) -> list[str]:
+def _effective_home() -> str:
+    """Effective PRISMATIC_HOME: explicit env first, then the invoking user's home.
+
+    Called at validation time, never at import (import must stay side-effect
+    free — see test_import_has_no_runtime_side_effects).
+    """
+    return os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~")
+
+
+def _expand_home(value: str, home: str) -> str:
+    return value.replace(HOME_PLACEHOLDER, home)
+
+
+def _expand_component_paths(component: dict[str, Any], home: str) -> dict[str, Any]:
+    """Expand {PRISMATIC_HOME} in every string path the manifest declares."""
+    expanded: dict[str, Any] = {}
+    for key, value in component.items():
+        if type(value) is str:
+            expanded[key] = _expand_home(value, home)
+        elif type(value) is list:
+            expanded[key] = [
+                _expand_home(item, home) if type(item) is str else item
+                for item in value
+            ]
+        else:
+            expanded[key] = value
+    return expanded
+
+
+def _canonical_paths(home: str) -> dict[str, Any]:
+    """Canonical constants with {PRISMATIC_HOME} resolved for this machine."""
+    return {
+        "engine_release_template": _expand_home(ENGINE_RELEASE_TEMPLATE, home),
+        "separate_release_prefix": _expand_home(SEPARATE_RELEASE_PREFIX, home),
+        "mutable_execution_prefixes": tuple(
+            _expand_home(prefix, home) for prefix in MUTABLE_EXECUTION_PREFIXES
+        ),
+        "state_roots": tuple(_expand_home(root, home) for root in STATE_ROOTS),
+        "env_d_root": f"{home}/.prismatic/env.d/",
+        "engine_releases_root": f"{home}/.prismatic/releases/",
+    }
+
+
+def _validate_component(component: dict[str, Any], index: int, home: str) -> list[str]:
     errors: list[str] = []
     label = f"components[{index}]"
     keys, key_error = _plain_key_set(component, label)
@@ -176,6 +226,18 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
     if errors:
         return errors
 
+    # From here on, validate the declared paths with {PRISMATIC_HOME} resolved
+    # against this machine's effective home, so one shipped manifest validates
+    # identically on every machine (and agrees with engine.doctor's probe).
+    paths = _canonical_paths(home)
+    component = _expand_component_paths(component, home)
+    mutable_prefixes = paths["mutable_execution_prefixes"]
+    engine_release_template = paths["engine_release_template"]
+    separate_release_prefix = paths["separate_release_prefix"]
+    state_roots = paths["state_roots"]
+    env_d_root = paths["env_d_root"]
+    engine_releases_root = paths["engine_releases_root"]
+
     all_values = [component[field] for field in STRING_FIELDS]
     for field in LIST_FIELDS:
         all_values.extend(component[field])
@@ -187,16 +249,14 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
         problem = _path_error(value)
         if problem:
             errors.append(f"{label}.{field}: {problem}")
-        if any(_has_prefix(value, prefix) for prefix in MUTABLE_EXECUTION_PREFIXES):
+        if any(_has_prefix(value, prefix) for prefix in mutable_prefixes):
             errors.append(f"{label}.{field}: mutable execution path is forbidden")
     module_path = component["module_path"]
     if "/" in module_path:
         problem = _path_error(module_path)
         if problem:
             errors.append(f"{label}.module_path: {problem}")
-        if any(
-            _has_prefix(module_path, prefix) for prefix in MUTABLE_EXECUTION_PREFIXES
-        ):
+        if any(_has_prefix(module_path, prefix) for prefix in mutable_prefixes):
             errors.append(f"{label}.module_path: mutable execution path is forbidden")
     elif MODULE_NAME.fullmatch(module_path) is None:
         errors.append(f"{label}.module_path: must be a dotted module or absolute path")
@@ -205,9 +265,7 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
         problem = _path_error(import_path)
         if problem:
             errors.append(f"{label}.import_paths[{item_index}]: {problem}")
-        if any(
-            _has_prefix(import_path, prefix) for prefix in MUTABLE_EXECUTION_PREFIXES
-        ):
+        if any(_has_prefix(import_path, prefix) for prefix in mutable_prefixes):
             errors.append(
                 f"{label}.import_paths[{item_index}]: mutable execution path is forbidden"
             )
@@ -216,7 +274,7 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
         problem = _path_error(environment_file)
         if problem:
             errors.append(f"{label}.environment_files[{item_index}]: {problem}")
-        if not environment_file.startswith("/home/ubuntu/.prismatic/env.d/"):
+        if not environment_file.startswith(env_d_root):
             errors.append(
                 f"{label}.environment_files[{item_index}]: must be under the env.d root"
             )
@@ -231,11 +289,11 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
         problem = _path_error(state_path)
         if problem:
             errors.append(f"{label}.state_paths[{item_index}]: {problem}")
-        if not any(_has_prefix(state_path, root) for root in STATE_ROOTS):
+        if not any(_has_prefix(state_path, root) for root in state_roots):
             errors.append(f"{label}.state_paths[{item_index}]: root is not approved")
-        forbidden_state_roots = MUTABLE_EXECUTION_PREFIXES + (
-            "/home/ubuntu/.prismatic/releases/",
-            SEPARATE_RELEASE_PREFIX,
+        forbidden_state_roots = mutable_prefixes + (
+            engine_releases_root,
+            separate_release_prefix,
         )
         if any(_has_prefix(state_path, root) for root in forbidden_state_roots):
             errors.append(
@@ -255,9 +313,9 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
             errors.append(f"{label}: merge-daemon release binding must be separate")
         if component["separately_versioned"] is not True:
             errors.append(f"{label}: merge-daemon must be separately versioned")
-        if release_template == ENGINE_RELEASE_TEMPLATE:
+        if release_template == engine_release_template:
             errors.append(f"{label}: merge-daemon must not bind to an Engine release")
-        if not release_template.startswith(SEPARATE_RELEASE_PREFIX):
+        if not release_template.startswith(separate_release_prefix):
             errors.append(f"{label}: merge-daemon release template is not approved")
     else:
         if component["owner"] != "prismatic-engine":
@@ -270,7 +328,7 @@ def _validate_component(component: dict[str, Any], index: int) -> list[str]:
             errors.append(f"{label}: Engine release binding is invalid")
         if component["separately_versioned"] is not False:
             errors.append(f"{label}: Engine component cannot be separately versioned")
-        if release_template != ENGINE_RELEASE_TEMPLATE:
+        if release_template != engine_release_template:
             errors.append(f"{label}: Engine release template is invalid")
 
     if "{release_id}" not in release_template:
@@ -333,12 +391,13 @@ def validate_manifest(document: Any) -> list[str]:
     if type(components) is not list or not components:
         errors.append("components: must be a non-empty plain list")
         return errors
+    home = _effective_home()
     ids: list[str] = []
     for index, component in enumerate(components):
         if type(component) is not dict:
             errors.append(f"components[{index}]: must be a plain object")
             continue
-        component_errors = _validate_component(component, index)
+        component_errors = _validate_component(component, index, home)
         errors.extend(component_errors)
         if component_errors:
             continue

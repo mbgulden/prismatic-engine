@@ -57,6 +57,40 @@ def test_repository_manifest_passes() -> None:
     assert validator.load_manifest(MANIFEST_PATH) == manifest()
 
 
+def test_manifest_validates_under_non_ubuntu_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shipped manifest (with {PRISMATIC_HOME} placeholders) must validate
+    identically when PRISMATIC_HOME is not /home/ubuntu."""
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("PRISMATIC_HOME", str(fake_home))
+    assert validator.validate_manifest(manifest()) == []
+
+
+def test_legacy_hardcoded_home_rejected_when_home_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A declared literal /home/ubuntu path is non-canonical on other machines."""
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("PRISMATIC_HOME", str(fake_home))
+    document = manifest()
+    component(document)["release_path_template"] = (
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+    )
+    assert_invalid(document, "release template is invalid")
+
+
+def test_validator_constants_stay_portable() -> None:
+    """Module constants carry the placeholder, never a machine-specific home."""
+    assert "{PRISMATIC_HOME}" in validator.ENGINE_RELEASE_TEMPLATE
+    assert "{PRISMATIC_HOME}" in validator.SEPARATE_RELEASE_PREFIX
+    assert all("{PRISMATIC_HOME}" in p for p in validator.MUTABLE_EXECUTION_PREFIXES)
+    assert "/home/ubuntu" not in validator.ENGINE_RELEASE_TEMPLATE
+    assert "/home/ubuntu" not in validator.SEPARATE_RELEASE_PREFIX
+
+
 def test_exact_component_set_and_schema_version() -> None:
     document = manifest()
     assert document["schema_version"] == validator.SCHEMA_VERSION == 1
