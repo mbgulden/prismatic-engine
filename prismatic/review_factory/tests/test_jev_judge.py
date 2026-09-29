@@ -344,7 +344,9 @@ def _with_judgment_env(monkeypatch):
     monkeypatch.setenv("SWARMJEV_CALLSITE_REVIEW_JUDGMENT_ENABLED", "1")
 
 
-def test_merge_stage_withholds_merge_on_escalation(monkeypatch, clear_jev_env):
+def test_merge_stage_withholds_merge_on_escalation(
+    monkeypatch, clear_jev_env, stub_arming_armed
+):
     from prismatic.review_factory.merge_stage import MergeStage, MergeStageConfig
 
     _with_judgment_env(monkeypatch)
@@ -421,17 +423,48 @@ def stub_autonomy_allowed(monkeypatch):
     import sys
     import types
 
+    import prismatic.review_factory as rf_pkg
+
     autonomy = types.ModuleType("prismatic.review_factory.autonomy")
     autonomy.brake_status = lambda: {"engaged": False}
     autonomy.can_auto_merge = lambda **kwargs: SimpleNamespace(
         allowed=True, reason="auto_merge_allowed"
     )
     monkeypatch.setitem(sys.modules, "prismatic.review_factory.autonomy", autonomy)
+    # Both the package attribute and sys.modules: the consult's
+    # ``from prismatic.review_factory import autonomy`` resolves the
+    # package attribute first, so a sys.modules-only stub would be
+    # shadowed if any earlier test imported the real submodule.
+    monkeypatch.setattr(rf_pkg, "autonomy", autonomy, raising=False)
     return autonomy
 
 
+@pytest.fixture
+def stub_arming_armed(monkeypatch):
+    """Stub the single arming consult as armed.
+
+    Post-ceremony, ``MergeStage.process()`` refuses with
+    ``refused_not_armed`` unless ``arming.t1_arming_status()`` reports
+    armed. Tests that exercise behavior downstream of the gate opt into
+    an armed record; the gate's own fail-closed posture is covered in
+    ``test_t1_arming_ceremony.py``.
+    """
+    from prismatic.review_factory import arming
+
+    record = {"tier": 1}
+    monkeypatch.setattr(
+        arming,
+        "t1_arming_status",
+        lambda ledger=None: {"armed": True, "reason": "t1_armed", "record": record},
+    )
+
+
 def test_merge_stage_proceeds_on_clear(
-    monkeypatch, clear_jev_env, stub_merge_executor, stub_autonomy_allowed
+    monkeypatch,
+    clear_jev_env,
+    stub_merge_executor,
+    stub_autonomy_allowed,
+    stub_arming_armed,
 ):
     from prismatic.review_factory.merge_stage import MergeStage, MergeStageConfig
 
@@ -459,7 +492,11 @@ def test_merge_stage_proceeds_on_clear(
 
 
 def test_merge_stage_judgment_fail_open(
-    monkeypatch, clear_jev_env, stub_merge_executor, stub_autonomy_allowed
+    monkeypatch,
+    clear_jev_env,
+    stub_merge_executor,
+    stub_autonomy_allowed,
+    stub_arming_armed,
 ):
     # A judge failure must never break the hot path: the deterministic
     # verdict stands and the merge proceeds.

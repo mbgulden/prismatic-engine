@@ -52,9 +52,17 @@ def _stub_autonomy_allowed(monkeypatch):
     exercise behavior downstream of the consult (executor paths, daemon
     wiring) opt into an allowing stub; the consult's own fail-closed
     posture is covered in test_earned_autonomy_wiring.py.
+
+    The stub is installed BOTH as the ``autonomy`` attribute on the
+    ``prismatic.review_factory`` package AND in ``sys.modules``: the
+    consult's ``from prismatic.review_factory import autonomy`` resolves
+    the package attribute first, so a sys.modules-only stub would be
+    shadowed if any earlier test imported the real submodule.
     """
     import sys
     import types
+
+    import prismatic.review_factory as rf_pkg
 
     autonomy = types.ModuleType("prismatic.review_factory.autonomy")
     autonomy.brake_status = lambda: {"engaged": False}
@@ -62,6 +70,27 @@ def _stub_autonomy_allowed(monkeypatch):
         allowed=True, reason="auto_merge_allowed"
     )
     monkeypatch.setitem(sys.modules, "prismatic.review_factory.autonomy", autonomy)
+    monkeypatch.setattr(rf_pkg, "autonomy", autonomy, raising=False)
+
+
+def _stub_arming_armed(monkeypatch, tier: int = 1):
+    """Stub the single arming consult as armed.
+
+    Post-ceremony, ``MergeStage.process()`` refuses with
+    ``refused_not_armed`` unless ``arming.t1_arming_status()`` reports
+    armed. Tests that exercise behavior downstream of the gate (stage
+    internals, executor paths, daemon wiring) opt into an armed record;
+    the gate's own fail-closed posture is covered in
+    ``test_t1_arming_ceremony.py``.
+    """
+    from prismatic.review_factory import arming
+
+    record = {"tier": tier}
+    monkeypatch.setattr(
+        arming,
+        "t1_arming_status",
+        lambda ledger=None: {"armed": True, "reason": "t1_armed", "record": record},
+    )
 
 
 # ── fixtures & helpers ─────────────────────────────────────────────
@@ -186,14 +215,17 @@ class TestMergeStageConfig:
         assert cfg.enabled is False
         assert cfg.dry_run is True
 
-    def test_from_env_enables_explicitly(self, monkeypatch):
+    def test_from_env_retires_old_vars(self, monkeypatch):
+        # The old env-var authority is retired: the vars are ignored (a
+        # warning is logged), and the config stays inert. Arming comes only
+        # from the signed t1_armed trust-ledger record (arming ceremony).
         monkeypatch.setenv("PRISMATIC_RF_MERGE_AUTHORITY", "1")
         monkeypatch.setenv("PRISMATIC_RF_MERGE_DRY_RUN", "0")
         monkeypatch.setenv("PRISMATIC_RF_MERGE_LIVE_TIERS", "0,1")
         cfg = MergeStageConfig.from_env()
-        assert cfg.enabled is True
-        assert cfg.dry_run is False
-        assert set(cfg.live_tiers) == {0, 1}
+        assert cfg.enabled is False
+        assert cfg.dry_run is True
+        assert set(cfg.live_tiers) == set()
 
     @pytest.mark.parametrize("tiers", [{2}, {3}, {0, 2}, {1, 3}])
     def test_live_tiers_reject_tier_2_and_3(self, tiers):
@@ -261,7 +293,8 @@ def _merge_ready_job(queue, tier=0, task_id=None):
 
 
 class TestMergeStage:
-    def test_disabled_stage_skips_without_touching_job(self, queue):
+    def test_disabled_stage_skips_without_touching_job(self, queue, monkeypatch):
+        _stub_arming_armed(monkeypatch)
         job_id = _merge_ready_job(queue, tier=0)
         stage = MergeStage(queue, MergeStageConfig())  # disabled by default
         result = stage.process(queue.db.get_review_job(job_id))
@@ -270,7 +303,8 @@ class TestMergeStage:
         assert job.state == ReviewJobState.MERGE_READY.value
         assert queue.db.get_authorization_for_job(job_id) is None
 
-    def test_tier_2_refused_fail_closed(self, queue):
+    def test_tier_2_refused_fail_closed(self, queue, monkeypatch):
+        _stub_arming_armed(monkeypatch)
         job_id = _merge_ready_job(queue, tier=2)
         cfg = MergeStageConfig(
             enabled=True,
@@ -286,7 +320,8 @@ class TestMergeStage:
         entry = queue.db.find_audit_entry(job_id, "auto_merge_refused_tier")
         assert entry is not None
 
-    def test_tier_not_in_live_tiers_refused(self, queue):
+    def test_tier_not_in_live_tiers_refused(self, queue, monkeypatch):
+        _stub_arming_armed(monkeypatch)
         job_id = _merge_ready_job(queue, tier=1)
         cfg = MergeStageConfig(
             enabled=True,
@@ -299,7 +334,8 @@ class TestMergeStage:
         entry = queue.db.find_audit_entry(job_id, "auto_merge_tier_not_enabled")
         assert entry is not None
 
-    def test_live_without_repo_path_refuses(self, queue):
+    def test_live_without_repo_path_refuses(self, queue, monkeypatch):
+        _stub_arming_armed(monkeypatch)
         job_id = _merge_ready_job(queue, tier=0)
         cfg = MergeStageConfig(
             enabled=True,
@@ -317,6 +353,7 @@ class TestMergeStage:
     ):
         job_id = _merge_ready_job(queue, tier=0)
         _stub_autonomy_allowed(monkeypatch)
+        _stub_arming_armed(monkeypatch)
         job_id = _merge_ready_job(queue, tier=0)
         # The dry-run executor validates against the durable manifest the
         # daemon persisted; mirror that here.
@@ -382,6 +419,7 @@ class TestMergeStage:
         job_id = _merge_ready_job(queue, tier=0, task_id="GRO-1234")
         hooks, provider = _hooks(queue.db)
         _stub_autonomy_allowed(monkeypatch)
+        _stub_arming_armed(monkeypatch)
 
         seen = {}
 
@@ -418,6 +456,7 @@ class TestMergeStage:
     def test_live_merge_failure_is_audited(self, queue, tmp_path, monkeypatch):
         job_id = _merge_ready_job(queue, tier=0)
         _stub_autonomy_allowed(monkeypatch)
+        _stub_arming_armed(monkeypatch)
 
         class BoomExecutor:
             def __init__(self, **kwargs):
@@ -1240,8 +1279,7 @@ class TestDaemonMergeWiring:
         daemon = VerificationWorkerDaemon(repo_path=str(tmp_path), merge_stage=stage)
         daemon.queue = queue
         try:
-            # Authority enabled but no tiers in PRISMATIC_RF_MERGE_LIVE_TIERS:
-            # still no leasing at all.
+            # Stage enabled but no live tiers: still no leasing at all.
             assert daemon._pump_once() is False
             job = queue.db.get_review_job(job_id)
             assert job.state == ReviewJobState.MERGE_READY.value
@@ -1276,6 +1314,7 @@ class TestDaemonMergeWiring:
         job_id = _merge_ready_job(queue, tier=0)
         calls = []
         _stub_autonomy_allowed(monkeypatch)
+        _stub_arming_armed(monkeypatch)
 
         def _refuse(*args, **kwargs):
             calls.append(1)

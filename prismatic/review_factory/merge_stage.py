@@ -28,11 +28,11 @@ Ladder mapping:
        authorization. ``live_tiers`` may not contain 2 or 3 — rejected at
        config time.
 
-Env overrides (all optional; defaults keep the stage inert):
-
-  PRISMATIC_RF_MERGE_AUTHORITY=1      enable the stage
-  PRISMATIC_RF_MERGE_DRY_RUN=0        allow live merges (default 1 = dry-run)
-  PRISMATIC_RF_MERGE_LIVE_TIERS=0,1   tiers allowed to merge live
+Arming (single ceremony): T1 moves only on a valid signed ``t1_armed``
+trust-ledger record (see ``prismatic.review_factory.arming``). The old
+``PRISMATIC_RF_MERGE_AUTHORITY`` / ``PRISMATIC_RF_MERGE_DRY_RUN`` /
+``PRISMATIC_RF_MERGE_LIVE_TIERS`` environment variables are RETIRED and
+ignored (a warning is logged if set).
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from prismatic.review_factory import arming
 from prismatic.review_factory.models import ReviewJobState
 
 logger = logging.getLogger(__name__)
@@ -57,13 +58,6 @@ _AUTO_MERGEABLE_TIERS = frozenset({0, 1})
 # the default detector from the shipped policy"; an explicit None disables
 # the screen entirely.
 _UNSET: Any = object()
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -89,21 +83,28 @@ class MergeStageConfig:
 
     @classmethod
     def from_env(cls) -> "MergeStageConfig":
-        raw_tiers = os.environ.get("PRISMATIC_RF_MERGE_LIVE_TIERS", "").strip()
-        tiers: set[int] = set()
-        for part in raw_tiers.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            try:
-                tiers.add(int(part))
-            except ValueError:
-                logger.warning("ignoring invalid live tier %r", part)
-        return cls(
-            enabled=_env_flag("PRISMATIC_RF_MERGE_AUTHORITY", False),
-            dry_run=_env_flag("PRISMATIC_RF_MERGE_DRY_RUN", True),
-            live_tiers=frozenset(tiers),
-        )
+        """Return the inert default config.
+
+        The ``PRISMATIC_RF_MERGE_AUTHORITY`` / ``PRISMATIC_RF_MERGE_DRY_RUN`` /
+        ``PRISMATIC_RF_MERGE_LIVE_TIERS`` environment variables are RETIRED:
+        T1 arming is now the single signed ``t1_armed`` trust-ledger record
+        (see ``prismatic.review_factory.arming``), and the daemon wires the
+        merge stage from that record. If any of the retired variables is set,
+        a warning is logged so operators are not silently confused; the
+        values are ignored.
+        """
+        for name in (
+            "PRISMATIC_RF_MERGE_AUTHORITY",
+            "PRISMATIC_RF_MERGE_DRY_RUN",
+            "PRISMATIC_RF_MERGE_LIVE_TIERS",
+        ):
+            if os.environ.get(name) is not None:
+                logger.warning(
+                    "ignoring retired env var %s: T1 arming now comes from the "
+                    "signed t1_armed trust-ledger record (arming ceremony)",
+                    name,
+                )
+        return cls()
 
 
 @dataclass
@@ -112,8 +113,8 @@ class MergeStageResult:
 
     job_id: str
     action: str  # skipped_disabled | refused_tier | refused_autonomy |
-    #            # authorize_failed | dry_run_ok | merged | failed |
-    #            # judgment_escalated
+    #            # refused_not_armed | authorize_failed | dry_run_ok |
+    #            # merged | failed | judgment_escalated
     merge_sha: str = ""
     authorization_id: str = ""
     error: str = ""
@@ -159,6 +160,25 @@ class MergeStage:
     def process(self, job: Any) -> MergeStageResult:
         """Run the staged merge decision for one leased MERGE_READY job."""
         job_id = job.review_job_id
+
+        # The single arming consult: T1 moves only on a valid signed arming
+        # record. This gate runs before everything else — a missing, invalid,
+        # or expired record leaves the stage inert for this job.
+        arming_status = arming.t1_arming_status()
+        if not arming_status["armed"]:
+            self._audit_once(
+                job_id,
+                "auto_merge_refused_not_armed",
+                {"reason": arming_status["reason"]},
+            )
+            logger.info(
+                "auto-merge refused for job %s: T1 not armed (%s)",
+                job_id,
+                arming_status["reason"],
+            )
+            return MergeStageResult(job_id=job_id, action="refused_not_armed")
+        arming_tier = int((arming_status["record"] or {}).get("tier", 1))
+
         tier = int(getattr(job, "risk_tier", 1) or 0)
 
         # Tier 2/3: NEVER auto-merge. Fail closed before anything else.
@@ -230,7 +250,10 @@ class MergeStage:
         # dry-run mode too — dry_run_ok means "would have merged under
         # autonomy".
         autonomy_allowed, autonomy_reason = self._autonomy_consult(
-            job, novelty_flags=novelty_flags, novelty_inert=novelty_inert
+            job,
+            arming_tier=arming_tier,
+            novelty_flags=novelty_flags,
+            novelty_inert=novelty_inert,
         )
         if not autonomy_allowed:
             self._audit(
@@ -588,6 +611,8 @@ class MergeStage:
     def _autonomy_consult(
         self,
         job: Any,
+        *,
+        arming_tier: int = 1,
         judgment: Any = None,
         novelty_flags: tuple[str, ...] = (),
         novelty_inert: bool = False,
@@ -595,10 +620,11 @@ class MergeStage:
         """Consult the earned-autonomy tier engine for one merge candidate.
 
         Returns (allowed, reason). Fail-closed: the merge is refused
-        whenever the phase-2 module is absent, the trust tier cannot be
-        read, or any part of the consult raises. While phases 1/2 are
-        unmerged every consult refuses with "autonomy_module_absent" —
-        the stage stays green and inert on the phase-1/2 boundary.
+        whenever the phase-2 module is absent or any part of the consult
+        raises. The tier comes from the signed T1 arming record (consulted
+        by the caller in ``process()``) — the ledger ``current_tier`` no
+        longer arms anything, and the ``PRISMATIC_AUTONOMY_ENABLED`` brake
+        no longer gates merges (emergency stop is the disarm ceremony).
         ``novelty_flags`` carries the novelty screen's trips so the
         novelty-clean predicate is enforced when the detector is armed;
         ``novelty_inert`` notes the predicate was vacuous (never a quiet
@@ -609,29 +635,15 @@ class MergeStage:
         except Exception:
             logger.debug("earned-autonomy autonomy module absent; merge withheld")
             return False, "autonomy_module_absent"
-        # The current earned tier comes from the phase-1 trust ledger (lazy
-        # boundary). On ANY failure treat the tier as 0: tier 0 never
-        # auto-merges, so the consult fails closed through can_auto_merge's
-        # own rules.
-        try:
-            from prismatic.review_factory import trust
-
-            ledger = trust.TrustLedger()
-            tier = int(ledger.tier_status().get("current_tier", 0))
-        except Exception as exc:
-            logger.debug("trust tier lookup failed (%s); treating tier as 0", exc)
-            tier = 0
         try:
             from prismatic.review_factory.merge_executor import classify_change_class
 
-            brake = autonomy.brake_status()
-            brake_engaged = bool(brake.get("engaged", True))
             decision = autonomy.can_auto_merge(
-                tier=tier,
+                tier=int(arming_tier),
                 change_class=classify_change_class(job),
                 deterministic_verdict=getattr(job, "deterministic_verdict", "UNKNOWN"),
                 judgment=judgment,
-                brake_engaged=brake_engaged,
+                brake_engaged=False,
                 novelty_flags=tuple(novelty_flags),
                 novelty_inert=bool(novelty_inert),
             )

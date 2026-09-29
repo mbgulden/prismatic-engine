@@ -52,12 +52,19 @@ def _stub_autonomy_allowed(monkeypatch):
     import types
     from types import SimpleNamespace
 
+    import prismatic.review_factory as rf_pkg
+
     autonomy = types.ModuleType("prismatic.review_factory.autonomy")
     autonomy.brake_status = lambda: {"engaged": False}
     autonomy.can_auto_merge = lambda **kwargs: SimpleNamespace(
         allowed=True, reason="auto_merge_allowed"
     )
     monkeypatch.setitem(sys.modules, "prismatic.review_factory.autonomy", autonomy)
+    # Both the package attribute and sys.modules: the consult's
+    # ``from prismatic.review_factory import autonomy`` resolves the
+    # package attribute first, so a sys.modules-only stub would be
+    # shadowed if any earlier test imported the real submodule.
+    monkeypatch.setattr(rf_pkg, "autonomy", autonomy, raising=False)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -449,6 +456,16 @@ def test_process_continues_past_trip(tmp_path, monkeypatch):
     """End to end through process(): a tripping candidate still reaches the
     dry-run authorization — the pipeline is not halted."""
     _stub_autonomy_allowed(monkeypatch)
+    # Post-ceremony the arming gate runs first: opt into an armed record
+    # so this test exercises the novelty screen downstream of the gate.
+    from prismatic.review_factory import arming
+
+    record = {"tier": 0}
+    monkeypatch.setattr(
+        arming,
+        "t1_arming_status",
+        lambda ledger=None: {"armed": True, "reason": "t1_armed", "record": record},
+    )
     monkeypatch.setattr(
         "prismatic.review_factory.merge_executor.MergeExecutor", _StubExecutor
     )

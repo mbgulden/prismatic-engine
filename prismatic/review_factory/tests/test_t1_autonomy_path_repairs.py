@@ -169,10 +169,13 @@ def test_consult_passes_novelty_flags(monkeypatch, tmp_path):
     allowed, reason = ms_mod.MergeStage._autonomy_consult(
         stage,
         _job(["docs/guide.md"]),
+        arming_tier=1,
         novelty_flags=("novel_input",),
         novelty_inert=False,
     )
     assert allowed is False and reason == "test"
+    assert seen["tier"] == 1  # tier comes from the arming record, not the ledger
+    assert seen["brake_engaged"] is False  # brake retired from the decision path
     assert seen["novelty_flags"] == ("novel_input",)
     assert seen["novelty_inert"] is False
     assert seen["change_class"] == "docs"
