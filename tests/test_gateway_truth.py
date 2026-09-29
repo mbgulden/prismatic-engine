@@ -1,7 +1,7 @@
 """Tests for the read-only dashboard truth panels (GET /api/gateway/truth).
 
-Covers the five panels (trust ledger, merge receipts, T1 status, deployed
-SHA, consumer lag), per-panel fail-open behavior, the pristine/inert state,
+Covers the six panels (trust ledger, merge receipts, T1 status, deployed
+SHA, consumer lag, run receipts), per-panel fail-open behavior, the pristine/inert state,
 the T1 adversarial case (signed t1_armed record must surface as read-only —
 the arming path must never be invoked), and the HTTP route.
 """
@@ -17,7 +17,14 @@ from fastapi.testclient import TestClient
 from prismatic.gateway import server
 from prismatic.gateway.truth import _PROBES, get_truth_snapshot
 
-PANEL_NAMES = {"trust_ledger", "merge_receipts", "t1", "deployed_sha", "consumer_lag"}
+PANEL_NAMES = {
+    "trust_ledger",
+    "merge_receipts",
+    "t1",
+    "deployed_sha",
+    "consumer_lag",
+    "run_receipts",
+}
 
 
 def _scope_state(monkeypatch, tmp_path):
@@ -42,7 +49,7 @@ def _scope_state(monkeypatch, tmp_path):
     }
 
 
-def test_snapshot_has_five_panels(monkeypatch, tmp_path):
+def test_snapshot_has_six_panels(monkeypatch, tmp_path):
     _scope_state(monkeypatch, tmp_path)
     snapshot = get_truth_snapshot()
     assert snapshot["ok"] is True
@@ -282,6 +289,7 @@ def test_inert_state_snapshot_shape(monkeypatch, tmp_path):
     assert panels["merge_receipts"] == {"ok": False, "reason": "no data"}
     assert panels["consumer_lag"] == {"ok": False, "reason": "no data"}
     assert panels["deployed_sha"] == {"ok": False, "reason": "no data"}
+    assert panels["run_receipts"] == {"ok": False, "reason": "no data"}
     assert panels["t1"]["armed"] is False
     assert panels["t1"]["reason"] == "t1_never_armed"
 
