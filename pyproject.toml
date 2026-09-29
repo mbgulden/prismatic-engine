@@ -38,38 +38,43 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Dependency pin policy (B5): every git+https requirement is pinned to a full
+# 40-char commit SHA, never a floating branch. CI re-resolves these on every
+# run; a floating ref means two runs can test different code.
+# To update a pin: git ls-remote https://github.com/mbgulden/<repo>.git HEAD
+# tests/test_dependency_pins.py fails the build if any git URL floats.
 http = ["requests>=2.31"]
 redis = ["redis>=5.0"]
 gateway = ["fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.27", "websockets>=12.0"]
 primitives = [
     "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@392b858ecfb2fca416426adadece933938584994",
-    "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@main",
-    "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@main",
-    "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@main",
-    "swarmgate @ git+https://github.com/mbgulden/swarmgate.git@main",
-    "swarmledger @ git+https://github.com/mbgulden/swarmledger.git@main",
-    "swarmsaga @ git+https://github.com/mbgulden/swarmsaga.git@main",
+    "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@5d1a1b6fe1da618f1d9545fdd82ccf994a08688f",
+    "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@70cd54cfa9196c70352f08280c5b185039bdad52",
+    "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@786b180697dae12be733f381ac09c3e51b560afb",
+    "swarmgate @ git+https://github.com/mbgulden/swarmgate.git@31eac03693b9fafdd872e33b53da98d677ead4c8",
+    "swarmledger @ git+https://github.com/mbgulden/swarmledger.git@0794e2fbf11c5b2b082c0c84cff7f90a7a6ed4b6",
+    "swarmsaga @ git+https://github.com/mbgulden/swarmsaga.git@54f9b94f6d257920ddf81f936ccd7318c917c3b8",
 ]
 verification = [
-    "swarmproof @ git+https://github.com/mbgulden/swarmproof.git@main",
+    "swarmproof @ git+https://github.com/mbgulden/swarmproof.git@eb3242e7f867227c88efb2e1f64c08550df72e8b",
 ]
 mesh = [
-    "swarmmesh @ git+https://github.com/mbgulden/swarmmesh.git@master",
-    "swarmmemory @ git+https://github.com/mbgulden/swarmmemory.git@master",
-    "swarmcas @ git+https://github.com/mbgulden/swarmcas.git@master",
+    "swarmmesh @ git+https://github.com/mbgulden/swarmmesh.git@b0ff422b63068f6bb4011bee688a2ad247431718",
+    "swarmmemory @ git+https://github.com/mbgulden/swarmmemory.git@9a5debb0be4b942da8868fa71991b6d985cd51cf",
+    "swarmcas @ git+https://github.com/mbgulden/swarmcas.git@1c00979e6980b7d7c13669d05f0cc3db2837710e",
 ]
 robustness = [
-    "swarmsandbox @ git+https://github.com/mbgulden/swarmsandbox.git@master",
-    "swarmmerge @ git+https://github.com/mbgulden/swarmmerge.git@master",
-    "swarmmeter @ git+https://github.com/mbgulden/swarmmeter.git@master",
+    "swarmsandbox @ git+https://github.com/mbgulden/swarmsandbox.git@d6f65177365245e2af18e5c5693a2e57a98c6305",
+    "swarmmerge @ git+https://github.com/mbgulden/swarmmerge.git@9fcdecdba101dd2212cbcaadb7158e70d381247d",
+    "swarmmeter @ git+https://github.com/mbgulden/swarmmeter.git@0cdc889244222256a30e04e1a77843a7828827d0",
 ]
 security = [
-    "swarmvault @ git+https://github.com/mbgulden/swarmvault.git@master",
+    "swarmvault @ git+https://github.com/mbgulden/swarmvault.git@f8806c5576ce95de0c92187b515b67734f8c2aee",
 ]
 consensus = [
-    "swarmconsensus @ git+https://github.com/mbgulden/swarmconsensus.git@master",
+    "swarmconsensus @ git+https://github.com/mbgulden/swarmconsensus.git@a445f0dcf5475e7032f357b7fb3cb5c2636be3fa",
 ]
-dev = ["build>=1.0", "pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.1", "ruff>=0.5,<0.16", "twine>=5.0"]
+dev = ["build>=1.0", "pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.1", "ruff==0.16.9", "twine>=5.0"]
 all = ["prismatic-engine[http,redis,gateway,primitives,verification,mesh,robustness,security,consensus]"]
 release = ["prismatic-engine[all,dev]"]
 
@@ -155,3 +160,22 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
     "live: live-environment assertions; skipped unless PRISMATIC_RUN_LIVE_TESTS=1",
 ]
+
+[tool.ruff]
+# B5: ruff 0.16.x is the pinned linter (see .github/workflows/test.yml).
+# .venv_dev is a vendored virtualenv committed to the repo -- not source,
+# never lint it. (Ruff's default excludes cover .venv/venv, not .venv_dev.)
+extend-exclude = [".venv_dev"]
+
+[tool.ruff.lint]
+# B5: ruff 0.16 changed the default rule selection from (E4,E7,E9,F) to a
+# much broader set (509 findings on the smoke paths alone under 0.16.9
+# defaults, vs 0 under 0.15.20). Pin the selection to exactly what the CI
+# gate has always enforced -- this is a version bump, not a new lint
+# policy. Adopting 0.16's broader defaults is a separate decision (it would
+# be a ~500-finding triage on the smoke paths alone).
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# B5: reserved for future per-file scoping with reasons. No blanket ignores.
+# (Empty while select is pinned to the historical default set.)
