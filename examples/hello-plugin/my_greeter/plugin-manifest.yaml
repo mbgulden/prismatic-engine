@@ -1,0 +1,14 @@
+# my-greeter — minimal example plugin manifest
+schema_version: "1.0.0"
+name: "my-greeter"
+version: "0.1.0"
+description: "Minimal example plugin — registers one greeting check."
+author: "Prismatic Engine examples"
+license: "MIT"
+# Module path uses UNDERSCORES — Python cannot import dashed names.
+entry_point: "my_greeter.plugin:GreeterPlugin"
+core_version_constraint: ">=0.1.0, <2.0.0"
+dependencies:
+  pip: []
+  system: []
+risk_level: "low"
