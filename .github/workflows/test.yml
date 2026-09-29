@@ -53,12 +53,14 @@ jobs:
           python -m ruff check \
             prismatic/__init__.py \
             prismatic/review_factory/ \
+            scripts/ci_queue_janitor.py \
             scripts/release_check.py \
             scripts/release_smoke.py \
             scripts/pr_contract_lint.py \
             scripts/public_launch_smoke.py \
             scripts/public_security_readiness_audit.py \
             scripts/dashboard_visual_qa.py \
+            tests/test_ci_queue_janitor.py \
             tests/test_plugin_load_gate.py \
             tests/test_pr_contract_lint.py \
             tests/test_public_security_readiness.py \
@@ -67,12 +69,14 @@ jobs:
           python -m ruff format --check \
             prismatic/__init__.py \
             prismatic/review_factory/ \
+            scripts/ci_queue_janitor.py \
             scripts/release_check.py \
             scripts/release_smoke.py \
             scripts/pr_contract_lint.py \
             scripts/public_launch_smoke.py \
             scripts/public_security_readiness_audit.py \
             scripts/dashboard_visual_qa.py \
+            tests/test_ci_queue_janitor.py \
             tests/test_plugin_load_gate.py \
             tests/test_pr_contract_lint.py \
             tests/test_public_security_readiness.py \
