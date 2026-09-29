@@ -490,6 +490,33 @@ def test_canonical_consumer_probe_uses_absolute_inventory_override(
     assert "one-shot consumer" in msg
 
 
+def test_canonical_consumer_probe_passes_with_non_ubuntu_home(tmp_path, monkeypatch):
+    """Adversarial: the shipped manifest (unmodified) must pass the probe when
+    PRISMATIC_HOME is not /home/ubuntu.
+
+    Pre-fix the declared side hardcoded /home/ubuntu, so this failed with
+    `declared consumer has non-canonical release_path_template`. Post-fix the
+    manifest's {PRISMATIC_HOME} placeholder expands to the effective home.
+    """
+    import prismatic.doctor as doctor_mod
+    from pathlib import Path
+
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("PRISMATIC_HOME", str(fake_home))
+    monkeypatch.delenv("PRISMATIC_RUNTIME_SERVICES_CONFIG", raising=False)
+    shipped = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
+    repo_like = tmp_path / "repo"
+    (repo_like / "prismatic").mkdir(parents=True)
+    (repo_like / "config").mkdir()
+    (repo_like / "config" / "runtime-services.json").write_text(
+        shipped.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    ok, msg = doctor_mod._probe_canonical_consumer(repo_like / "prismatic")
+    assert ok is True, msg
+    assert "one-shot consumer" in msg
+
+
 def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
     tmp_path, monkeypatch
 ):
