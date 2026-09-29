@@ -648,7 +648,7 @@
             }
 
             // Toggle Tab Buttons
-            const tabs = ['studio', 'assets', 'pulse', 'dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
+            const tabs = ['studio', 'assets', 'pulse', 'dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'truth', 'settings'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
@@ -684,7 +684,117 @@
                 fetchPulseData();
             } else if (tab === 'assets') {
                 refreshDeployedAssets();
+            } else if (tab === 'truth') {
+                loadTruthPanels();
             }
+        }
+
+        /* =========================================================================
+           TRUTH PANELS — read-only "what is actually live" snapshot
+           ========================================================================= */
+        function truthSetText(id, text) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = (text === null || text === undefined) ? "—" : String(text);
+        }
+
+        function truthSetDot(id, state) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const cls = state === "ok"
+                ? "inline-block w-3 h-3 rounded-full bg-green-500"
+                : state === "warn"
+                    ? "inline-block w-3 h-3 rounded-full bg-amber-500"
+                    : "inline-block w-3 h-3 rounded-full bg-gray-600";
+            el.className = cls;
+        }
+
+        function truthNoData(panel) {
+            return !panel || panel.ok === false;
+        }
+
+        async function loadTruthPanels() {
+            truthSetText("truth-status-line", "Loading…");
+            let data = null;
+            try {
+                const res = await fetch("/api/gateway/truth");
+                if (!res.ok) throw new Error("http_" + res.status);
+                data = await res.json();
+            } catch (error) {
+                console.error("loadTruthPanels error:", error);
+                truthSetText("truth-status-line", "Live data unavailable");
+                return;
+            }
+            const p = (data && data.panels) || {};
+
+            // Trust ledger
+            const trust = p.trust_ledger;
+            if (truthNoData(trust)) {
+                truthSetText("truth-trust-ledger", "no data");
+                truthSetText("truth-trust-detail", "");
+                truthSetDot("truth-trust-dot", "nodata");
+            } else {
+                truthSetText("truth-trust-ledger", "Tier " + trust.current_tier + " · " + trust.event_count + " events");
+                truthSetText("truth-trust-detail",
+                    "rollbacks 30d: " + trust.rollback_count_30d +
+                    " · revocations 30d: " + trust.revocation_count_30d +
+                    (trust.promotion_freeze_until ? "\nfreeze until: " + trust.promotion_freeze_until : ""));
+                truthSetDot("truth-trust-dot", "ok");
+            }
+
+            // T1 — read-only display only; no arming control exists here.
+            const t1 = p.t1;
+            if (truthNoData(t1)) {
+                truthSetText("truth-t1-status", "no data");
+                truthSetText("truth-t1-reason", "");
+                truthSetDot("truth-t1-dot", "nodata");
+            } else {
+                truthSetText("truth-t1-status", t1.armed ? "ARMED: YES" : "ARMED: NO");
+                truthSetText("truth-t1-reason", "reason: " + t1.reason + " · read-only");
+                truthSetDot("truth-t1-dot", t1.armed ? "warn" : "ok");
+            }
+
+            // Deployed SHA
+            const sha = p.deployed_sha;
+            if (truthNoData(sha)) {
+                truthSetText("truth-deployed-sha", "no data");
+                truthSetText("truth-sha-detail", "");
+                truthSetDot("truth-sha-dot", "nodata");
+            } else {
+                truthSetText("truth-deployed-sha", sha.sha);
+                truthSetText("truth-sha-detail", "via /health release SHA");
+                truthSetDot("truth-sha-dot", "ok");
+            }
+
+            // Merge-receipt coverage
+            const receipts = p.merge_receipts;
+            if (truthNoData(receipts)) {
+                truthSetText("truth-receipt-coverage", "no data");
+                truthSetText("truth-receipts-detail", "");
+                truthSetDot("truth-receipts-dot", "nodata");
+            } else {
+                truthSetText("truth-receipt-coverage", receipts.receipt_count + " receipts");
+                const latest = receipts.latest || {};
+                truthSetText("truth-receipts-detail",
+                    "signed: " + receipts.signed_count + "/" + receipts.receipt_count +
+                    "\nlatest: " + (latest.merge_sha || "—") + " (" + (latest.change_class || "—") + ")");
+                truthSetDot("truth-receipts-dot", receipts.unsigned_count > 0 ? "warn" : "ok");
+            }
+
+            // Consumer lag
+            const lag = p.consumer_lag;
+            if (truthNoData(lag)) {
+                truthSetText("truth-consumer-lag", "no data");
+                truthSetText("truth-lag-detail", "");
+                truthSetDot("truth-lag-dot", "nodata");
+            } else {
+                truthSetText("truth-consumer-lag", lag.pending + " pending");
+                truthSetText("truth-lag-detail",
+                    "claimed: " + lag.claimed + " · launched: " + lag.launched + " · failed: " + lag.failed +
+                    (lag.oldest_pending ? "\noldest pending: " + lag.oldest_pending : ""));
+                truthSetDot("truth-lag-dot", lag.pending > 0 ? "warn" : "ok");
+            }
+
+            truthSetText("truth-status-line", "Live · updated " + new Date().toLocaleTimeString());
         }
 
         async function fetchSettingsData() {
@@ -6528,6 +6638,9 @@
                 if (activeTab === "crons") {
                     loadNativeCrons();
                     loadSchedules();
+                }
+                if (activeTab === "truth") {
+                    loadTruthPanels();
                 }
             }, 30000);
             
