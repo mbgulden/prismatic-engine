@@ -25,6 +25,16 @@ on:
     branches:
       - deploy-fresh
       - main
+    paths:
+      - "plugins/**"
+      - "prismatic/shipped_plugins/**"
+      - "prismatic/core/registry.py"
+      - "prismatic/plugin_architecture.py"
+      - "prismatic/plugin_policy.py"
+      - "prismatic/quality/plugin_load.py"
+      - "tests/test_plugin_load_gate.py"
+      - "pyproject.toml"
+      - "prismatic/__init__.py"
 
 # A new push kills the stale run instead of billing both.
 concurrency:
