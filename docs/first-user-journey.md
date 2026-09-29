@@ -1,5 +1,13 @@
 # Prismatic Engine First-User Journey: 5-Minute Demo
 
+> **ROADMAP — not the current first-run path.** This document describes the
+> *target* five-minute first-user journey. Several steps depend on work that is
+> **not yet implemented**: Step 3 (`prismatic providers attach`) needs GRO-1981,
+> Step 5 (Telegram commands) needs GRO-1983, Step 6 (Jules review handoff) needs
+> GRO-1984, and Step 7 (`prismatic cloud attach`) needs GRO-1985 (see the
+> unchecked boxes in Part 2). For the working first-run path today, see
+> `docs/public-onboarding.md`.
+
 This document maps out the end-to-end first-user journey for Prismatic Engine v0.1. It acts as the "Golden Thread" walkthrough, showcasing the five-minute demo flow: installing the engine, getting immediate value, attaching capabilities, running a task, observing from a phone, reviewing the work, and choosing a next step.
 
 Following this narrative is the **Linear-Ready Implementation Trail**, which outlines the exact tasks required to bridge the gap between our current codebase and this seamless user experience.
@@ -61,7 +69,7 @@ Status Verdict: WARN (Run 'prismatic providers attach' to enable integration cap
 
 ---
 
-### Step 3: Attach Capabilities (GitHub & AGY)
+### [Roadmap] Step 3: Attach Capabilities (GitHub & AGY)
 The user connects external adapters using the interactive CLI tool:
 
 ```bash
@@ -96,7 +104,7 @@ prismatic-engine serve --once
 
 ---
 
-### Step 5: Observe & Review from Phone
+### [Roadmap] Step 5: Observe & Review from Phone
 The user steps away from their laptop. All monitoring and telemetry are routed to their phone via Telegram:
 
 1. **Bot Notification:** `🤖 Task Audit-Repo started on AGY agent (session_id: agy-782a).`
@@ -107,7 +115,7 @@ The user steps away from their laptop. All monitoring and telemetry are routed t
 
 ---
 
-### Step 6: Merge & Publish
+### [Roadmap] Step 6: Merge & Publish
 The Prismatic Engine automatically dispatches a code review request to the Jules CLI reviewer:
 
 1. **Bot Notification:** `🔍 Jules CLI review started for PR #15.`
@@ -117,7 +125,7 @@ The Prismatic Engine automatically dispatches a code review request to the Jules
 
 ---
 
-### Step 7: Next Steps: Contribution or Hosted-Offering
+### [Roadmap] Step 7: Next Steps: Contribution or Hosted-Offering
 The terminal walkthrough offers two clear branches for the user:
 
 1. **Prismatic Cloud (Hosted Offering):** Transition local daemon workloads to our hosted infrastructure for 24/7 autonomous polling:
