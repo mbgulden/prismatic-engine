@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-DASHBOARD_JS = Path(
-    "plugins/hermes-plugin-realtime-activity-stream/dashboard/dist/index.js"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DASHBOARD_JS = (
+    REPO_ROOT
+    / "prismatic"
+    / "shipped_plugins"
+    / "hermes-plugin-realtime-activity-stream"
+    / "dashboard"
+    / "dist"
+    / "index.js"
 )
 
 
