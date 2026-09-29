@@ -25,7 +25,7 @@ on:
 permissions:
   actions: write # cancel stale runs
   contents: read
-  pull-requests: read # list open PR heads to protect them
+  pull-requests: read # list open PR heads to protect them from cancellation
 
 # Idempotent: every run recomputes the stale set from scratch, so a newer
 # run safely supersedes an older one.
