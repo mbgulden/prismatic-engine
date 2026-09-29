@@ -2,6 +2,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import sqlite3
+import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,22 @@ from fastapi.testclient import TestClient
 from prismatic.agy_completed_work import ingest_completed_work
 from prismatic.completed_work_gate import demo_completed_work_packet
 from prismatic.gateway import server
+
+
+@pytest.fixture(autouse=True)
+def _normalize_tempdir_for_evidence_checks(monkeypatch):
+    """Pin tempfile's cached dir under /tmp for these tests.
+
+    The completed-work gate requires proof logs under /tmp/, while the
+    durable-evidence retention check allows tempfile.gettempdir(). When the
+    ambient TMPDIR points elsewhere the two disagree and every packet is
+    held for durable evidence. Normalizing the cache keeps the tests
+    hermetic regardless of ambient TMPDIR/TEMP/TMP.
+    """
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("TEMP", raising=False)
+    monkeypatch.delenv("TMP", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", None)
 
 
 def completed_work_text(marker: str = "AGY_API_LOG_PACKET_OK") -> str:
@@ -62,7 +79,12 @@ def _retained_inputs(tmp_path):
     source.write_text(
         "RESULT=PASS\nMARKER=AGY_PR_VERIFICATION_GATE_OK", encoding="utf-8"
     )
-    proof = tmp_path / "proof.log"
+    # The completed-work gate requires the proof log to live under /tmp
+    # (proof_log.startswith("/tmp/")). pytest's tmp_path follows TMPDIR,
+    # which is not guaranteed to be under /tmp, so place the proof log
+    # explicitly under /tmp to keep this test hermetic.
+    proof_dir = Path(tempfile.mkdtemp(prefix="agy-proof-", dir="/tmp"))
+    proof = proof_dir / "proof.log"
     proof.write_text("pytest passed", encoding="utf-8")
     return source, proof
 

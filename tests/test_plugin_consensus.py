@@ -1,4 +1,5 @@
-"""Tests for the prismatic-consensus capability plugin (plugins/consensus/).
+"""Tests for the prismatic-consensus capability plugin
+(prismatic/shipped_plugins/consensus/).
 
 Written against the generic plugin lifecycle contract:
   PrismaticPlugin.on_init(context) -> None,
@@ -34,10 +35,10 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_DIR = REPO_ROOT / "plugins" / "consensus"
+PLUGIN_DIR = REPO_ROOT / "prismatic" / "shipped_plugins" / "consensus"
 PLUGIN_SRC = PLUGIN_DIR / "plugin.py"
 
-sys.path.insert(0, str(REPO_ROOT / "plugins"))
+sys.path.insert(0, str(REPO_ROOT / "prismatic" / "shipped_plugins"))
 
 import consensus.plugin as consensus_plugin  # noqa: E402
 from consensus.plugin import (  # noqa: E402

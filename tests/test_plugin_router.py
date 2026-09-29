@@ -1,4 +1,5 @@
-"""Tests for the prismatic-router capability plugin (plugins/router/).
+"""Tests for the prismatic-router capability plugin
+(prismatic/shipped_plugins/router/).
 
 Policy-based ingress classification: "request class -> capability", exposed
 via capability_contract(). Classification is a pure function of
@@ -24,9 +25,9 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_DIR = REPO_ROOT / "plugins" / "router"
+PLUGIN_DIR = REPO_ROOT / "prismatic" / "shipped_plugins" / "router"
 
-sys.path.insert(0, str(REPO_ROOT / "plugins"))
+sys.path.insert(0, str(REPO_ROOT / "prismatic" / "shipped_plugins"))
 
 from router.plugin import (  # noqa: E402
     PLUGIN_NAME,
@@ -399,8 +400,11 @@ def test_classify_request_pure_function_needs_no_primitive(monkeypatch):
     """The mapping itself is a pure function of (rules, input)."""
     import router.plugin as router_plugin
 
+    # Neutralize the module's primitive cache: classify_request must not need
+    # the primitive at all. (No assertion on sys.modules here — other test
+    # modules legitimately import the real swarmrouter first in a full run;
+    # this test only owns the module-level cache, not global import state.)
     monkeypatch.setattr(router_plugin, "_swarmrouter", None)
-    assert "swarmrouter" not in sys.modules
 
     rules = [validate_rule(make_rule())]
     before = copy.deepcopy(rules)
