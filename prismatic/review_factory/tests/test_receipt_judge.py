@@ -44,9 +44,7 @@ def _test_policy(**overrides):
                     "key_id": _TEST_KEY_ID,
                     "algorithm": "ed25519",
                     "public_key_pem": _TEST_KEY.public_key()
-                    .public_bytes(
-                        Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
-                    )
+                    .public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
                     .decode("utf-8"),
                     "created_at": _ts(now - timedelta(days=1)),
                     "expires_at": _ts(now + timedelta(days=365)),
@@ -87,9 +85,9 @@ def _sign(receipt, key=None, key_id=None):
         "value": "",
     }
     signature = key.sign(canonicalize_receipt(receipt))
-    receipt["signature_or_attestation"]["value"] = base64.b64encode(
-        signature
-    ).decode("ascii")
+    receipt["signature_or_attestation"]["value"] = base64.b64encode(signature).decode(
+        "ascii"
+    )
     return receipt
 
 
@@ -112,7 +110,9 @@ def _fresh_receipt(**overrides):
 
 
 def _judge(receipts=None, **kwargs):
-    store = _FakeStore({"rcpt-1": _Stored(_fresh_receipt())} if receipts is None else receipts)
+    store = _FakeStore(
+        {"rcpt-1": _Stored(_fresh_receipt())} if receipts is None else receipts
+    )
     return ReceiptJudge(store=store, **kwargs)
 
 
@@ -120,9 +120,7 @@ def _judge(receipts=None, **kwargs):
 
 
 def test_valid_receipt_passes():
-    ok, reason = _judge().validate(
-        receipt_id="rcpt-1", expected_candidate_sha="a" * 40
-    )
+    ok, reason = _judge().validate(receipt_id="rcpt-1", expected_candidate_sha="a" * 40)
     assert ok is True
     assert reason is None
 
@@ -146,17 +144,13 @@ def test_missing_receipt_id_refuses():
 
 
 def test_unknown_receipt_id_refuses():
-    ok, reason = _judge().validate(
-        receipt_id="nope", expected_candidate_sha="a" * 40
-    )
+    ok, reason = _judge().validate(receipt_id="nope", expected_candidate_sha="a" * 40)
     assert ok is False
     assert reason == "receipt_not_found"
 
 
 def test_candidate_sha_mismatch_refuses():
-    ok, reason = _judge().validate(
-        receipt_id="rcpt-1", expected_candidate_sha="f" * 40
-    )
+    ok, reason = _judge().validate(receipt_id="rcpt-1", expected_candidate_sha="f" * 40)
     assert ok is False
     assert reason == "candidate_sha_mismatch"
 
@@ -173,9 +167,7 @@ def test_tree_sha_mismatch_refuses():
 
 def test_producer_verifier_separation_failure_refuses():
     receipts = {
-        "rcpt-1": _Stored(
-            _fresh_receipt(producer_id="same", verifier_id="same")
-        )
+        "rcpt-1": _Stored(_fresh_receipt(producer_id="same", verifier_id="same"))
     }
     ok, reason = _judge(receipts).validate(
         receipt_id="rcpt-1", expected_candidate_sha="a" * 40
@@ -272,9 +264,7 @@ def test_judge_never_raises_on_store_error():
             raise RuntimeError("disk on fire")
 
     judge = ReceiptJudge(store=_ExplodingStore())
-    ok, reason = judge.validate(
-        receipt_id="rcpt-1", expected_candidate_sha="a" * 40
-    )
+    ok, reason = judge.validate(receipt_id="rcpt-1", expected_candidate_sha="a" * 40)
     assert ok is False
     assert reason.startswith("receipt_store_error")
 

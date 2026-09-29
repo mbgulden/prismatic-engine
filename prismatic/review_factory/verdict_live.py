@@ -132,14 +132,11 @@ def _default_runner(
 Runner = Callable[[list[str], str | None], subprocess.CompletedProcess[str]]
 
 
-def _gh_json(
-    args: list[str], runner: Runner = _default_runner
-) -> Any:
+def _gh_json(args: list[str], runner: Runner = _default_runner) -> Any:
     proc = runner(args, None)
     if proc.returncode != 0:
         raise VerdictLiveError(
-            f"gh failed ({' '.join(args[:4])}…): "
-            f"{(proc.stderr or '').strip()[:300]}"
+            f"gh failed ({' '.join(args[:4])}…): {(proc.stderr or '').strip()[:300]}"
         )
     try:
         return json.loads(proc.stdout or "null")
@@ -152,9 +149,18 @@ def existing_verdict_marker(
 ) -> str | None:
     """Return the verdict class already announced on the PR, if any."""
     comments = _gh_json(
-        ["gh", "pr", "view", str(pr_number), "--repo", repo,
-         "--json", "comments", "--jq",
-         ".comments[].body"],
+        [
+            "gh",
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            repo,
+            "--json",
+            "comments",
+            "--jq",
+            ".comments[].body",
+        ],
         runner,
     )
     if not isinstance(comments, list):
@@ -168,13 +174,10 @@ def existing_verdict_marker(
     return None
 
 
-def label_exists(
-    repo: str, label: str, runner: Runner = _default_runner
-) -> bool:
+def label_exists(repo: str, label: str, runner: Runner = _default_runner) -> bool:
     """Check the label exists on the repo. Never creates labels."""
     names = _gh_json(
-        ["gh", "label", "list", "--repo", repo, "--json", "name",
-         "--jq", ".[].name"],
+        ["gh", "label", "list", "--repo", repo, "--json", "name", "--jq", ".[].name"],
         runner,
     )
     return isinstance(names, list) and label in names
@@ -188,8 +191,7 @@ def post_verdict_comment(
 ) -> None:
     """Post the verdict comment. Raises VerdictLiveError on failure."""
     proc = runner(
-        ["gh", "pr", "comment", str(pr_number), "--repo", repo,
-         "--body", body],
+        ["gh", "pr", "comment", str(pr_number), "--repo", repo, "--body", body],
         None,
     )
     if proc.returncode != 0:
@@ -216,8 +218,7 @@ def apply_verdict_label(
             "labels automatically (create it manually, then re-run)"
         )
     proc = runner(
-        ["gh", "pr", "edit", str(pr_number), "--repo", repo,
-         "--add-label", label],
+        ["gh", "pr", "edit", str(pr_number), "--repo", repo, "--add-label", label],
         None,
     )
     if proc.returncode != 0:
@@ -260,38 +261,53 @@ def issue_live_verdict(
         return action
 
     if not isinstance(pr_number, int):
-        return audited({
-            "pr": pr_number, "action": "skipped",
-            "reason": "no integer PR number in record",
-        })
+        return audited(
+            {
+                "pr": pr_number,
+                "action": "skipped",
+                "reason": "no integer PR number in record",
+            }
+        )
     label = VERDICT_LABELS.get(verdict)
     if label is None:
-        return audited({
-            "pr": pr_number, "action": "skipped",
-            "reason": f"verdict '{verdict}' takes no live action",
-        })
+        return audited(
+            {
+                "pr": pr_number,
+                "action": "skipped",
+                "reason": f"verdict '{verdict}' takes no live action",
+            }
+        )
 
     try:
         announced = existing_verdict_marker(repo, pr_number, runner=runner)
         if announced == verdict:
-            return audited({
-                "pr": pr_number, "action": "skipped",
-                "reason": f"verdict '{verdict}' already announced; "
-                          "not re-posting",
-            })
+            return audited(
+                {
+                    "pr": pr_number,
+                    "action": "skipped",
+                    "reason": f"verdict '{verdict}' already announced; not re-posting",
+                }
+            )
         body = render_verdict_comment(record)
         post_verdict_comment(repo, pr_number, body, runner=runner)
         apply_verdict_label(repo, pr_number, label, runner=runner)
     except VerdictLiveError as exc:
-        return audited({
-            "pr": pr_number, "action": "failed",
-            "reason": str(exc)[:500],
-        })
-    return audited({
-        "pr": pr_number, "action": "verdict_issued",
-        "verdict": verdict, "label": label,
-        "recommendation": record.get("recommended"),
-    })
+        return audited(
+            {
+                "pr": pr_number,
+                "action": "failed",
+                "reason": str(exc)[:500],
+            }
+        )
+    return audited(
+        {
+            "pr": pr_number,
+            "action": "verdict_issued",
+            "verdict": verdict,
+            "label": label,
+            "recommendation": record.get("recommended"),
+        }
+    )
 
 
 def run_live_verdicts(
@@ -344,12 +360,14 @@ def verdicts_for_digest(
         if not isinstance(action, dict) or action.get("action") != "verdict_issued":
             continue
         record = by_pr.get(action.get("pr"), {})
-        issued.append({
-            "pr": action.get("pr"),
-            "verdict": action.get("verdict"),
-            "reason": record.get("reason", ""),
-            "ts": action.get("ts"),
-        })
+        issued.append(
+            {
+                "pr": action.get("pr"),
+                "verdict": action.get("verdict"),
+                "reason": record.get("reason", ""),
+                "ts": action.get("ts"),
+            }
+        )
     return {"approaching": approaching, "verdicts_issued": issued}
 
 

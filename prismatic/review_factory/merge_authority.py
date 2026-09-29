@@ -508,9 +508,7 @@ class MergeAuthority:
                 expected_tree_sha=pr.candidate_tree_sha or None,
             )
         except Exception as exc:
-            return self._refuse(
-                pr, f"receipt_judge_unavailable: {exc}", gates
-            )
+            return self._refuse(pr, f"receipt_judge_unavailable: {exc}", gates)
         receipt_gate = GateResult(
             "receipt_validated",
             receipt_ok,

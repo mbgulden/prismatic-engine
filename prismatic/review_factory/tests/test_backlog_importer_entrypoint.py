@@ -91,7 +91,9 @@ def _scrub_env(env: dict[str, str]) -> dict[str, str]:
     os.environ.get("PRISMATIC_SKIP_ENTRYPOINT_TEST") == "1",
     reason="entrypoint subprocess test disabled via PRISMATIC_SKIP_ENTRYPOINT_TEST",
 )
-def test_entrypoint_drains_completed_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_entrypoint_drains_completed_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from prismatic.agy_completed_work import AgyCompletedWorkStore
     from prismatic.review_factory.db import ReviewFactoryDB
     from prismatic.review_factory.queue import ReviewQueue

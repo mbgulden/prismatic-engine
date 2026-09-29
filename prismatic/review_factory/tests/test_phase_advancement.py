@@ -630,6 +630,7 @@ def test_discover_active_policy_fail_closed_on_missing(tmp_path):
 # Phase 0 -> 1 deterministic exit path (T1 deterministic entry)
 # ─────────────────────────────────────────────────────────────────────
 
+
 def _det_decision(i, change_class="docs", clean=True, **overrides):
     d = {
         "pr": 500 + i,
@@ -682,7 +683,9 @@ def test_deterministic_streak_breaks_on_unclean_decision():
 def test_deterministic_streak_ignores_non_t1_classes():
     # agent_standard decisions never count toward the T1 streak.
     ev = _det_evidence(20)
-    ev["deterministic_decisions"].append(_det_decision(20, change_class="agent_standard"))
+    ev["deterministic_decisions"].append(
+        _det_decision(20, change_class="agent_standard")
+    )
     assert deterministic_clean_streak(ev["deterministic_decisions"]) == 0
     assert check_phase0_exit_deterministic(ev).met is False
 

@@ -126,9 +126,7 @@ class ReceiptJudge:
             sig = receipt.get("signature_or_attestation")
             if not isinstance(sig, dict) or not sig.get("value"):
                 return False, "missing_attestation"
-            att_ok, att_reason = verify_receipt_attestation(
-                receipt, stored.policy
-            )
+            att_ok, att_reason = verify_receipt_attestation(receipt, stored.policy)
             if not att_ok:
                 return False, f"attestation_failed: {att_reason}"
 

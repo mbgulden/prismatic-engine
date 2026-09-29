@@ -71,7 +71,12 @@ def _path_directive_values(text: str) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.startswith("#") or line.startswith(";") or line.startswith("["):
+        if (
+            not line
+            or line.startswith("#")
+            or line.startswith(";")
+            or line.startswith("[")
+        ):
             continue
         name, sep, value = line.partition("=")
         if not sep:
@@ -89,6 +94,8 @@ def _assert_no_release_pinned(values: list[tuple[str, str]], *, unit: str) -> No
             f"{unit}: {name}= references a release-pinned path {match.group(0)!r} "
             "that can be garbage-collected (this caused the 226/NAMESPACE outage)"
         )
+
+
 # The exact stale unit text that caused the outage, captured from the live
 # host on 2026-09-27. The negative test below proves this contract test
 # rejects it.
@@ -125,9 +132,7 @@ def check_service_text(text: str) -> None:
     _assert_no_release_pinned(
         _path_directive_values(text), unit="prismatic-review-factory.service"
     )
-    exec_starts = [
-        line for line in text.splitlines() if line.startswith("ExecStart=")
-    ]
+    exec_starts = [line for line in text.splitlines() if line.startswith("ExecStart=")]
     assert exec_starts, "service unit has no ExecStart="
     for line in exec_starts:
         assert VENV_PYTHON in line, (
@@ -182,6 +187,7 @@ def test_stale_unit_text_is_rejected() -> None:
         "it would not have caught the 226/NAMESPACE outage"
     )
 
+
 def test_entry_module_is_runnable_as_script() -> None:
     """The unit invokes `-m <module>`; the module must define a real entry point.
 
@@ -201,8 +207,7 @@ def test_entry_module_is_runnable_as_script() -> None:
     tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
 
     has_main = any(
-        isinstance(node, ast.FunctionDef) and node.name == "main"
-        for node in tree.body
+        isinstance(node, ast.FunctionDef) and node.name == "main" for node in tree.body
     )
     has_main_guard = any(
         isinstance(node, ast.If)
