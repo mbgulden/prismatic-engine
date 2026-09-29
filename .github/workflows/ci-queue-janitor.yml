@@ -1,0 +1,47 @@
+# CI queue janitor — event-driven post-merge cleanup.
+#
+# Fires on every push to main (i.e. every merge): cancels queued/waiting/
+# requested/pending workflow runs whose head SHA is neither a protected branch
+# head nor an open PR head, so a post-merge deploy never waits behind stale CI.
+#
+# Safety invariants (enforced in scripts/ci_queue_janitor.py, unit-tested in
+# tests/test_ci_queue_janitor.py):
+#   - NEVER cancels in_progress runs (cancelling those left self-hosted runners
+#     stuck "busy" with nothing running).
+#   - NEVER cancels post-merge-deploy runs, or this workflow's own runs.
+# Runs younger than 120s are never cancelled (rapid-double-merge race guard).
+name: ci-queue-janitor
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report without cancelling"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write # cancel stale runs
+  contents: read
+
+# Idempotent: every run recomputes the stale set from scratch, so a newer
+# run safely supersedes an older one.
+concurrency:
+  group: ci-queue-janitor
+  cancel-in-progress: true
+
+jobs:
+  janitor:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cancel stale queued runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: >-
+          python3 scripts/ci_queue_janitor.py
+          ${{ inputs.dry_run && '--dry-run' || '' }}
