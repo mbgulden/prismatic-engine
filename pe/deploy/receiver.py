@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -562,6 +563,115 @@ class DeployReceiverPipeline:
         return name[len(prefix):] if name.startswith(prefix) else ""
 
     @staticmethod
+    def _readlink_leaf(link: Path) -> str | None:
+        """Target leaf name of a symlink, or None when missing/unreadable."""
+        try:
+            return Path(os.readlink(link)).name
+        except OSError:
+            return None
+
+    def _verify_deployed_sha(
+        self,
+        runner: AtomicDeployRunner,
+        redeployer: GatewayRedeployer,
+        repo: DeployRepoConfig,
+        pr_sha: str,
+        gateway_info: dict[str, Any],
+    ) -> str | None:
+        """Prove the live link targets name the requested SHA (deploy hardening).
+
+        Runs after a successful gateway redeploy, before the health check.
+        The redeployer's own health check polls HTTP 200s and the pipeline
+        health check inspects the bookkeeping symlink -- neither proves SHA
+        identity. A flip that silently targeted the wrong directory would
+        serve stale code with green checks; this fails the deploy loudly
+        instead (red run + ``DeployShaMismatch`` critical alert).
+
+        Returns None when the links check out, otherwise a failure reason
+        naming expected vs actual. The superseded-skip path gets an
+        existence-only check on ``current`` (the redeployer's ``_is_ancestor``
+        check already proved the live release contains the requested SHA;
+        exact equality would false-positive on legitimately newer live
+        releases).
+        """
+        expected = str(gateway_info.get("pr_sha") or pr_sha or "")
+        prefix = repo.release_prefix or runner.release_prefix
+
+        def _mismatch_alert(reason: str) -> None:
+            try:
+                emit_deploy_alert(
+                    "DeployShaMismatch",
+                    "critical",
+                    f"deploy SHA mismatch for {repo.full_name}: {reason[:160]}",
+                    f"pr_sha={pr_sha} expected_sha={expected} "
+                    f"reason={reason[:300]}",
+                )
+            except Exception as exc:  # pragma: no cover - emit never raises
+                logger.warning("deploy-alerts: sha-mismatch emit failed: %s", exc)
+
+        if not expected:
+            reason = (
+                "cannot verify deployed SHA: no expected SHA in gateway result"
+            )
+            _mismatch_alert(reason)
+            return reason
+
+        mismatches: list[str] = []
+
+        # Leg 1 (always): the bookkeeping link
+        #   releases/<prefix> -> versions/<prefix>-<sha12>
+        book_leaf = self._readlink_leaf(Path(runner.release_symlink))
+        sha_part = (
+            book_leaf[len(prefix) + 1 :]
+            if book_leaf and book_leaf.startswith(prefix + "-")
+            else ""
+        )
+        if (
+            not sha_part
+            or not re.fullmatch(r"[0-9a-f]{7,40}", sha_part)
+            or not expected.startswith(sha_part)
+        ):
+            mismatches.append(
+                f"bookkeeping link {runner.release_symlink} -> "
+                f"{book_leaf!r}, expected {prefix}-<sha12 of {expected[:12]}>"
+            )
+
+        if gateway_info.get("skipped"):
+            # Superseded: the live release already contains the requested
+            # SHA; only require a well-formed live link so a legitimately
+            # newer release never false-positives.
+            cur_leaf = self._readlink_leaf(
+                Path(getattr(redeployer, "current_link", "") or "")
+            )
+            if not cur_leaf or not re.fullmatch(
+                rf"{re.escape(prefix)}-[0-9a-f]{{40}}", cur_leaf
+            ):
+                mismatches.append(
+                    f"live link current -> {cur_leaf!r}: not a well-formed "
+                    f"{prefix}-<40hex> release"
+                )
+        else:
+            # Normal redeploy: both live links must name the requested SHA
+            # exactly, or the deploy served the wrong generation.
+            want = f"{prefix}-{expected}"
+            for label, attr in (
+                ("current", "current_link"),
+                ("venv_current", "venv_link"),
+            ):
+                leaf = self._readlink_leaf(Path(getattr(redeployer, attr, "") or ""))
+                if leaf != want:
+                    mismatches.append(
+                        f"live link {label} -> {leaf!r}, expected {want!r}"
+                    )
+
+        if not mismatches:
+            return None
+        reason = "DeployShaMismatch: " + "; ".join(mismatches)
+        logger.error("deploy SHA verification failed: %s", reason)
+        _mismatch_alert(reason)
+        return reason
+
+    @staticmethod
     def _is_strict_ancestor(
         source_repo: Path, ancestor_sha: str, descendant_sha: str
     ) -> bool | None:
@@ -851,6 +961,22 @@ class DeployReceiverPipeline:
                 )
         elif is_dry_run:
             gateway_info = {"skipped": True, "reason": "dry-run"}
+
+        # Step 1c: runtime SHA comparison (deploy hardening). The gateway
+        # redeploy's own health check polls HTTP 200s and the pipeline
+        # health check below inspects the bookkeeping symlink -- neither
+        # proves SHA identity. After a successful redeploy, prove the live
+        # link targets name the requested SHA; a mismatch fails the deploy
+        # loudly (red run + DeployShaMismatch critical alert) instead of
+        # serving the wrong generation with green checks. Skipped when the
+        # redeploy already failed -- its error is the failure to report.
+        if success:
+            sha_failure = self._verify_deployed_sha(
+                runner, redeployer, repo, pr_sha, gateway_info
+            )
+            if sha_failure:
+                success = False
+                err_msg = f"{err_msg} | {sha_failure}" if err_msg else sha_failure
 
         # Step 2: Post-deploy health check. A failing health check must NOT
         # overwrite the underlying deploy-step error (2026-09-22: the real

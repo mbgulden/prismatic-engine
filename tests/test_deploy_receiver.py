@@ -6,6 +6,8 @@ import hmac
 import subprocess
 
 import os
+from pathlib import Path
+
 import pytest
 os.environ["PRISMATIC_ALLOW_DEFAULT_HMAC"] = "1"
 
@@ -178,7 +180,11 @@ class TestDeployReceiverPipeline:
             # The gateway redeploy has its own coverage; a real redeploy
             # refuses in a tmp non-repo, which would fail this pipeline test
             # for an environmental reason. (Red on main, Sep 22, 2026.)
-            gateway_redeployer=_StubGatewayRedeployer(),
+            # The stub's fake live links name the deployed SHA so the
+            # pipeline's runtime SHA verification passes.
+            gateway_redeployer=_live_tree_stub(
+                tmp_deploy_env["versions_dir"].parent, tmp_deploy_env["head_sha"]
+            ),
         )
 
         payload = {
@@ -196,15 +202,152 @@ class TestDeployReceiverPipeline:
 
 
 class _StubGatewayRedeployer:
-    """Test double: gateway redeploy that never touches git or the network."""
+    """Test double: gateway redeploy that never touches git or the network.
 
-    def __init__(self, success=True, skipped=True, reason="test-stub"):
+    ``home`` wires fake live links (``current``/``venv_current``) under a
+    fake ``~/.prismatic`` so the pipeline's SHA verification has something
+    to read from disk. The links name ``live_sha`` when given, else the
+    reported ``pr_sha`` (a consistent pair).
+    """
+
+    def __init__(self, success=True, skipped=True, reason="test-stub",
+                 pr_sha=None, home=None, live_sha=None):
         self._res = GatewayDeployResult(
-            success=success, skipped=skipped, reason=reason, pr_sha="t" * 40
+            success=success, skipped=skipped, reason=reason,
+            pr_sha=pr_sha or "t" * 40,
         )
+        self.current_link = None
+        self.venv_link = None
+        if home is not None:
+            pris = Path(home) / ".prismatic"
+            link_sha = live_sha or self._res.pr_sha
+            live_rel = pris / "releases" / f"prismatic-engine-{link_sha}"
+            live_rel.mkdir(parents=True, exist_ok=True)
+            live_venv = pris / "venvs" / f"prismatic-engine-{link_sha}"
+            live_venv.mkdir(parents=True, exist_ok=True)
+            (pris / "current").symlink_to(live_rel)
+            (pris / "venv_current").symlink_to(live_venv)
+            self.current_link = pris / "current"
+            self.venv_link = pris / "venv_current"
 
     def redeploy(self, pr_sha="", repo=None, dry_run=False, repo_config=None):
         return self._res
+
+
+def _live_tree_stub(tmp_path, pr_sha, **kw):
+    """Stub redeployer whose fake live links name ``pr_sha`` (SHA check passes)."""
+    return _StubGatewayRedeployer(
+        pr_sha=pr_sha, home=tmp_path / "gw-live", **kw
+    )
+
+
+def _sha_pipeline(tmp_deploy_env, tmp_path, gateway_redeployer):
+    return DeployReceiverPipeline(
+        source_repo=tmp_deploy_env["source_repo"],
+        deploy_runner=AtomicDeployRunner(
+            versions_dir=tmp_deploy_env["versions_dir"],
+            release_symlink=tmp_deploy_env["symlink_path"],
+        ),
+        health_checker=PostDeployHealthChecker(),
+        transitioner=LinearDeployTransitioner(dry_run=True),
+        store=DeployManifestStore(db_path=tmp_deploy_env["db_file"]),
+        gateway_redeployer=gateway_redeployer,
+        mirror_repo=tmp_path / "no-such-dir",
+    )
+
+
+class TestVerifyDeployedSha:
+    """Runtime SHA comparison after the gateway redeploy (deploy hardening)."""
+
+    def test_stale_live_links_fail_the_deploy_loudly(
+        self, tmp_path, tmp_deploy_env, monkeypatch
+    ):
+        # Adversarial: the gateway redeploy reports success for the new SHA
+        # but the live links on disk still name a stale release. The deploy
+        # must fail red with a DeployShaMismatch critical alert -- not serve
+        # stale code with green checks.
+        alert_log = tmp_path / "alerts.log"
+        monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(alert_log))
+        new_sha = tmp_deploy_env["head_sha"]
+        stale_sha = "d" * 40
+        pipeline = _sha_pipeline(
+            tmp_deploy_env,
+            tmp_path,
+            _StubGatewayRedeployer(
+                success=True,
+                skipped=False,
+                reason="rigged",
+                pr_sha=new_sha,
+                home=tmp_path / "gw-live",
+                live_sha=stale_sha,
+            ),
+        )
+        record = pipeline.process_deploy({"pr_sha": new_sha, "pr_number": 1})
+
+        assert record.success is False
+        reason = record.failure_reason or ""
+        assert "DeployShaMismatch" in reason
+        assert f"expected 'prismatic-engine-{new_sha}'" in reason
+        assert stale_sha in reason
+        assert "DeployShaMismatch" in alert_log.read_text()
+
+    def test_matching_links_keep_success(self, tmp_path, tmp_deploy_env):
+        new_sha = tmp_deploy_env["head_sha"]
+        pipeline = _sha_pipeline(
+            tmp_deploy_env,
+            tmp_path,
+            _StubGatewayRedeployer(
+                success=True,
+                skipped=False,
+                pr_sha=new_sha,
+                home=tmp_path / "gw-live",
+                live_sha=new_sha,
+            ),
+        )
+        record = pipeline.process_deploy({"pr_sha": new_sha, "pr_number": 2})
+        assert record.success is True
+        assert record.failure_reason is None
+
+    def test_superseded_skip_with_newer_live_link_is_not_a_false_positive(
+        self, tmp_path, tmp_deploy_env
+    ):
+        # Superseded-skip: the live release legitimately names a NEWER sha
+        # than the one requested. Exact equality would false-positive; the
+        # existence-only check must let it through.
+        new_sha = tmp_deploy_env["head_sha"]
+        pipeline = _sha_pipeline(
+            tmp_deploy_env,
+            tmp_path,
+            _StubGatewayRedeployer(
+                success=True,
+                skipped=True,
+                reason="superseded",
+                pr_sha=new_sha,
+                home=tmp_path / "gw-live",
+                live_sha="e" * 40,
+            ),
+        )
+        record = pipeline.process_deploy({"pr_sha": new_sha, "pr_number": 3})
+        assert record.success is True
+        assert record.failure_reason is None
+
+    def test_broken_live_link_on_superseded_skip_fails_loudly(
+        self, tmp_path, tmp_deploy_env
+    ):
+        # Superseded-skip but the live link is malformed: fail closed.
+        new_sha = tmp_deploy_env["head_sha"]
+        stub = _StubGatewayRedeployer(
+            success=True,
+            skipped=True,
+            pr_sha=new_sha,
+            home=tmp_path / "gw-live",
+        )
+        (tmp_path / "gw-live" / ".prismatic" / "current").unlink()
+        (tmp_path / "gw-live" / ".prismatic" / "current").symlink_to("garbage")
+        pipeline = _sha_pipeline(tmp_deploy_env, tmp_path, stub)
+        record = pipeline.process_deploy({"pr_sha": new_sha, "pr_number": 4})
+        assert record.success is False
+        assert "DeployShaMismatch" in (record.failure_reason or "")
 
 
 def _git(*args, cwd):
@@ -239,7 +382,12 @@ def _mirror_origin_sha(mirror):
     return out.stdout.strip()
 
 
-def _make_mirror_pipeline(mirror_env, mirror_repo, gateway_redeployer=None):
+def _make_mirror_pipeline(mirror_env, mirror_repo, gateway_redeployer=None,
+                          tmp_path=None):
+    if gateway_redeployer is None and tmp_path is not None:
+        # Wire the stub's fake live links to the deployed SHA so the
+        # pipeline's runtime SHA verification passes.
+        gateway_redeployer = _live_tree_stub(tmp_path, mirror_env["head_sha"])
     return DeployReceiverPipeline(
         source_repo=mirror_env["source_repo"],
         deploy_runner=AtomicDeployRunner(
@@ -263,7 +411,9 @@ class TestMirrorFetchPiggyback:
         _git("push", "-q", "origin", "testbranch", cwd=str(seed))
         before = _mirror_origin_sha(mirror)
 
-        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
+        pipeline = _make_mirror_pipeline(
+            tmp_deploy_env, mirror_repo=mirror, tmp_path=tmp_path
+        )
         record = pipeline.process_deploy(
             {"pr_sha": tmp_deploy_env["head_sha"], "pr_number": 7, "pr_title": "mirror test"}
         )
@@ -285,7 +435,9 @@ class TestMirrorFetchPiggyback:
             cwd=str(broken),
         )
 
-        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=broken)
+        pipeline = _make_mirror_pipeline(
+            tmp_deploy_env, mirror_repo=broken, tmp_path=tmp_path
+        )
         record = pipeline.process_deploy({"pr_sha": tmp_deploy_env["head_sha"]})
 
         assert record.success is True
@@ -294,7 +446,9 @@ class TestMirrorFetchPiggyback:
 
     def test_mirror_missing_dir_is_fail_closed(self, tmp_path, tmp_deploy_env):
         pipeline = _make_mirror_pipeline(
-            tmp_deploy_env, mirror_repo=tmp_path / "no-such-dir"
+            tmp_deploy_env,
+            mirror_repo=tmp_path / "no-such-dir",
+            tmp_path=tmp_path,
         )
         record = pipeline.process_deploy({"pr_sha": tmp_deploy_env["head_sha"]})
 
@@ -324,7 +478,9 @@ class TestMirrorFetchPiggyback:
             return real_run(*args, **kwargs)
 
         monkeypatch.setattr(subprocess, "run", selective_boom)
-        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
+        pipeline = _make_mirror_pipeline(
+            tmp_deploy_env, mirror_repo=mirror, tmp_path=tmp_path
+        )
         record = pipeline.process_deploy(
             {"pr_sha": tmp_deploy_env["head_sha"]}
         )
@@ -339,7 +495,9 @@ class TestMirrorFetchPiggyback:
         _, _, mirror = _make_git_mirror(tmp_path)
         before = _mirror_origin_sha(mirror)
 
-        pipeline = _make_mirror_pipeline(tmp_deploy_env, mirror_repo=mirror)
+        pipeline = _make_mirror_pipeline(
+            tmp_deploy_env, mirror_repo=mirror, tmp_path=tmp_path
+        )
         record = pipeline.process_deploy({"pr_sha": "h" * 40, "dry_run": True})
 
         assert record.success is True
@@ -538,7 +696,6 @@ class TestDeployReceiverAuthLogging:
     """2026-09-28: failed HMAC auth must be visible in the receiver log."""
 
     def _client(self, monkeypatch):
-        import json
         monkeypatch.setenv("DEPLOY_HMAC_SECRET", "test-secret-for-auth-logging")
         # Keep the app build hermetic: no real source repo, no strict secrets.
         monkeypatch.setenv("PRISMATIC_ALLOW_DEFAULT_HMAC", "1")

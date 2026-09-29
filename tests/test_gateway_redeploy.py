@@ -8,8 +8,8 @@ tests; everything else is faked (no systemd, no network, no pip).
 
 import fcntl
 import os
+import shutil
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -253,5 +253,135 @@ def test_result_serializes():
                               health={"passed": True})
     d = res.to_dict()
     assert d["success"] is True and d["health"]["passed"] is True
+
+
+# ------------------------------------------------- two-symlink crash window
+
+class _SimulatedSigkill(BaseException):
+    """Stands in for SIGKILL: skips the exception-path rollback entirely."""
+
+
+class KillBetweenFlips(ScriptedRedeployer):
+    """Dies (simulated) right after the venv flip, before the current flip."""
+
+    _kill_armed = True
+
+    @staticmethod
+    def _atomic_symlink_swap(target_dir, symlink_path):
+        GatewayRedeployer._atomic_symlink_swap(target_dir, symlink_path)
+        if KillBetweenFlips._kill_armed and Path(symlink_path).name == "venv_current":
+            KillBetweenFlips._kill_armed = False
+            raise _SimulatedSigkill()
+
+
+def test_crash_between_flips_is_reconciled_on_next_redeploy(
+    gw_home, monkeypatch, tmp_path
+):
+    """Adversarial: SIGKILL between the two flips leaves new-venv + old-code.
+
+    The next redeploy must detect the mixed pair at startup, restore
+    venv_current to the generation named by current (the code link is
+    authoritative), alert-log the repair, and only then proceed with its
+    own flips. Without _reconcile_links there is no alert and the first
+    flip targets the new venv, not the restored old one.
+    """
+    alert_log = tmp_path / "alerts.log"
+    monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(alert_log))
+    pris = gw_home / ".prismatic"
+
+    KillBetweenFlips._kill_armed = True
+    killer = KillBetweenFlips(home=gw_home, run=FakeRun(), lock_timeout_s=30)
+    with pytest.raises(_SimulatedSigkill):
+        killer.redeploy("b" * 40, repo=gw_home)
+    # the crash window, frozen: new venv, old code
+    assert os.readlink(pris / "venv_current").endswith("b" * 40)
+    assert os.readlink(pris / "current").endswith("a" * 40)
+
+    flips: list[tuple[str, str]] = []
+    real_swap = GatewayRedeployer._atomic_symlink_swap
+
+    def spy_swap(target_dir, symlink_path):
+        flips.append((Path(symlink_path).name, Path(target_dir).name))
+        return real_swap(target_dir, symlink_path)
+
+    monkeypatch.setattr(
+        GatewayRedeployer, "_atomic_symlink_swap", staticmethod(spy_swap)
+    )
+    dep, run = make_deployer(gw_home)
+    res = dep.redeploy("b" * 40, repo=gw_home)
+
+    assert res.success and not res.skipped, res.reason
+    # reconcile ran FIRST: venv_current restored to the old (a) generation
+    # before the deploy's own flips to the new (b) generation.
+    assert flips[0] == ("venv_current", "prismatic-engine-" + "a" * 40), flips
+    assert ("venv_current", "prismatic-engine-" + "b" * 40) in flips
+    assert ("current", "prismatic-engine-" + "b" * 40) in flips
+    # final state is consistently the new release
+    assert os.readlink(pris / "current").endswith("b" * 40)
+    assert os.readlink(pris / "venv_current").endswith("b" * 40)
+    assert "GatewayLinkMismatchReconciled" in alert_log.read_text()
+
+
+def test_reconcile_is_noop_for_consistent_pair(gw_home, monkeypatch, tmp_path):
+    alert_log = tmp_path / "alerts.log"
+    monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(alert_log))
+    dep, run = make_deployer(gw_home)
+    res = dep.redeploy("b" * 40, repo=gw_home)
+    assert res.success and not res.skipped, res.reason
+    pris = gw_home / ".prismatic"
+    assert os.readlink(pris / "current").endswith("b" * 40)
+    assert os.readlink(pris / "venv_current").endswith("b" * 40)
+    assert not alert_log.exists() or (
+        "GatewayLinkMismatchReconciled" not in alert_log.read_text()
+    )
+
+
+def test_reconcile_alerts_and_proceeds_when_expected_venv_is_gone(
+    gw_home, monkeypatch, tmp_path
+):
+    """Mixed pair + the matching venv dir deleted: alert, then the deploy
+    rebuilds the venv and flips both links, healing the pair."""
+    alert_log = tmp_path / "alerts.log"
+    monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(alert_log))
+    pris = gw_home / ".prismatic"
+    # mixed pair: venv_current -> b (new), current -> a (old)
+    new_venv = pris / "venvs" / ("prismatic-engine-" + "b" * 40)
+    new_venv.mkdir(parents=True)
+    (pris / "venv_current").unlink()
+    (pris / "venv_current").symlink_to(new_venv)
+    # ...but the old generation's venv dir is gone
+    shutil.rmtree(pris / "venvs" / ("prismatic-engine-" + "a" * 40))
+
+    dep, run = make_deployer(gw_home)
+    res = dep.redeploy("b" * 40, repo=gw_home)
+
+    assert res.success and not res.skipped, res.reason
+    log = alert_log.read_text()
+    assert "GatewayLinkMismatchReconciled" in log
+    assert "missing" in log
+    # healed: both links consistently on the new release
+    assert os.readlink(pris / "current").endswith("b" * 40)
+    assert os.readlink(pris / "venv_current").endswith("b" * 40)
+
+
+def test_reconcile_is_noop_on_first_deploy(monkeypatch, tmp_path):
+    """No current link yet (first deploy): reconcile does nothing, the
+    deploy proceeds and creates both links."""
+    alert_log = tmp_path / "alerts.log"
+    monkeypatch.setenv("PRISMATIC_ALERT_LOG", str(alert_log))
+    home = tmp_path / "home"
+    pris = home / ".prismatic"
+    for d in ("releases", "venvs", "run", "wheel_cache"):
+        (pris / d).mkdir(parents=True)
+
+    dep, run = make_deployer(home)
+    res = dep.redeploy("b" * 40, repo=home)
+
+    assert res.success and not res.skipped, res.reason
+    assert os.readlink(pris / "current").endswith("b" * 40)
+    assert os.readlink(pris / "venv_current").endswith("b" * 40)
+    assert not alert_log.exists() or (
+        "GatewayLinkMismatchReconciled" not in alert_log.read_text()
+    )
 
 # auto-deploy e2e verification (2026-09-20): harmless marker comment; exercises the full merge-to-redeploy loop.

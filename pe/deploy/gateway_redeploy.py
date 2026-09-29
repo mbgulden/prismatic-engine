@@ -30,6 +30,18 @@ flipped back to the previous release, the service is restarted, and recovery
 is verified. The deploy is recorded as FAILED loudly. The gateway is never
 left down or half-flipped.
 
+Crash window (deploy hardening): the two live symlinks are flipped
+sequentially (``venv_current`` first, then ``current``); each flip is atomic
+but the pair is not one transaction. A process death between the flips
+(SIGKILL, power loss) leaves a mixed generation -- new venv + old code --
+that the in-process rollback cannot see (it only runs on exceptions). The
+proportionate fix is not a structural redesign (one symlink for both would
+touch the venv layout, the service ``ExecStart``, and the WS1 per-repo link
+scheme): every redeploy starts with ``_reconcile_links()``, which restores a
+mismatched ``venv_current`` to the generation named by ``current`` (the code
+link is authoritative) and alert-logs the repair. A re-run therefore heals
+the pair even when the crash itself went unrecorded.
+
 Stdlib only -- no prismatic imports -- so this module stays importable in
 minimal environments and unit-testable with fakes.
 """
@@ -324,6 +336,12 @@ class GatewayRedeployer:
         flipped_venv = False
         flipped_current = False
         try:
+            # 0. reconcile a mixed current/venv_current pair left behind by
+            #    a crashed deploy (SIGKILL between the two flips). The code
+            #    link is authoritative; the venv link is restored to the
+            #    matching generation (or rebuilt below when it is gone).
+            self._reconcile_links()
+
             # 1-2. verify the SHA is a real commit on origin/main
             full_sha, main_sha = self._verify_sha(repo, pr_sha)
             res.pr_sha = full_sha
@@ -461,6 +479,70 @@ class GatewayRedeployer:
     # ------------------------------------------------------------------
     # individual steps (overridable for tests)
     # ------------------------------------------------------------------
+
+    def _reconcile_links(self) -> None:
+        """Reconcile a mixed ``current``/``venv_current`` pair (deploy hardening).
+
+        The two live symlinks flip sequentially (venv first, then current);
+        a process death between the flips leaves a mixed generation (new
+        venv + old code) that nothing detects -- the in-process rollback
+        only runs on exceptions, not on SIGKILL or power loss. A re-run
+        heals the pair (both links flip again), so the fix is
+        detect-and-reconcile here, at the start of every redeploy, rather
+        than a structural redesign.
+
+        Semantics: the CODE link (``current``) is authoritative. When
+        ``venv_current`` names a different generation and the matching venv
+        dir exists on disk, ``venv_current`` is atomically restored to it
+        and a ``GatewayLinkMismatchReconciled`` critical alert is logged.
+        When the matching venv dir is gone, a critical alert is logged and
+        the deploy proceeds -- it builds a fresh venv and flips both links,
+        healing the pair. ``current`` missing means a first deploy: no-op.
+        Never raises: reconcile is best-effort repair, never a deploy
+        blocker.
+        """
+        try:
+            current_target = self._readlink(self.current_link)
+            if current_target is None:
+                return  # first deploy: no live generation yet
+            expected_venv = self.venvs_dir / current_target.name
+            venv_target = self._readlink(self.venv_link)
+            if venv_target is not None and venv_target.name == expected_venv.name:
+                return  # consistent pair
+            detail = (
+                f"current={current_target.name} "
+                f"venv_current={venv_target.name if venv_target else '<missing>'} "
+                f"expected_venv={expected_venv.name}"
+            )
+            if expected_venv.is_dir():
+                self._atomic_symlink_swap(expected_venv, self.venv_link)
+                logger.warning(
+                    "gateway redeploy: reconciled mixed link pair: %s", detail
+                )
+                emit_deploy_alert(
+                    "GatewayLinkMismatchReconciled",
+                    "critical",
+                    "mixed gateway link pair reconciled: venv_current restored "
+                    f"to {expected_venv.name}",
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "gateway redeploy: mixed link pair but the expected venv "
+                    "dir is missing; proceeding (this deploy rebuilds it): %s",
+                    detail,
+                )
+                emit_deploy_alert(
+                    "GatewayLinkMismatchReconciled",
+                    "critical",
+                    "mixed gateway link pair: expected venv dir missing, "
+                    "proceeding to rebuild it",
+                    detail,
+                )
+        except Exception as exc:
+            # Reconcile must never block a deploy; the deploy's own flips
+            # heal the pair on the way through. Loud, but non-fatal.
+            logger.warning("gateway redeploy: link reconcile failed: %s", exc)
 
     def _verify_sha(self, repo: Path, pr_sha: str) -> tuple[str, str]:
         """Fetch origin/main and prove pr_sha is a commit on it."""
