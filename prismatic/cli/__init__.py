@@ -14,6 +14,7 @@ from typing import Sequence
 
 from prismatic.cli.doctor import run as doctor_cli_run
 from prismatic.cli.deploy import register_deploy_commands, run_deploy
+from prismatic.cli.receipt import register_receipt_commands, run_receipt
 from prismatic.local_tasks import LocalTaskQueue
 
 
@@ -172,6 +173,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Provider-neutral clean-room verification receipt runner (GRO-4203)",
     )
     receipt_run.add_argument("args", nargs=argparse.REMAINDER)
+
+    register_receipt_commands(subparsers)
 
     exec_cmd = subparsers.add_parser(
         "exec",
@@ -429,6 +432,9 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "deploy":
         return run_deploy(args)
+
+    if args.command == "receipt":
+        return run_receipt(args)
 
     if args.command == "init":
         from prismatic.dispatcher import init_config

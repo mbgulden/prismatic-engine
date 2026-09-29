@@ -1,6 +1,6 @@
 """Read-only truth panels for the gateway dashboard.
 
-``get_truth_snapshot()`` consolidates five "what is actually live" probes
+``get_truth_snapshot()`` consolidates six "what is actually live" probes
 into one JSON document served at ``GET /api/gateway/truth``:
 
 1. ``trust_ledger``  — folded trust-ledger state (``TrustLedger.tier_status()``).
@@ -8,6 +8,7 @@ into one JSON document served at ``GET /api/gateway/truth``:
 3. ``t1``            — read-only ``t1_arming_status()`` consult (armed/inert).
 4. ``deployed_sha``  — the running release SHA (``get_running_sha()``).
 5. ``consumer_lag``  — task-admission outbox backlog counts (cursor/lag).
+6. ``run_receipts``  — signed run-receipt coverage (proof-of-done).
 
 Read-only by construction: every sub-probe only reads; none writes state,
 arms anything, or triggers deploys. The T1 probe consults ONLY the
@@ -172,17 +173,56 @@ def _probe_consumer_lag() -> dict[str, Any]:
     }
 
 
+def _probe_run_receipts() -> dict[str, Any]:
+    """Signed run-receipt coverage (proof-of-done). Read-only; no log -> fail-open."""
+    from prismatic.verification.run_receipt import (
+        default_run_receipts_path,
+        find_run_receipts,
+    )
+
+    log_path = default_run_receipts_path()
+    if not log_path.exists():
+        return _fail("no data")
+    receipts = find_run_receipts(log_path=log_path, limit=100)
+    if not receipts:
+        return _fail("no data")
+    signed = sum(
+        1 for r in receipts if (r.get("signature_or_attestation") or {}).get("value")
+    )
+    done = sum(1 for r in receipts if r.get("done_gate_result") == "done")
+    latest = receipts[-1]
+    return {
+        "ok": True,
+        "receipt_count": len(receipts),
+        "signed_count": signed,
+        "unsigned_count": len(receipts) - signed,
+        "done_count": done,
+        "not_done_count": len(receipts) - done,
+        "log_path": str(log_path),
+        "latest": {
+            "receipt_id": latest.get("receipt_id"),
+            "run_id": latest.get("run_id"),
+            "agent_name": latest.get("agent_name"),
+            "verification_status": latest.get("verification_status"),
+            "done_gate_result": latest.get("done_gate_result"),
+            "emitted_at": latest.get("emitted_at"),
+            "signed": bool((latest.get("signature_or_attestation") or {}).get("value")),
+        },
+    }
+
+
 _PROBES: tuple[tuple[str, Callable[[], dict[str, Any]]], ...] = (
     ("trust_ledger", _probe_trust_ledger),
     ("merge_receipts", _probe_merge_receipts),
     ("t1", _probe_t1),
     ("deployed_sha", _probe_deployed_sha),
     ("consumer_lag", _probe_consumer_lag),
+    ("run_receipts", _probe_run_receipts),
 )
 
 
 def get_truth_snapshot() -> dict[str, Any]:
-    """Build the five truth panels, fail-open per panel.
+    """Build the six truth panels, fail-open per panel.
 
     A throwing probe degrades its panel to ``{"ok": False, "error": ...}``;
     the document always completes (never 500s).

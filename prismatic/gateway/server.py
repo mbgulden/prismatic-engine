@@ -781,7 +781,8 @@ async def health() -> dict[str, Any]:
 @app.get("/api/gateway/truth")
 def gateway_truth() -> dict[str, Any]:
     """Read-only truth panels: trust ledger, merge receipts, T1 status,
-    deployed SHA, consumer lag. Single atomic snapshot, fail-open per panel."""
+    deployed SHA, consumer lag, run receipts. Single atomic snapshot,
+    fail-open per panel."""
     return get_truth_snapshot()
 
 
