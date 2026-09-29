@@ -73,10 +73,10 @@ security = [
 consensus = [
     "swarmconsensus @ git+https://github.com/mbgulden/swarmconsensus.git@a445f0dcf5475e7032f357b7fb3cb5c2636be3fa",
 ]
-antigravity = ["google-antigravity>=0.1.0"]
 dev = ["build>=1.0", "pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.1", "ruff==0.16.9", "twine>=5.0"]
 all = ["prismatic-engine[http,redis,gateway,primitives,verification,mesh,robustness,security,consensus]"]
 release = ["prismatic-engine[all,dev]"]
+antigravity = ["google-antigravity>=0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/mbgulden/prismatic-engine"
