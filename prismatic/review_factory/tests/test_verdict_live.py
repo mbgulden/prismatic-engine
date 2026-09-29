@@ -59,8 +59,12 @@ def _record(pr=249, verdict="overdue", **over):
 class FakeRunner:
     """Dispatches canned gh responses; records every invocation."""
 
-    def __init__(self, comments=(), labels=("stranded-overdue", "stranded-approaching"),
-                 fail_on=()):
+    def __init__(
+        self,
+        comments=(),
+        labels=("stranded-overdue", "stranded-approaching"),
+        fail_on=(),
+    ):
         self.comments = list(comments)
         self.labels = list(labels)
         self.fail_on = set(fail_on)
@@ -74,31 +78,31 @@ class FakeRunner:
         if args[1:3] == ["pr", "view"]:
             bodies = [{"body": c} for c in self.comments]
             return subprocess.CompletedProcess(
-                args, 0, json.dumps([c["body"] for c in bodies]), "")
+                args, 0, json.dumps([c["body"] for c in bodies]), ""
+            )
         if args[1:3] == ["label", "list"]:
-            return subprocess.CompletedProcess(
-                args, 0, json.dumps(self.labels), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps(self.labels), "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def posted_bodies(self):
-        return [c[c.index("--body") + 1] for c in self.calls
-                if "--body" in c]
+        return [c[c.index("--body") + 1] for c in self.calls if "--body" in c]
 
     def added_labels(self):
-        return [c[c.index("--add-label") + 1] for c in self.calls
-                if "--add-label" in c]
+        return [c[c.index("--add-label") + 1] for c in self.calls if "--add-label" in c]
 
 
 def _fresh_log(tmp_path: Path, age_hours: float = 1.0) -> Path:
     log = tmp_path / "dryrun.jsonl"
     log.write_text(json.dumps({"pr": 1, "verdict": "watching"}) + "\n")
     import os
+
     ts = (datetime.now(timezone.utc) - timedelta(hours=age_hours)).timestamp()
     os.utime(log, (ts, ts))
     return log
 
 
 # --- flag + guard ---------------------------------------------------------
+
 
 def test_live_disabled_by_default(monkeypatch):
     monkeypatch.delenv(verdict_live.LIVE_FLAG_ENV, raising=False)
@@ -154,6 +158,7 @@ def test_dry_run_fresh_empty_log_refused(tmp_path):
 
 # --- comment rendering -----------------------------------------------------
 
+
 def test_render_verdict_comment_has_marker_and_facts():
     body = render_verdict_comment(_record())
     assert COMMENT_MARKER_PREFIX + "overdue -->" in body
@@ -165,8 +170,11 @@ def test_render_verdict_comment_has_marker_and_facts():
 
 # --- gh interactions (mocked) ----------------------------------------------
 
+
 def test_existing_verdict_marker_found():
-    runner = FakeRunner(comments=["hello", f"note {COMMENT_MARKER_PREFIX}overdue --> x"])
+    runner = FakeRunner(
+        comments=["hello", f"note {COMMENT_MARKER_PREFIX}overdue --> x"]
+    )
     assert existing_verdict_marker("o/r", 249, runner) == "overdue"
 
 
@@ -224,8 +232,11 @@ def test_issue_live_verdict_idempotent_on_existing_marker(tmp_path):
 def test_issue_live_verdict_watching_takes_no_action(tmp_path):
     runner = FakeRunner()
     action = issue_live_verdict(
-        _record(verdict="watching"), "o/r",
-        runner=runner, live_log=tmp_path / "live.jsonl")
+        _record(verdict="watching"),
+        "o/r",
+        runner=runner,
+        live_log=tmp_path / "live.jsonl",
+    )
     assert action["action"] == "skipped"
     assert runner.calls == []
 
@@ -243,9 +254,13 @@ def test_run_live_verdicts_refuses_without_guard(tmp_path, monkeypatch):
     monkeypatch.delenv(verdict_live.LIVE_FLAG_ENV, raising=False)
     runner = FakeRunner()
     with pytest.raises(VerdictLiveError, match="refused"):
-        run_live_verdicts([_record()], "o/r", runner=runner,
-                          live_log=tmp_path / "live.jsonl",
-                          dry_run_log=tmp_path / "missing.jsonl")
+        run_live_verdicts(
+            [_record()],
+            "o/r",
+            runner=runner,
+            live_log=tmp_path / "live.jsonl",
+            dry_run_log=tmp_path / "missing.jsonl",
+        )
     assert runner.calls == []  # no gh touched
 
 
@@ -254,8 +269,12 @@ def test_run_live_verdicts_full_pass(tmp_path, monkeypatch):
     dry_log = _fresh_log(tmp_path)
     runner = FakeRunner()
     actions, failures = run_live_verdicts(
-        [_record(249), _record(250, verdict="watching")], "o/r",
-        runner=runner, live_log=tmp_path / "live.jsonl", dry_run_log=dry_log)
+        [_record(249), _record(250, verdict="watching")],
+        "o/r",
+        runner=runner,
+        live_log=tmp_path / "live.jsonl",
+        dry_run_log=dry_log,
+    )
     assert len(actions) == 2
     assert failures == []
     assert actions[0]["action"] == "verdict_issued"
@@ -264,13 +283,22 @@ def test_run_live_verdicts_full_pass(tmp_path, monkeypatch):
 
 # --- digest wiring ----------------------------------------------------------
 
+
 def test_verdicts_for_digest_shape():
     records = [_record(249), _record(557, verdict="approaching", age_days=6.1)]
     actions = [
-        {"pr": 249, "action": "verdict_issued", "verdict": "overdue",
-         "ts": "2026-09-27T18:00:00+00:00"},
-        {"pr": 557, "action": "skipped", "reason": "no live action",
-         "ts": "2026-09-27T18:00:00+00:00"},
+        {
+            "pr": 249,
+            "action": "verdict_issued",
+            "verdict": "overdue",
+            "ts": "2026-09-27T18:00:00+00:00",
+        },
+        {
+            "pr": 557,
+            "action": "skipped",
+            "reason": "no live action",
+            "ts": "2026-09-27T18:00:00+00:00",
+        },
     ]
     payload = verdicts_for_digest(actions, records)
     assert [a["pr"] for a in payload["approaching"]] == [557]
@@ -280,6 +308,7 @@ def test_verdicts_for_digest_shape():
 
     # digest normalizer accepts the payload shape
     from prismatic.review_factory.digest import _normalize_stranded
+
     approaching, issued, truncated = _normalize_stranded(payload, 25)
     assert len(approaching) == 1
     assert issued[0]["verdict"] == "overdue"
@@ -288,8 +317,8 @@ def test_verdicts_for_digest_shape():
 
 def test_write_digest_fragment_round_trip(tmp_path):
     frag = write_digest_fragment(
-        {"approaching": [], "verdicts_issued": [{"pr": 1}]},
-        tmp_path / "frag.json")
+        {"approaching": [], "verdicts_issued": [{"pr": 1}]}, tmp_path / "frag.json"
+    )
     assert frag.is_file()
     data = json.loads(frag.read_text())
     assert data["verdicts_issued"] == [{"pr": 1}]

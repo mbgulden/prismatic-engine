@@ -613,10 +613,7 @@ def evaluate_exit_criteria(
                 ),
             )
             deterministic_result = check_phase0_exit_deterministic(evidence)
-            checks = {
-                f"agreement_{k}": v
-                for k, v in agreement_result.checks.items()
-            }
+            checks = {f"agreement_{k}": v for k, v in agreement_result.checks.items()}
             checks.update(
                 {
                     f"deterministic_{k}": v

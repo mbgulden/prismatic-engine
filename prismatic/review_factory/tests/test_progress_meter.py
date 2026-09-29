@@ -327,7 +327,10 @@ def _t1_decision(pr: int, day: int, cls: str = "docs", **over) -> dict:
 
 
 def _det_evidence(*decisions, **over) -> dict:
-    evidence = {"exit_path": "deterministic", "deterministic_decisions": list(decisions)}
+    evidence = {
+        "exit_path": "deterministic",
+        "deterministic_decisions": list(decisions),
+    }
     evidence.update(over)
     return evidence
 
@@ -422,7 +425,11 @@ def test_deterministic_status_json_contract():
     evidence = _det_evidence(_t1_decision(558, 26, novelty_clean=False))
     payload = status_json(build_report(0, True, evidence))
     keys = {gate["key"] for gate in payload["gates"]}
-    assert {"t1_activation", "min_consecutive_deterministic_clean", "latest_t1_checklist"} <= keys
+    assert {
+        "t1_activation",
+        "min_consecutive_deterministic_clean",
+        "latest_t1_checklist",
+    } <= keys
     by_key = {gate["key"]: gate for gate in payload["gates"]}
     assert by_key["latest_t1_checklist"]["detail"] != ""
     assert "Novelty-clean" in by_key["latest_t1_checklist"]["detail"]

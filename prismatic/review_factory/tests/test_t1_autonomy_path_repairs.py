@@ -9,6 +9,7 @@ Covers the gaps found in the 2026-09-28 trust-ledger/autonomy stress test:
 - tier promotion is blocked during an active promotion freeze unless
   explicitly overridden.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,7 +68,10 @@ def test_classifier_chore_ci_paths():
 def test_classifier_sensitive_paths_win():
     # Sensitive hints beat tier classes even when mixed with docs.
     assert classify_change_class(_job(["prismatic/gateway/auth.py"])) == "sensitive"
-    assert classify_change_class(_job(["docs/guide.md", "config/secrets.yaml"])) == "sensitive"
+    assert (
+        classify_change_class(_job(["docs/guide.md", "config/secrets.yaml"]))
+        == "sensitive"
+    )
     assert classify_change_class(_job(["certs/api.pem"])) == "sensitive"
     assert classify_change_class(_job([".env"])) == "sensitive"
     assert classify_change_class(_job(["prismatic/billing/stripe.py"])) == "sensitive"
@@ -185,8 +189,9 @@ def test_novelty_screen_returns_flags_and_inert(tmp_path):
     from prismatic.review_factory import merge_stage as ms_mod
     from prismatic.review_factory.merge_stage import MergeStageConfig
 
-    stage = ms_mod.MergeStage(queue=object(), config=MergeStageConfig(),
-                              novelty_detector=None)
+    stage = ms_mod.MergeStage(
+        queue=object(), config=MergeStageConfig(), novelty_detector=None
+    )
     flags, inert = stage._novelty_screen(_job(["docs/a.md"]), "job-1")
     assert flags == ()
     assert inert is True
@@ -211,13 +216,14 @@ def test_merge_outcome_idempotent_on_artifact(tmp_path):
 
 def test_rollback_idempotent_single_revoke(tmp_path):
     ledger = _ledger(tmp_path)
-    ledger.record_tier_promoted(to_tier=1, approver="Michael",
-                                override_freeze=True)
-    ledger.record_rollback(artifact_id="job-9", change_class="docs",
-                           notes="executor rollback")
+    ledger.record_tier_promoted(to_tier=1, approver="Michael", override_freeze=True)
+    ledger.record_rollback(
+        artifact_id="job-9", change_class="docs", notes="executor rollback"
+    )
     # A duplicate rollback record must not revoke the tier twice.
-    ledger.record_rollback(artifact_id="job-9", change_class="docs",
-                           notes="executor rollback")
+    ledger.record_rollback(
+        artifact_id="job-9", change_class="docs", notes="executor rollback"
+    )
     revokes = [e for e in ledger.events() if e["event_type"] == "tier_revoked"]
     assert len(revokes) == 1
     assert ledger.tier_status()["current_tier"] == 0
@@ -228,8 +234,7 @@ def test_rollback_idempotent_single_revoke(tmp_path):
 
 def test_promotion_blocked_during_freeze(tmp_path):
     ledger = _ledger(tmp_path)
-    ledger.record_rollback(artifact_id="job-1", change_class="docs",
-                           notes="x")
+    ledger.record_rollback(artifact_id="job-1", change_class="docs", notes="x")
     assert ledger.tier_status()["promotion_freeze_until"] is not None
     with pytest.raises(ValueError, match="promotion freeze"):
         ledger.record_tier_promoted(to_tier=1, approver="Michael")
@@ -237,8 +242,7 @@ def test_promotion_blocked_during_freeze(tmp_path):
 
 def test_promotion_override_freeze_records_override(tmp_path):
     ledger = _ledger(tmp_path)
-    ledger.record_rollback(artifact_id="job-1", change_class="docs",
-                           notes="x")
+    ledger.record_rollback(artifact_id="job-1", change_class="docs", notes="x")
     event = ledger.record_tier_promoted(
         to_tier=1, approver="Michael", override_freeze=True
     )
@@ -399,11 +403,15 @@ def test_record_merge_receipt_missing_idempotent_and_not_a_clean_merge(tmp_path)
     """The receipt-missing event is visible but never counts as a merge."""
     ledger = _ledger(tmp_path)
     first = ledger.record_merge_receipt_missing(
-        artifact_id="job-7", change_class="docs", merge_sha="m" * 40,
+        artifact_id="job-7",
+        change_class="docs",
+        merge_sha="m" * 40,
         notes="rollback refused",
     )
     second = ledger.record_merge_receipt_missing(
-        artifact_id="job-7", change_class="docs", merge_sha="m" * 40,
+        artifact_id="job-7",
+        change_class="docs",
+        merge_sha="m" * 40,
         notes="rollback refused",
     )
     assert second["event_id"] == first["event_id"]
@@ -428,9 +436,7 @@ def test_missing_receipt_raises_before_merged_and_rolls_back(monkeypatch, tmp_pa
     rolled_back = []
     ex = _executor(monkeypatch, tmp_path, db, ledger, _ok_script, receipt_id="")
     monkeypatch.setattr(ex, "_is_exact_merge_commit", lambda **k: True)
-    monkeypatch.setattr(
-        ex, "_rollback_target", lambda **k: rolled_back.append(k)
-    )
+    monkeypatch.setattr(ex, "_rollback_target", lambda **k: rolled_back.append(k))
 
     with pytest.raises(MergeReceiptMissingError, match="no signed merge receipt"):
         ex._execute_merge(job, _FakeManifest(job), auth)

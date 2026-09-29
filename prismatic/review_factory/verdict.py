@@ -99,9 +99,7 @@ def evaluate_pr(pr: Any, now: datetime | None = None) -> dict[str, Any]:
     """Compute one PR's verdict. Never raises; unparseable input still records."""
     now = now or _utcnow()
     if not isinstance(pr, dict):
-        return _record(
-            None, "", "", None, "skipped", None, "unparseable PR entry", now
-        )
+        return _record(None, "", "", None, "skipped", None, "unparseable PR entry", now)
     ref = pr.get("pr", pr.get("number"))
     title = str(pr.get("title") or "")
     author = str(pr.get("author") or "")
