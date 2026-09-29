@@ -212,6 +212,7 @@ from prismatic.gateway.verification_daemon import (
 )
 from prismatic.gateway.webhook_receipt_emitter import handle_github_webhook_event
 from prismatic.gateway.release_info import get_running_sha
+from prismatic.gateway.truth import get_truth_snapshot
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     get_linear_rate_limit_snapshot,
@@ -775,6 +776,13 @@ async def health() -> dict[str, Any]:
         "started_at": _started_at,
         "sha": get_running_sha(),
     }
+
+
+@app.get("/api/gateway/truth")
+def gateway_truth() -> dict[str, Any]:
+    """Read-only truth panels: trust ledger, merge receipts, T1 status,
+    deployed SHA, consumer lag. Single atomic snapshot, fail-open per panel."""
+    return get_truth_snapshot()
 
 
 @app.get("/api/harnesses")
