@@ -142,11 +142,16 @@ def check_env_example() -> list[str]:
         if marker not in text:
             failures.append(f".env.example missing {marker!r}")
     forbidden_assignments = ["TOKEN=", "PASSWORD=", "SECRET=", "API_KEY="]
-    for marker in forbidden_assignments:
-        if marker in text:
-            failures.append(
-                f".env.example should not contain credential assignment marker {marker!r}"
-            )
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue  # documented placeholders in comments are not assignments
+        for marker in forbidden_assignments:
+            if marker in line:
+                failures.append(
+                    f".env.example:{line_no} should not contain credential "
+                    f"assignment marker {marker!r}"
+                )
     return failures
 
 
