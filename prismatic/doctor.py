@@ -493,11 +493,27 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
         return False, "runtime service inventory must contain exactly one consumer"
     consumer = consumers[0]
     # Canonical paths derive from PRISMATIC_HOME so `engine.doctor` works on any
-    # machine, not just the original /home/ubuntu install.
-    _prismatic_base = str(
+    # machine, not just the original /home/ubuntu install. The shipped manifest
+    # declares paths with a {PRISMATIC_HOME} placeholder; expand it against the
+    # same effective home used for the expected side before comparing.
+    _prismatic_home = str(
         Path(os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"))
-        / ".prismatic"
     )
+    _prismatic_base = _prismatic_home + "/.prismatic"
+
+    def _expand_declared(value):
+        if isinstance(value, str):
+            return value.replace("{PRISMATIC_HOME}", _prismatic_home)
+        if isinstance(value, list):
+            return [
+                item.replace("{PRISMATIC_HOME}", _prismatic_home)
+                if isinstance(item, str)
+                else item
+                for item in value
+            ]
+        return value
+
+    consumer = {key: _expand_declared(val) for key, val in consumer.items()}
     _rel = _prismatic_base + "/releases/{release_id}"
     expected_consumer = {
         "id": "consumer",
