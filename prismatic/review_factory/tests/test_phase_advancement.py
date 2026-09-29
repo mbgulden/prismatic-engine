@@ -17,14 +17,19 @@ import yaml
 
 from prismatic.review_factory.phase_advancement import (
     APPROVAL_SCHEMA,
+    EXIT_PATH_AGREEMENT,
+    EXIT_PATH_DETERMINISTIC,
+    EXIT_PATH_EITHER,
     AdvancementLog,
     AdvancementRequest,
     PhaseAdvancement,
     PhaseAdvancementError,
     PhasePolicy,
     check_phase0_exit,
+    check_phase0_exit_deterministic,
     check_phase1_exit,
     check_phase2_exit,
+    deterministic_clean_streak,
     discover_active_policy,
     evaluate_exit_criteria,
     expected_target,
@@ -624,16 +629,6 @@ def test_discover_active_policy_fail_closed_on_missing(tmp_path):
 # ─────────────────────────────────────────────────────────────────────
 # Phase 0 -> 1 deterministic exit path (T1 deterministic entry)
 # ─────────────────────────────────────────────────────────────────────
-
-from prismatic.review_factory.phase_advancement import (
-    DETERMINISTIC_CONSECUTIVE_CLEAN,
-    EXIT_PATH_AGREEMENT,
-    EXIT_PATH_DETERMINISTIC,
-    EXIT_PATH_EITHER,
-    check_phase0_exit_deterministic,
-    deterministic_clean_streak,
-)
-
 
 def _det_decision(i, change_class="docs", clean=True, **overrides):
     d = {
