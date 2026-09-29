@@ -6,12 +6,20 @@ name: auto-update-prs
 # the fresh base. No force-push, no rebase, no human step.
 # If a PR has real merge conflicts, update-branch fails and the PR is left
 # alone with a warning in the log for a human (or a repair packet) to fix.
+#
+# Thundering-herd guard: a PR whose head was pushed within COOLDOWN_MINUTES
+# is skipped. During a merge sprint this stops the workflow from stomping a
+# just-pushed branch — which would also cancel its fresh CI via test.yml's
+# per-ref concurrency group — and from re-firing full PR CI on every main
+# push. Every behind-PR still converges to main within the cooldown window;
+# workflow_dispatch remains for an immediate "update now".
 
 on:
   push:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 # Concurrent runs could push conflicting updates to the same PR
 # branch; a newer run redoes the work anyway.
@@ -34,16 +42,33 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
+            const COOLDOWN_MINUTES = 60;
             const prs = await github.paginate(github.rest.pulls.list, {
               owner, repo, state: 'open', base: 'main', per_page: 100,
             });
             core.info(`Found ${prs.length} open PR(s) targeting main.`);
-            let updated = 0, skipped = 0, conflicted = 0;
+            let updated = 0, skipped = 0, cooled = 0, conflicted = 0;
             for (const pr of prs) {
               const cmp = await github.rest.repos.compareCommitsWithBasehead({
                 owner, repo, basehead: `main...${pr.head.sha}`,
               });
               if (cmp.data.behind_by === 0) { skipped++; continue; }
+              // Cooldown: don't stomp a branch that was just pushed — its CI
+              // is still fresh (or a previous update just landed). The next
+              // event after the window picks it up.
+              const headCommit = await github.rest.repos.getCommit({
+                owner, repo, ref: pr.head.sha,
+              });
+              const headAgeMin =
+                (Date.now() - new Date(headCommit.data.commit.committer.date)) / 60000;
+              if (headAgeMin < COOLDOWN_MINUTES) {
+                core.info(
+                  `PR #${pr.number} ("${pr.title}"): head pushed ` +
+                  `${headAgeMin.toFixed(1)}m ago — in cooldown, skipping.`
+                );
+                cooled++;
+                continue;
+              }
               try {
                 await github.rest.pulls.updateBranch({
                   owner, repo, pull_number: pr.number,
@@ -56,4 +81,7 @@ jobs:
                 conflicted++;
               }
             }
-            core.info(`Done: ${updated} updated, ${skipped} already current, ${conflicted} conflicted.`);
+            core.info(
+              `Done: ${updated} updated, ${skipped} already current, ` +
+              `${cooled} in cooldown, ${conflicted} conflicted.`
+            );
