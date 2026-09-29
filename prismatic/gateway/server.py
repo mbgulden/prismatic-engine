@@ -211,6 +211,7 @@ from prismatic.gateway.verification_daemon import (
     stop_verification_daemon,
 )
 from prismatic.gateway.webhook_receipt_emitter import handle_github_webhook_event
+from prismatic.gateway.release_info import get_running_sha
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     get_linear_rate_limit_snapshot,
@@ -772,6 +773,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "uptime_seconds": round(uptime, 1),
         "started_at": _started_at,
+        "sha": get_running_sha(),
     }
 
 

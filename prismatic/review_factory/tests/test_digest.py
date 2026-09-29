@@ -312,11 +312,26 @@ def test_contract_waivers_garbage_never_raises():
 def _stranded_input():
     return {
         "approaching": [
-            {"pr": 557, "title": "autonomy_tiers_v2 spec", "age_days": 6, "author": "muse"},
-            {"pr": 558, "title": "phase deterministic path", "age_days": 5, "author": "muse"},
+            {
+                "pr": 557,
+                "title": "autonomy_tiers_v2 spec",
+                "age_days": 6,
+                "author": "muse",
+            },
+            {
+                "pr": 558,
+                "title": "phase deterministic path",
+                "age_days": 5,
+                "author": "muse",
+            },
         ],
         "verdicts_issued": [
-            {"pr": 550, "verdict": "merged", "reason": "deterministic-green", "ts": "2026-09-27T18:00:00Z"},
+            {
+                "pr": 550,
+                "verdict": "merged",
+                "reason": "deterministic-green",
+                "ts": "2026-09-27T18:00:00Z",
+            },
         ],
     }
 
@@ -357,7 +372,9 @@ def test_stranded_work_truncates_with_count():
 
 
 def test_stranded_work_never_raises_on_garbage():
-    section = build_autonomy_section(stranded={"approaching": "nope", "verdicts_issued": [None, 42]})
+    section = build_autonomy_section(
+        stranded={"approaching": "nope", "verdicts_issued": [None, 42]}
+    )
     sw = section["stranded_work"]
     assert sw["approaching"] == []
     assert sw["verdicts_issued"] == []

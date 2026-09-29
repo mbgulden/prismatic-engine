@@ -454,15 +454,11 @@ class TestMergeReceiptEmission:
 
     def test_emission_writes_receipt_with_bindings(self, tmp_path):
         executor, job, auth, manifest = self._executor(tmp_path)
-        receipt_id = executor._emit_merge_receipt(
-            job, auth, manifest, "d" * 40, ()
-        )
+        receipt_id = executor._emit_merge_receipt(job, auth, manifest, "d" * 40, ())
         assert receipt_id
         from prismatic.verification.merge_receipt import find_merge_receipts
 
-        receipts = find_merge_receipts(
-            log_path=tmp_path / "receipts.jsonl"
-        )
+        receipts = find_merge_receipts(log_path=tmp_path / "receipts.jsonl")
         assert len(receipts) == 1
         assert receipts[0]["receipt_id"] == receipt_id
         assert receipts[0]["merge_sha"] == "d" * 40
@@ -471,7 +467,4 @@ class TestMergeReceiptEmission:
         executor, job, auth, manifest = self._executor(tmp_path)
         # A directory as the log path cannot be appended to.
         executor.merge_receipts_path = tmp_path
-        assert (
-            executor._emit_merge_receipt(job, auth, manifest, "d" * 40, ())
-            == ""
-        )
+        assert executor._emit_merge_receipt(job, auth, manifest, "d" * 40, ()) == ""

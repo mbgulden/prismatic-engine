@@ -860,7 +860,9 @@ class MergeExecutor:
                 notes=reason,
             )
         except Exception:
-            logger.debug("trust ledger record_merge_receipt_missing failed", exc_info=True)
+            logger.debug(
+                "trust ledger record_merge_receipt_missing failed", exc_info=True
+            )
 
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
         if job.result_packet_path and Path(job.result_packet_path).exists():

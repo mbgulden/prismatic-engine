@@ -108,8 +108,7 @@ class _PassingReceiptJudge:
     def __init__(self):
         self.calls = []
 
-    def validate(self, *, receipt_id, expected_candidate_sha,
-                 expected_tree_sha=None):
+    def validate(self, *, receipt_id, expected_candidate_sha, expected_tree_sha=None):
         self.calls.append(
             {
                 "receipt_id": receipt_id,
@@ -127,8 +126,7 @@ class _RefusingReceiptJudge:
         self.reason = reason
         self.calls = []
 
-    def validate(self, *, receipt_id, expected_candidate_sha,
-                 expected_tree_sha=None):
+    def validate(self, *, receipt_id, expected_candidate_sha, expected_tree_sha=None):
         self.calls.append(receipt_id)
         return False, self.reason
 
@@ -561,9 +559,7 @@ def test_receipt_judge_refusals_are_fail_closed(tmp_path, reason):
     assert decision.allowed is False
 
 
-def test_judge_called_with_receipt_id_and_head_sha(
-    enabled_authority, passing_judge
-):
+def test_judge_called_with_receipt_id_and_head_sha(enabled_authority, passing_judge):
     auth, _, _ = enabled_authority
     auth.request_merge(_green_input())
     assert passing_judge.calls == [
@@ -590,9 +586,7 @@ def test_judge_failure_is_an_audited_refusal_not_an_exception(tmp_path):
 
 
 def test_receipt_refusal_is_audited_with_receipt_gate(tmp_path):
-    auth = _enabled_with_judge(
-        tmp_path, _RefusingReceiptJudge("receipt_not_found")
-    )
+    auth = _enabled_with_judge(tmp_path, _RefusingReceiptJudge("receipt_not_found"))
     auth.request_merge(_green_input())
     rows = _read_audit(tmp_path)
     assert len(rows) == 1
