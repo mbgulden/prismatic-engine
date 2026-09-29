@@ -1,0 +1,46 @@
+name: test-extended
+
+# Slow lane: the full 3,213-test suite including quarantined tests.
+# Split out of test.yml (2026-09-28, CI lane discipline) so the slow suite
+# can never head-of-line-block the fast gate or the post-merge deploy on
+# the two self-hosted runners.
+#
+# pull_request only: main is covered by nightly-full-suite.yml (tier B, daily)
+# and by the fast gate on every push. Informational only — never blocks merge.
+
+on:
+  pull_request:
+    branches:
+      - main
+      - deploy-fresh
+
+# A new push kills the stale run instead of billing both.
+concurrency:
+  group: test-extended-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extended:
+    name: "extended (full suite — informational)"
+    # WS2: the full 3,213-test suite including quarantined tests.
+    # Informational only — never blocks merge.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package and release dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[release]"
+
+      - name: Run extended suite
+        run: python -m pytest tests --quarantine-mode=extended -q -p no:cacheprovider
