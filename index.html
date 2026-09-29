@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prismatic Engine — One Engine. Full Spectrum Autonomy.</title>
-<meta name="description" content="Prismatic Engine is a portable, multi-agent orchestration engine. Deploy autonomous agent swarms across any infrastructure — local, edge, or cloud.">
+<title>Prismatic Engine &mdash; Your agents say they&rsquo;re done. Prove it.</title>
+<meta name="description" content="Prismatic Engine is the auditable control plane for AI agent work: independent verification, signed proof-of-done receipts, and earned autonomy. Local-first, open source under AGPL-3.0.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&family=Geist:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -642,9 +642,20 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
   .prism-visual { margin-top: 2rem; }
 }
 </style>
+<style>
+.audience-line { color: var(--text-muted); font-size: 1.05rem; margin: 0 0 1rem; font-weight: 600; }
+.badge-row { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; margin-bottom: 3rem; }
+.page-hero { padding: 9rem 0 4rem; text-align: center; }
+.page-hero h1 { font-size: 3rem; font-weight: 800; line-height: 1.15; margin-bottom: 1.25rem; }
+.page-hero p { color: var(--text-muted); font-size: 1.15rem; max-width: 640px; margin: 0 auto; line-height: 1.7; }
+.rule-list { list-style: none; margin-top: 1.5rem; }
+.rule-list li { padding: 0.9rem 1.2rem; border: 1px solid var(--border-steel); border-radius: 6px; margin-bottom: 0.6rem; background: var(--bg-chassis); font-family: var(--font-mono); font-size: 0.95rem; }
+.flow-line { font-family: var(--font-mono); font-size: 0.9rem; color: var(--text-muted); line-height: 2; margin-top: 1.5rem; }
+.flow-line strong { color: var(--text-primary); }
+.note-box { border-left: 3px solid var(--border-active); padding: 1rem 1.25rem; margin-top: 1.5rem; color: var(--text-muted); background: var(--bg-charcoal); border-radius: 0 6px 6px 0; }
+</style>
 </head>
 <body>
-
 <nav>
   <div class="container">
     <a href="/" class="nav-logo">
@@ -681,10 +692,9 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       <span>PRISMATIC ENGINE</span>
     </a>
     <div class="nav-links">
-      <a href="#spectrum">Spectrum</a>
-      <a href="#how">How It Works</a>
-      <a href="#marketplace">Marketplace</a>
-      <a href="#open-source">Open Source</a>
+      <a href="/how-it-works.html">How It Works</a>
+      <a href="/autonomy-tiers.html">Autonomy Tiers</a>
+      <a href="/plugins-harnesses.html">Plugins &amp; Harnesses</a>
       <a href="https://github.com/mbgulden/prismatic-engine" class="nav-cta">GitHub</a>
     </div>
   </div>
@@ -692,14 +702,15 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
 
 <section class="hero">
   <div class="container">
-    <div class="hero-label">Spectrum Orchestration</div>
-    <h1>One Engine.<br>Full Spectrum Autonomy.</h1>
-    <p>Prismatic Engine is a portable, multi-agent orchestration engine. Input your workflows and let the agent spectrum deploy, collaborate, and execute across any infrastructure — local, edge, or cloud.</p>
+    <div class="hero-label">Open source &middot; AGPL-3.0-only &middot; v0.2.0 alpha</div>
+    <h1>Your agents say they&rsquo;re done.<br>Prove it.</h1>
+    <p class="audience-line">For teams running coding-agent fleets who can&rsquo;t trust the output.</p>
+    <p>Prismatic Engine is the <strong>auditable control plane for AI agent work</strong>. It verifies every run, signs the receipt, and gives you visibility into the black box &mdash; across all your harnesses.</p>
     <div class="hero-actions">
-      <a href="#get-started" class="btn-primary">Get Started</a>
-      <a href="https://github.com/mbgulden/prismatic-engine" class="btn-ghost">View on GitHub</a>
+      <a href="#install" class="btn-primary">Install in five steps</a>
+      <a href="mailto:michael@prismaticengine.com?subject=Prismatic%20Engine%20early%20access" class="btn-ghost">Get early access</a>
     </div>
-    
+    <div class="badge-row"><span class="sys-item"><span class="sys-val">v0.2.0</span></span><span class="sys-item"><span class="sys-val">AGPL-3.0-only</span></span><span class="sys-item"><span class="sys-val">Local-first</span></span><span class="sys-item"><span class="sys-val">Python 3.10&ndash;3.13</span></span><span class="sys-item"><span class="sys-val">Harness agnostic</span></span></div>
     <div class="prism-visual">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 250" width="100%" height="100%" style="border-radius:4px;border:1px solid var(--border-steel);">
         <defs>
@@ -1139,236 +1150,207 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     </div>
   </div>
 </section>
-
-<section id="what" class="scroll-reveal">
+<section class="scroll-reveal">
   <div class="container">
     <div class="section-label">The Autonomy Gap</div>
+    <h2 class="section-title">AI agents are a black box. That&rsquo;s the gap.</h2>
+    <p class="section-subtitle">You hand work to agents. They hand back <em>finished</em>. Finished by whose measure? Without verification, you&rsquo;re flying blind &mdash; and the bigger the fleet, the blinder.</p>
     <div class="what-grid">
-      <div class="what-left">
-        <h2>AI swarms shouldn't be bloated, cloud-locked, or hard to deploy.</h2>
-        <p>Current agent frameworks chain you to specific providers or bury you in configuration. Prismatic Engine breaks workflows into a spectrum of specialized agents — running wherever you need them, with zero lock-in.</p>
-      </div>
-      <div class="status-dashboard terminal-ui">
-        <div class="terminal-header">
-          <div class="terminal-dots">
-            <span class="terminal-dot dot-red"></span>
-            <span class="terminal-dot dot-yellow"></span>
-            <span class="terminal-dot dot-green"></span>
-          </div>
-          <div class="terminal-title">prismatic-daemon</div>
-          <div class="terminal-status"><span class="pulse-indicator"></span> ACTIVE</div>
-        </div>
-        <div class="terminal-body">
-          <div class="terminal-sysinfo">
-            <div class="sys-item"><span>ENGINE</span><span class="sys-val">v0.1.0</span></div>
-            <div class="sys-item"><span>HOST</span><span class="sys-val">LOCALHOST</span></div>
-            <div class="sys-item"><span>PROVIDER</span><span class="sys-val">AGNOSTIC</span></div>
-            <div class="sys-item"><span>LICENSE</span><span class="sys-val">AGPLv3</span></div>
-          </div>
-          <div class="terminal-divider"></div>
-          <div class="briefing-grid" id="overnight-briefing" aria-live="polite">
-            <div class="briefing-metric">Processed<strong id="briefing-processed">—</strong></div>
-            <div class="briefing-metric">Autonomous<strong id="briefing-autonomous">—</strong></div>
-            <div class="briefing-metric">Needs hand<strong id="briefing-needs-hand">—</strong></div>
-            <div class="briefing-metric">Cost<strong id="briefing-cost">—</strong></div>
-          </div>
-          <div class="briefing-note" id="briefing-note"><strong>Daily briefing:</strong> waiting for <code>/api/report/latest</code>.</div>
-          <div class="terminal-divider"></div>
-          <div class="terminal-logs" id="terminal-logs">
-            <!-- Simulated logs typewriter will print here -->
-          </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ff4545"></div>
+          <div class="agent-role">THE FOUNDING PAIN</div>
+          <div class="agent-name">&ldquo;Done&rdquo; with no proof.</div>
+          <div class="agent-details">Agents report done when the work isn&rsquo;t. Prismatic derives the verdict from the done gate &mdash; exact checks, exit codes, evidence &mdash; never from the agent&rsquo;s word.</div>
         </div>
       </div>
-    </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-role">MERGE DISCIPLINE</div>
+          <div class="agent-name">Nobody watching the merge.</div>
+          <div class="agent-details">Producers shouldn&rsquo;t merge their own unverified work. The verification contract forbids self-authorized merges: the reviewed SHA must equal the PR head at merge time.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ffcc00"></div>
+          <div class="agent-role">APPROVALS</div>
+          <div class="agent-name">Risky actions, no approval.</div>
+          <div class="agent-details">Policy enforcement runs <em>before</em> risky work, not after. Production deploys and auth/security paths stay human-only &mdash; always.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-role">AUDIT</div>
+          <div class="agent-name">No trail when it matters.</div>
+          <div class="agent-details">Durable jobs, append-only audit events, artifact provenance, a trust ledger of every merge outcome. Reconstruct anything, any time.</div>
+        </div>
+      </div>
+</div>
   </div>
 </section>
-
-<section id="spectrum" class="scroll-reveal">
+<section class="scroll-reveal">
   <div class="container">
-    <div class="section-label">The Agent Spectrum</div>
-    <h2 class="section-title">Spectrum of specialized agents.<br>One orchestration engine.</h2>
-    <p class="section-subtitle">Each agent is a wavelength in the spectrum — specialized, independent, and coordinated by the engine.</p>
-    <div class="spectrum-grid">
-      <div class="agent-card">
-        <div class="agent-card-inner">
-          <div class="agent-dot red"></div>
-          <div class="agent-name">AGY</div>
-          <div class="agent-role">Orchestrator & Vision</div>
-          <div class="agent-details">Monitors output correctness and directs the swarm's workflow mapping and scheduling.</div>
-        </div>
-      </div>
-      <div class="agent-card">
-        <div class="agent-card-inner">
-          <div class="agent-dot amber"></div>
-          <div class="agent-name">Jules</div>
-          <div class="agent-role">Workspace Admin & PR</div>
-          <div class="agent-details">Manages local repository state, runs linter checks, and audits active pull requests.</div>
-        </div>
-      </div>
-      <div class="agent-card">
-        <div class="agent-card-inner">
-          <div class="agent-dot gold"></div>
-          <div class="agent-name">Custom</div>
-          <div class="agent-role">Bolt-On Agents</div>
-          <div class="agent-details">Custom extensions and marketplace modules plug in seamlessly with zero setup.</div>
-        </div>
-      </div>
-      <div class="agent-card">
-        <div class="agent-card-inner">
-          <div class="agent-dot emerald"></div>
-          <div class="agent-name">Hermes</div>
-          <div class="agent-role">Routing & Messaging</div>
-          <div class="agent-details">Manages websocket messaging pools, system routers, and event dispatches.</div>
-        </div>
-      </div>
-      <div class="agent-card">
-        <div class="agent-card-inner">
-          <div class="agent-dot sapphire"></div>
-          <div class="agent-name">Codex</div>
-          <div class="agent-role">Code & Repository</div>
-          <div class="agent-details">Generates refactorings, populates modules, and modifies source directories.</div>
-        </div>
-      </div>
-      <div class="agent-card">
-        <div class="agent-card-inner">
-          <div class="agent-dot amethyst"></div>
-          <div class="agent-name">Research</div>
-          <div class="agent-role">Deep Analysis</div>
-          <div class="agent-details">Runs concurrent search engine queries, compiles records, and extracts facts.</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="how" class="scroll-reveal">
-  <div class="container">
-    <div class="section-label">Pipeline</div>
-    <h2 class="section-title">One config. Full execution.</h2>
-    <p class="section-subtitle">Define your agents, set your pipeline, and Prismatic Engine handles the rest — review chains, stall recovery, and artifact handoff.</p>
+    <div class="section-label">How it works</div>
+    <h2 class="section-title">Produce. Verify. Receipt. Merge.</h2>
     
-    <div class="pipeline-tabs">
-      <button class="pipeline-tab active" data-tab="codegen">Code Gen</button>
-      <button class="pipeline-tab" data-tab="research">Deep Research</button>
-      <button class="pipeline-tab" data-tab="delivery">PR Delivery</button>
-    </div>
-
-    <div class="how-pipeline">
-      <div class="pipeline-step">
-        <h3>1. INPUT (YAML)</h3>
+    <div class="what-grid">
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ff4545"></div>
+          <div class="agent-role">STEP 1</div>
+          <div class="agent-name">Produce</div>
+          <div class="agent-details">Any harness does the work &mdash; Claude Code CLI, Gemini CLI, Codex CLI, Hermes agents, GitHub PRs, or your own CLI behind a JSON envelope.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-role">STEP 2</div>
+          <div class="agent-name">Verify</div>
+          <div class="agent-details">The engine checks the work independently: exact commands, exit codes, digests, measured against the verification contract. Plausible output is not verified completion.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-role">STEP 3</div>
+          <div class="agent-name">Receipt</div>
+          <div class="agent-details">Every run gets a signed proof-of-done receipt &mdash; what was checked, what passed, what failed, and a DONE / NOT DONE verdict. Ed25519-signed, persisted, dashboard-visible.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#00b0ff"></div>
+          <div class="agent-role">STEP 4</div>
+          <div class="agent-name">Merge</div>
+          <div class="agent-details">Verified work merges under earned-autonomy tiers with a signed merge receipt. Unverified work waits. Novel work quarantines. Nothing merges on a claim.</div>
+        </div>
+      </div>
+</div><p style="margin-top:2rem;"><a href="/how-it-works.html" class="btn-ghost">Read the full verification model</a></p>
+  </div>
+</section>
+<section class="scroll-reveal">
+  <div class="container">
+    <div class="section-label">Capabilities</div>
+    <h2 class="section-title">One engine. Every harness. Full audit.</h2>
+    
+    <div class="what-grid">
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ff4545"></div>
+          <div class="agent-role">RECEIPTS</div>
+          <div class="agent-name">Proof-of-done receipts</div>
+          <div class="agent-details">Signed, persisted, readable. The verdict comes from the checks, not the chat.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-role">NEUTRALITY</div>
+          <div class="agent-name">Provider-neutral verification</div>
+          <div class="agent-details">GitHub, GitLab, Bitbucket, Forgejo, or local. A provider outage reports BLOCKED &mdash; never PASS.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#ffcc00"></div>
+          <div class="agent-role">AUTONOMY</div>
+          <div class="agent-name">Earned autonomy</div>
+          <div class="agent-details">T0 is manual today. Higher tiers are earned on evidence from the trust ledger, and promotion stays a human decision.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-role">HARNESSES</div>
+          <div class="agent-name">Harness agnostic</div>
+          <div class="agent-details">Swappable adapters. Any CLI agent that reads a JSON task envelope and prints JSON back can be driven &mdash; zero per-harness code.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#00b0ff"></div>
+          <div class="agent-role">GOVERNANCE</div>
+          <div class="agent-name">Plugin governance</div>
+          <div class="agent-details">Catalog, load gates, policy enforcement before risky work, durable jobs, audit events, artifact provenance.</div>
+        </div>
+      </div>
+<div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot" style="background:#d500f9"></div>
+          <div class="agent-role">LOCAL</div>
+          <div class="agent-name">Local-first</div>
+          <div class="agent-details">Runs on your machine. Your code, your keys, your ledger. No mandatory cloud, no lock-in.</div>
+        </div>
+      </div>
+</div>
+  </div>
+</section>
+<section class="scroll-reveal">
+  <div class="container">
+    <div class="section-label">Proof, not promises</div>
+    <h2 class="section-title">It runs its own development.</h2>
+    <p class="section-subtitle">Every change to Prismatic Engine goes through the same machinery: verified in CI, receipted, merged under the same gates. The trust ledger, the receipts, the quarantine history &mdash; all in the public repo. We don&rsquo;t ask you to trust the engine. We ask you to verify it.</p>
+    <p style="margin-top:1.5rem;"><a href="https://github.com/mbgulden/prismatic-engine" class="btn-ghost">Verify it yourself &mdash; view the repo</a></p>
+  </div>
+</section>
+<section class="scroll-reveal">
+  <div class="container">
+    <div class="section-label">No lock-in</div>
+    <h2 class="section-title">Your verification shouldn&rsquo;t depend on your provider.</h2>
+    <p class="section-subtitle">A GitHub outage reports <strong>BLOCKED</strong> &mdash; never PASS. Verification receipts are provider-neutral: GitHub, GitLab, Bitbucket, Forgejo, or local. No mandatory cloud, no mandatory backend.</p>
+    
+  </div>
+</section>
+<section class="scroll-reveal">
+  <div class="container">
+    <div class="section-label">License</div>
+    <h2 class="section-title">Open source, plainly.</h2>
+    <p class="section-subtitle">Prismatic Engine is free and open source under <strong>AGPL-3.0-only</strong>. Use it, fork it, extend it, self-host it. If you run a modified version for others over the network, you share your source &mdash; that&rsquo;s the whole deal.</p>
+    <p style="margin-top:1.5rem;"><a href="https://www.gnu.org/licenses/agpl-3.0.en.html" class="btn-ghost">Read the AGPL-3.0 text</a></p>
+  </div>
+</section>
+<section class="scroll-reveal" id="install">
+  <div class="container">
+    <div class="section-label">Install</div>
+    <h2 class="section-title">Running in five steps.</h2>
+    <!-- PYPI-SWAP: when prismatic-engine lands on PyPI (Phase 3), replace this
+         8-command source-install block with: python -m pip install prismatic-engine
+         (keep the smoke-expectation line only if it still applies). Never promise
+         a PyPI install before the package exists. -->
         <div class="code-block-container">
           <div class="code-block-header">
-            <span class="file-name" id="yaml-filename">prismatic.yaml</span>
-            <span class="lang-label">YAML</span>
+            <span class="file-name">terminal</span>
+            <span class="lang-label">bash</span>
+            <button class="copy-btn" aria-label="Copy command" data-cmd="git clone https://github.com/mbgulden/prismatic-engine.git&#10;cd prismatic-engine&#10;python3 -m venv .venv&#10;. .venv/bin/activate&#10;python -m pip install --upgrade pip&#10;python -m pip install -e &quot;.[gateway]&quot;&#10;cp .env.example .env&#10;python scripts/public_launch_smoke.py">
+            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </button>
           </div>
-          <div class="code-block" id="yaml-content">
-            <span class="comment"># prismatic.yaml</span><br>
-            <span class="key">pipeline</span>:<br>
-            &nbsp;&nbsp;<span class="key">design</span>: <span class="val">agy</span><br>
-            &nbsp;&nbsp;<span class="key">build</span>: <span class="val">codex</span><br>
-            &nbsp;&nbsp;<span class="key">review</span>: <span class="val">jules</span><br>
-            &nbsp;&nbsp;<span class="key">vision</span>: <span class="val">agy</span>
+          <div class="code-block">
+            <span class="comment">$</span> git clone https://github.com/mbgulden/prismatic-engine.git<br>
+            <span class="comment">$</span> cd prismatic-engine<br>
+            <span class="comment">$</span> python3 -m venv .venv<br>
+            <span class="comment">$</span> . .venv/bin/activate<br>
+            <span class="comment">$</span> python -m pip install --upgrade pip<br>
+            <span class="comment">$</span> python -m pip install -e &quot;.[gateway]&quot;<br>
+            <span class="comment">$</span> cp .env.example .env<br>
+            <span class="comment">$</span> python scripts/public_launch_smoke.py<br>
+            <span class="comment"># expected: PUBLIC_LAUNCH_SMOKE_OK</span>
           </div>
         </div>
-      </div>
-      <div class="pipeline-arrow">→</div>
-      <div class="pipeline-step">
-        <h3>2. ENGINE</h3>
-        <p id="engine-step-text">Prismatic Engine parses the manifest, splits work across the agent spectrum, and manages all routing and state.</p>
-      </div>
-      <div class="pipeline-arrow">→</div>
-      <div class="pipeline-step">
-        <h3>3. EXECUTION</h3>
-        <p id="execution-step-text">AGY designs → Codex builds → Jules reviews → AGY vision-tests. Each agent checks the previous agent's work. Zero single points of failure.</p>
-      </div>
-    </div>
+        <p class="section-subtitle" style="margin-top:1rem;">Linux or macOS &middot; Python 3.10&ndash;3.13 &middot; Developer preview &mdash; not a hosted service.</p>
   </div>
 </section>
-
-<section id="marketplace" class="scroll-reveal">
+<section class="scroll-reveal">
   <div class="container">
-    <div class="section-label">Bolt-On Marketplace</div>
-    <h2 class="section-title">Extend the spectrum.</h2>
-    <p class="section-subtitle">Community-built modules that plug directly into your engine. One command to install. Zero configuration.</p>
-    <div class="market-grid">
-      <div class="market-card">
-        <div class="market-badge">DATABASE</div>
-        <h3>Database Connector</h3>
-        <p>Run SQL agents safely inside sandboxed environments. Postgres, MySQL, SQLite.</p>
-        <div class="market-cmd-wrapper">
-          <div class="market-cmd">$ prismatic install db-postgres</div>
-          <button class="copy-btn" aria-label="Copy command" data-cmd="prismatic install db-postgres">
-            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
-          </button>
-        </div>
-      </div>
-      <div class="market-card">
-        <div class="market-badge">NOTIFY</div>
-        <h3>Discord Notify</h3>
-        <p>Route agent completions, alerts, and summaries directly to Discord channels.</p>
-        <div class="market-cmd-wrapper">
-          <div class="market-cmd">$ prismatic install notify-discord</div>
-          <button class="copy-btn" aria-label="Copy command" data-cmd="prismatic install notify-discord">
-            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
-          </button>
-        </div>
-      </div>
-      <div class="market-card">
-        <div class="market-badge">RUNNER</div>
-        <h3>Sandbox Executor</h3>
-        <p>Dockerized code execution. Every agent runs in an isolated container.</p>
-        <div class="market-cmd-wrapper">
-          <div class="market-cmd">$ prismatic install sandbox-docker</div>
-          <button class="copy-btn" aria-label="Copy command" data-cmd="prismatic install sandbox-docker">
-            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="open-source" class="scroll-reveal">
-  <div class="container">
-    <div class="open-source">
-      <h2>Open Source. No Lock-In.</h2>
-      <p>Prismatic Engine is fully open source under AGPLv3. Run it on your servers, package it into your commercial apps, or self-host. Fork it. Extend it. Own it.</p>
-      <div class="os-buttons">
-        <a href="https://github.com/mbgulden/prismatic-engine" class="btn-primary">Fork on GitHub</a>
-        <a href="https://www.gnu.org/licenses/agpl-3.0.en.html" class="btn-ghost">Read AGPLv3 License</a>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="get-started" class="scroll-reveal">
-  <div class="container" style="text-align:center;">
-    <div class="section-label">Get Early Access</div>
-    <h2 class="section-title">Ready to orchestrate?</h2>
-    <p class="section-subtitle" style="margin:0 auto 2rem;">Prismatic Engine is in active development. Sign up for early access and build the future of agent orchestration with us.</p>
+    <div class="section-label">Early access</div>
+    <h2 class="section-title">Ready to stop flying blind?</h2>
     
-    <div class="form-wrapper" id="early-access-wrapper" style="max-width:480px;margin:0 auto;position:relative;">
-      <form id="early-access-form" action="https://formsubmit.co/mbgulden@gmail.com" method="POST">
-        <input type="hidden" name="_subject" value="Prismatic Engine Early Access">
-        <input type="hidden" name="_captcha" value="false">
-        <div class="input-group">
-          <input type="email" id="early-access-email" name="email" placeholder="you@domain.com" required 
-            style="width:100%;padding:0.85rem 1rem;background:var(--bg-charcoal);border:1px solid var(--border-steel);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono);font-size:0.9rem;margin-bottom:1rem;outline:none;transition: border-color 0.3s ease;">
-        </div>
-        <button type="submit" id="early-access-btn" class="btn-primary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:0.5rem;">
-          <span>Request Access</span>
-          <svg class="spinner hidden" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" style="animation: spin 1s linear infinite;"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>
-        </button>
-      </form>
-      <div id="form-success-message" class="form-success hidden">
-        <div class="success-icon">✓</div>
-        <h3>Welcome to the Spectrum</h3>
-        <p>Your early access request has been received. We'll reach out to you soon.</p>
-      </div>
-    </div>
+    <div class="hero-actions" style="justify-content:flex-start;margin-bottom:0;"><a href="#install" class="btn-primary">Install in five steps</a> <a href="mailto:michael@prismaticengine.com?subject=Prismatic%%20Engine%%20early%%20access" class="btn-ghost">Get early access</a></div>
   </div>
 </section>
 
@@ -1376,36 +1358,36 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
   <div class="container">
     <div class="footer-grid">
       <div class="footer-brand">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" style="display:block;opacity:0.6;">
-          <defs>
-            <linearGradient id="footer-logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
-              <stop offset="100%" stop-color="rgba(255, 255, 255, 0.02)" />
-            </linearGradient>
-            <linearGradient id="footer-logo-prism-stroke" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="rgba(255, 255, 255, 0.6)" />
-              <stop offset="40%" stop-color="rgba(100, 210, 255, 0.5)" />
-              <stop offset="100%" stop-color="rgba(255, 55, 95, 0.4)" />
-            </linearGradient>
-            <linearGradient id="footer-logo-dispersion" x1="38" y1="35" x2="57" y2="51" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#ffffff" />
-              <stop offset="30%" stop-color="#ffffff" />
-              <stop offset="70%" stop-color="#ff3366" />
-              <stop offset="100%" stop-color="#ff9f0a" />
-            </linearGradient>
-            <linearGradient id="footer-logo-output-beam" x1="57" y1="51" x2="85" y2="79" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stop-color="#ff9f0a" />
-              <stop offset="30%" stop-color="#ff3366" />
-              <stop offset="70%" stop-color="#64d2ff" />
-              <stop offset="100%" stop-color="#5e5ce6" />
-            </linearGradient>
-          </defs>
-          <line x1="28" y1="16" x2="28" y2="84" stroke="#ffffff" stroke-width="8" stroke-linecap="round" />
-          <line x1="12" y1="35" x2="38" y2="35" stroke="#ffffff" stroke-width="6" stroke-linecap="round" />
-          <line x1="38" y1="35" x2="57" y2="51" stroke="url(#footer-logo-dispersion)" stroke-width="3.5" stroke-linecap="round" />
-          <polygon points="38,18 76,40 38,62" fill="url(#footer-logo-prism-fill)" stroke="url(#footer-logo-prism-stroke)" stroke-width="4.5" stroke-linejoin="round" />
-          <line x1="57" y1="51" x2="85" y2="79" stroke="url(#footer-logo-output-beam)" stroke-width="7" stroke-linecap="round" />
-        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" style="display:block;opacity:0.6;" style="display:block;">
+        <defs>
+          <linearGradient id="logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
+            <stop offset="100%" stop-color="rgba(255, 255, 255, 0.02)" />
+          </linearGradient>
+          <linearGradient id="logo-prism-stroke" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="rgba(255, 255, 255, 0.6)" />
+            <stop offset="40%" stop-color="rgba(100, 210, 255, 0.5)" />
+            <stop offset="100%" stop-color="rgba(255, 55, 95, 0.4)" />
+          </linearGradient>
+          <linearGradient id="logo-dispersion" x1="38" y1="35" x2="57" y2="51" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="30%" stop-color="#ffffff" />
+            <stop offset="70%" stop-color="#ff3366" />
+            <stop offset="100%" stop-color="#ff9f0a" />
+          </linearGradient>
+          <linearGradient id="logo-output-beam" x1="57" y1="51" x2="85" y2="79" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ff9f0a" />
+            <stop offset="30%" stop-color="#ff3366" />
+            <stop offset="70%" stop-color="#64d2ff" />
+            <stop offset="100%" stop-color="#5e5ce6" />
+          </linearGradient>
+        </defs>
+        <line x1="28" y1="16" x2="28" y2="84" stroke="#ffffff" stroke-width="8" stroke-linecap="round" />
+        <line x1="12" y1="35" x2="38" y2="35" stroke="#ffffff" stroke-width="6" stroke-linecap="round" />
+        <line x1="38" y1="35" x2="57" y2="51" stroke="url(#logo-dispersion)" stroke-width="3.5" stroke-linecap="round" />
+        <polygon points="38,18 76,40 38,62" fill="url(#logo-prism-fill)" stroke="url(#logo-prism-stroke)" stroke-width="4.5" stroke-linejoin="round" />
+        <line x1="57" y1="51" x2="85" y2="79" stroke="url(#logo-output-beam)" stroke-width="7" stroke-linecap="round" />
+      </svg>
         <span>Prismatic Engine</span>
       </div>
       <div class="footer-links">
@@ -1414,131 +1396,10 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
         <a href="mailto:michael@prismaticengine.com">Contact</a>
       </div>
     </div>
-    <div class="footer-bottom">&copy; 2026 Prismatic Engine. Built for the agent spectrum.</div>
+    <div class="footer-bottom">&copy; 2026 Prismatic Engine. Don&rsquo;t trust. Verify.</div>
   </div>
 </footer>
-
 <script>
-// Live Terminal Console Logs
-const logs = [
-  { text: "[sys] Initializing Prismatic Engine core daemon...", class: "log-sys" },
-  { text: "[sys] Loading manifest configurations from ./prismatic.yaml", class: "log-sys" },
-  { text: "[hermes] Initializing agent mesh routing matrix... OK", class: "log-hermes" },
-  { text: "[agy] Bootstrapping master orchestrator swarm...", class: "log-agy" },
-  { text: "[agy] Assigned task chain: DESIGN -> BUILD -> REVIEW -> AUDIT", class: "log-agy" },
-  { text: "[agy] Dispatched architecture specification sheet to Codex...", class: "log-agy" },
-  { text: "[codex] Received specification sheet. Generating codebase templates...", class: "log-codex" },
-  { text: "[codex] Populated new source files in sandboxed repository workspace...", class: "log-codex" },
-  { text: "[codex] Codebase created. Forwarding review request to Jules...", class: "log-codex" },
-  { text: "[jules] Hook received. Commencing PR linting and security audit...", class: "log-jules" },
-  { text: "[jules] Audited 14 changed files. 0 errors, 2 warning items.", class: "log-jules" },
-  { text: "[jules] Review passed. Merging temporary working directory to main...", class: "log-jules" },
-  { text: "[research] Pulling public documentation regarding API overrides...", class: "log-research" },
-  { text: "[research] Integration check complete. All overrides validated.", class: "log-research" },
-  { text: "[sys] Swarm execution pipeline finished successfully in 4.82s.", class: "log-sys" },
-  { text: "[sys] Idle status. Waiting for incoming workflows...", class: "log-sys" }
-];
-
-let logIndex = 0;
-const logsContainer = document.getElementById('terminal-logs');
-
-function addLog() {
-  if (!logsContainer) return;
-  
-  if (logIndex >= logs.length) {
-    logsContainer.innerHTML = '';
-    logIndex = 0;
-  }
-  
-  const log = logs[logIndex];
-  const div = document.createElement('div');
-  div.className = `log-line ${log.class || ''}`;
-  
-  let charIndex = 0;
-  div.innerHTML = `<span class="log-cursor"></span>`;
-  logsContainer.appendChild(div);
-  logsContainer.scrollTop = logsContainer.scrollHeight;
-  
-  function typeChar() {
-    if (charIndex < log.text.length) {
-      div.innerHTML = log.text.substring(0, charIndex + 1) + `<span class="log-cursor"></span>`;
-      charIndex++;
-      setTimeout(typeChar, 15 + Math.random() * 10);
-    } else {
-      div.innerHTML = log.text;
-      logIndex++;
-      setTimeout(addLog, 1200 + Math.random() * 800);
-    }
-  }
-  
-  typeChar();
-}
-
-// Interactive Pipeline Config Tab Manager
-const pipelineData = {
-  codegen: {
-    filename: 'prismatic.yaml',
-    code: `<span class="comment"># prismatic.yaml</span><br>
-<span class="key">pipeline</span>:<br>
-&nbsp;&nbsp;<span class="key">design</span>: <span class="val">agy</span><br>
-&nbsp;&nbsp;<span class="key">build</span>: <span class="val">codex</span><br>
-&nbsp;&nbsp;<span class="key">review</span>: <span class="val">jules</span><br>
-&nbsp;&nbsp;<span class="key">vision</span>: <span class="val">agy</span>`,
-    engine: 'Prismatic Engine parses the manifest, splits work across the agent spectrum, and manages all routing and state.',
-    execution: 'AGY designs → Codex builds → Jules reviews → AGY vision-tests. Each agent checks the previous agent\'s work. Zero single points of failure.'
-  },
-  research: {
-    filename: 'research.yaml',
-    code: `<span class="comment"># research.yaml</span><br>
-<span class="key">pipeline</span>:<br>
-&nbsp;&nbsp;<span class="key">query</span>: <span class="val">research</span><br>
-&nbsp;&nbsp;<span class="key">verify</span>: <span class="val">hermes</span><br>
-&nbsp;&nbsp;<span class="key">report</span>: <span class="val">research</span><br>
-&nbsp;&nbsp;<span class="key">notify</span>: <span class="val">custom</span>`,
-    engine: 'The engine spins up a query group, handles parallel web searches, aggregates findings, and secures external notification webhooks.',
-    execution: 'Research gathers web sources → Hermes validates integrity of URLs → Research drafts standard markdown reports → Custom (Discord) posts summary.'
-  },
-  delivery: {
-    filename: 'release.yaml',
-    code: `<span class="comment"># release.yaml</span><br>
-<span class="key">pipeline</span>:<br>
-&nbsp;&nbsp;<span class="key">lint</span>: <span class="val">jules</span><br>
-&nbsp;&nbsp;<span class="key">compile</span>: <span class="val">codex</span><br>
-&nbsp;&nbsp;<span class="key">audit</span>: <span class="val">jules</span><br>
-&nbsp;&nbsp;<span class="key">deploy</span>: <span class="val">hermes</span>`,
-    engine: 'The engine boots within a local sandboxed runner, pulls repo status, registers compilation logs, and issues deployment instructions.',
-    execution: 'Jules checks styles & runs linters → Codex compiles production bundle → Jules validates test suite → Hermes pushes release to edge CDN.'
-  }
-};
-
-// Overnight briefing card
-function initOvernightBriefing() {
-  const processed = document.getElementById('briefing-processed');
-  const autonomous = document.getElementById('briefing-autonomous');
-  const needsHand = document.getElementById('briefing-needs-hand');
-  const cost = document.getElementById('briefing-cost');
-  const note = document.getElementById('briefing-note');
-
-  if (!processed || !autonomous || !needsHand || !cost || !note) return;
-
-  fetch('/api/report/latest', { headers: { 'Accept': 'application/json' } })
-    .then(response => {
-      if (!response.ok) throw new Error(`report unavailable (${response.status})`);
-      return response.json();
-    })
-    .then(report => {
-      processed.textContent = report.tasks_processed ?? '0';
-      autonomous.textContent = report.tasks_autonomous ?? '0';
-      needsHand.textContent = report.tasks_need_human ?? '0';
-      cost.textContent = `$${Number(report.cost_dollars || 0).toFixed(2)}`;
-      note.innerHTML = `<strong>Daily briefing:</strong> ${report.factory_duration || 'window'} ending ${report.generated_at || 'now'}; ${report.deliverables?.length || 0} deliverable(s) found.`;
-    })
-    .catch(error => {
-      note.innerHTML = `<strong>Daily briefing:</strong> ${error.message}. Run <code>python3 -m prismatic.reports.overnight</code> to generate one.`;
-    });
-}
-
-// Clipboard Commands Copy Manager
 function initCopyCommands() {
   const copyButtons = document.querySelectorAll('.copy-btn');
   copyButtons.forEach(btn => {
@@ -1548,11 +1409,9 @@ function initCopyCommands() {
         navigator.clipboard.writeText(cmd).then(() => {
           const copyIcon = btn.querySelector('.copy-icon');
           const checkIcon = btn.querySelector('.check-icon');
-          
           copyIcon.classList.add('hidden');
           checkIcon.classList.remove('hidden');
           btn.classList.add('copied');
-          
           setTimeout(() => {
             copyIcon.classList.remove('hidden');
             checkIcon.classList.add('hidden');
@@ -1563,58 +1422,6 @@ function initCopyCommands() {
     });
   });
 }
-
-// Early Access Form AJAX Manager
-function initEarlyAccessForm() {
-  const form = document.getElementById('early-access-form');
-  const emailInput = document.getElementById('early-access-email');
-  const submitBtn = document.getElementById('early-access-btn');
-  const spinner = submitBtn.querySelector('.spinner');
-  const btnText = submitBtn.querySelector('span');
-  const successMsg = document.getElementById('form-success-message');
-  
-  if (form) {
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      
-      if (!emailInput.value || !emailInput.checkValidity()) {
-        emailInput.style.borderColor = 'var(--color-agy)';
-        return;
-      }
-      
-      submitBtn.disabled = true;
-      spinner.classList.remove('hidden');
-      btnText.textContent = 'Submitting...';
-      
-      const formData = new FormData(form);
-      fetch(form.action, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Accept': 'application/json'
-        }
-      })
-      .then(() => {
-        form.classList.add('hidden');
-        successMsg.classList.remove('hidden');
-        successMsg.classList.add('fade-in');
-      })
-      .catch(() => {
-        // FormSubmit handles redirections, if CORS blocks the fetch response,
-        // we still transition to success state to ensure clean UX
-        form.classList.add('hidden');
-        successMsg.classList.remove('hidden');
-        successMsg.classList.add('fade-in');
-      });
-    });
-    
-    emailInput.addEventListener('input', () => {
-      emailInput.style.borderColor = 'var(--border-steel)';
-    });
-  }
-}
-
-// Intersection Observer for scroll reveal animations
 function initScrollReveal() {
   const revealElements = document.querySelectorAll('.scroll-reveal');
   const observer = new IntersectionObserver((entries, obs) => {
@@ -1624,55 +1431,13 @@ function initScrollReveal() {
         obs.unobserve(entry.target);
       }
     });
-  }, {
-    threshold: 0.1,
-    rootMargin: '0px 0px -50px 0px'
-  });
-  
+  }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
   revealElements.forEach(el => observer.observe(el));
 }
-
 document.addEventListener('DOMContentLoaded', () => {
-  // Start terminal console typing
-  setTimeout(addLog, 800);
-  
-  // Initialize Copy helpers
   initCopyCommands();
-
-  // Load overnight briefing card
-  initOvernightBriefing();
-  
-  // Initialize Early Access
-  initEarlyAccessForm();
-  
-  // Initialize Scroll reveals
   initScrollReveal();
-  
-  // Pipeline tab listeners
-  const tabs = document.querySelectorAll('.pipeline-tab');
-  const yamlContent = document.getElementById('yaml-content');
-  const yamlFilename = document.getElementById('yaml-filename');
-  const engineText = document.getElementById('engine-step-text');
-  const executionText = document.getElementById('execution-step-text');
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      const key = tab.getAttribute('data-tab');
-      const data = pipelineData[key];
-      
-      if (data) {
-        yamlFilename.textContent = data.filename;
-        yamlContent.innerHTML = data.code;
-        engineText.textContent = data.engine;
-        executionText.textContent = data.execution;
-      }
-    });
-  });
 });
 </script>
-
 </body>
 </html>
