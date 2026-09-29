@@ -38,6 +38,9 @@ jobs:
   shadow-call:
     # Self-hosted webtop-hermes runner (free minutes; GitHub-hosted
     # minutes are blocked by the account billing state).
+    # Skip no-op runs: a "test" completion for a push carries no PRs, so
+    # there is nothing to observe. Skipped jobs never take a runner.
+    if: ${{ github.event_name == 'pull_request' || toJSON(github.event.workflow_run.pull_requests) != '[]' }}
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
