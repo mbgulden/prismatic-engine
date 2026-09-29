@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Prismatic Engine &mdash; Your agents say they&rsquo;re done. Prove it.</title>
 <meta name="description" content="Prismatic Engine is the auditable control plane for AI agent work: independent verification, signed proof-of-done receipts, and earned autonomy. Local-first, open source under AGPL-3.0.">
+<link rel="canonical" href="https://prismaticengine.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Prismatic Engine">
+<meta property="og:title" content="Prismatic Engine — Your agents say they’re done. Prove it.">
+<meta property="og:description" content="Prismatic Engine is the auditable control plane for AI agent work: independent verification, signed proof-of-done receipts, and earned autonomy. Local-first, open source under AGPL-3.0.">
+<meta property="og:url" content="https://prismaticengine.com/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Prismatic Engine — Your agents say they’re done. Prove it.">
+<meta name="twitter:description" content="Prismatic Engine is the auditable control plane for AI agent work: independent verification, signed proof-of-done receipts, and earned autonomy. Local-first, open source under AGPL-3.0.">
+<meta name="theme-color" content="#080809">
+<script>document.documentElement.classList.add('js');</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&family=Geist:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -228,6 +239,11 @@ section { padding: 5rem 0; }
   display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 4rem; align-items: center;
   margin-top: 3rem;
 }
+.card-grid { display: grid; gap: 1.5rem; margin-top: 3rem; }
+.card-grid-2 { grid-template-columns: repeat(2, 1fr); }
+.card-grid-3 { grid-template-columns: repeat(3, 1fr); }
+.card-grid-4 { grid-template-columns: repeat(4, 1fr); }
+
 .what-left h2 { font-size: 2.25rem; line-height: 1.3; margin-bottom: 1.5rem; }
 .what-left p { color: var(--text-muted); line-height: 1.7; font-size: 1.05rem; }
 
@@ -391,32 +407,18 @@ section { padding: 5rem 0; }
   text-align: center;
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: 0 4px 20px var(--glass-shadow);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
-  height: 100%;
 }
 .agent-card-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  height: 100%;
+  text-align: center;
 }
 .agent-card:hover {
   transform: translateY(-4px);
   border-color: var(--border-active);
 }
-.agent-card:nth-child(1):hover { border-color: var(--color-agy); box-shadow: 0 10px 30px rgba(231,76,60,0.12), inset 0 0 15px rgba(231,76,60,0.05); }
-.agent-card:nth-child(2):hover { border-color: var(--color-jules); box-shadow: 0 10px 30px rgba(243,156,18,0.12), inset 0 0 15px rgba(243,156,18,0.05); }
-.agent-card:nth-child(3):hover { border-color: var(--color-bolt); box-shadow: 0 10px 30px rgba(241,196,15,0.12), inset 0 0 15px rgba(241,196,15,0.05); }
-.agent-card:nth-child(4):hover { border-color: var(--color-hermes); box-shadow: 0 10px 30px rgba(46,204,113,0.12), inset 0 0 15px rgba(46,204,113,0.05); }
-.agent-card:nth-child(5):hover { border-color: var(--color-codex); box-shadow: 0 10px 30px rgba(52,152,219,0.12), inset 0 0 15px rgba(52,152,219,0.05); }
-.agent-card:nth-child(6):hover { border-color: var(--color-research); box-shadow: 0 10px 30px rgba(155,89,182,0.12), inset 0 0 15px rgba(155,89,182,0.05); }
 
 .agent-dot {
-  width: 10px; height: 10px; border-radius: 50%; margin-bottom: 0.75rem;
-  box-shadow: 0 0 8px currentColor;
+  width: 10px; height: 10px; border-radius: 50%; margin: 0 auto 0.75rem;
+  background: #E8E8ED; box-shadow: 0 0 8px rgba(232,232,237,0.6);
 }
 .agent-dot.red { background: var(--color-agy); color: var(--color-agy); }
 .agent-dot.amber { background: var(--color-jules); color: var(--color-jules); }
@@ -598,22 +600,41 @@ box-shadow: 0 0 30px rgba(213,0,249,0.2)
 }
 
 /* Scroll Reveal */
+/* Scroll Reveal: visible by default; animated only when JS is available */
 .scroll-reveal {
-  opacity: 0;
-  transform: translateY(20px);
+  opacity: 1;
   transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.scroll-reveal.revealed {
+html.js .scroll-reveal {
+  opacity: 0;
+  transform: translateY(20px);
+}
+html.js .scroll-reveal.revealed {
   opacity: 1;
   transform: translateY(0);
 }
+@media (prefers-reduced-motion: reduce) {
+  html.js .scroll-reveal { opacity: 1; transform: none; }
+  .scroll-reveal { transition: none; }
+}
+
+
+/* Accessibility: skip link + focus */
+.skip-link {
+  position: absolute; left: -9999px; top: 0; z-index: 9999;
+  background: #E8E8ED; color: #080809; font-weight: 700;
+  padding: 0.75rem 1.25rem; border-radius: 0 0 6px 0;
+  font-size: 0.9rem; text-decoration: none;
+}
+.skip-link:focus { left: 0; }
+:focus-visible { outline: 2px solid #E8E8ED; outline-offset: 3px; }
 
 /* Footer */
 footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; background: rgba(10,10,11,0.5); }
 .footer-grid { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2rem; }
 .footer-brand { display: flex; align-items: center; gap: 0.75rem; }
 .footer-brand span { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; }
-.footer-links { display: flex; gap: 2.5rem; }
+.footer-links { display: flex; gap: 2.5rem; flex-wrap: wrap; }
 .footer-links a { color: var(--text-muted); text-decoration: none; font-size: 0.85rem; transition: color 0.2s; }
 .footer-links a:hover { color: var(--text-primary); }
 .footer-bottom { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border-steel); color: var(--text-muted); font-size: 0.8rem; }
@@ -622,6 +643,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
 @media (max-width: 1023px) {
   .spectrum-grid { grid-template-columns: repeat(3, 1fr); gap: 1rem; }
   .what-grid { grid-template-columns: 1fr; gap: 3rem; }
+  .card-grid-2, .card-grid-3, .card-grid-4 { grid-template-columns: 1fr; }
   .how-pipeline { grid-template-columns: 1fr; gap: 1rem; }
   .pipeline-arrow { transform: rotate(90deg); padding: 0.5rem 0; text-align: center; animation: arrow-bounce-v 2s infinite ease-in-out; }
   .nav-links { display: none; }
@@ -654,12 +676,27 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
 .flow-line strong { color: var(--text-primary); }
 .note-box { border-left: 3px solid var(--border-active); padding: 1rem 1.25rem; margin-top: 1.5rem; color: var(--text-muted); background: var(--bg-charcoal); border-radius: 0 6px 6px 0; }
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Prismatic Engine",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS",
+  "softwareVersion": "0.2.0",
+  "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "url": "https://prismaticengine.com/",
+  "description": "Prismatic Engine is the auditable control plane for AI agent work: independent verification, signed proof-of-done receipts, and earned autonomy. Local-first, open source under AGPL-3.0.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <nav>
   <div class="container">
     <a href="/" class="nav-logo">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28" style="display:block;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28" style="display:block;" aria-hidden="true">
         <defs>
           <linearGradient id="logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
@@ -699,6 +736,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     </div>
   </div>
 </nav>
+<main id="main-content">
 
 <section class="hero">
   <div class="container">
@@ -712,7 +750,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     </div>
     <div class="badge-row"><span class="sys-item"><span class="sys-val">v0.2.0</span></span><span class="sys-item"><span class="sys-val">AGPL-3.0-only</span></span><span class="sys-item"><span class="sys-val">Local-first</span></span><span class="sys-item"><span class="sys-val">Python 3.10&ndash;3.13</span></span><span class="sys-item"><span class="sys-val">Harness agnostic</span></span></div>
     <div class="prism-visual">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 250" width="100%" height="100%" style="border-radius:4px;border:1px solid var(--border-steel);">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 250" width="100%" height="100%" role="img" aria-label="A prism splitting a beam of light into a spectrum" style="border-radius:4px;border:1px solid var(--border-steel);">
         <defs>
           <!-- Background grid pattern -->
           <pattern id="iso-grid" width="60" height="34.64" patternUnits="userSpaceOnUse">
@@ -884,80 +922,6 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
               animation: prism-breathe 4s infinite ease-in-out;
             }
 
-            /* Comet Motion */
-            .comet {
-              animation-name: comet-fly-keyframes;
-              animation-iteration-count: infinite;
-              animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-              animation-fill-mode: both;
-              opacity: 0;
-            }
-            
-            @keyframes comet-fly-keyframes {
-              0% {
-                offset-distance: 0%;
-                opacity: 0;
-              }
-              6% {
-                opacity: 1;
-              }
-              85% {
-                opacity: 1;
-              }
-              100% {
-                offset-distance: 100%;
-                opacity: 0;
-              }
-            }
-
-            /* Individual Comets Configuration */
-            .comet-1 {
-              offset-path: path('M 390,100 C 480,90 620,30 920,30');
-              animation-duration: 3.6s;
-              animation-delay: 0s;
-            }
-            .comet-2 {
-              offset-path: path('M 394,108 C 480,102 620,66 920,66');
-              animation-duration: 3.6s;
-              animation-delay: 0.6s;
-            }
-            .comet-3 {
-              offset-path: path('M 398,116 C 480,114 620,102 920,102');
-              animation-duration: 3.6s;
-              animation-delay: 1.2s;
-            }
-            .comet-4 {
-              offset-path: path('M 402,124 C 480,126 620,138 920,138');
-              animation-duration: 3.6s;
-              animation-delay: 1.8s;
-            }
-            .comet-5 {
-              offset-path: path('M 406,132 C 480,138 620,174 920,174');
-              animation-duration: 3.6s;
-              animation-delay: 2.4s;
-            }
-            .comet-6 {
-              offset-path: path('M 410,140 C 480,150 620,210 920,210');
-              animation-duration: 3.6s;
-              animation-delay: 3.0s;
-            }
-
-            /* Comet internal particles drift */
-            @keyframes p1-drift {
-              0%, 100% { transform: translate(0, 0); opacity: 0.6; }
-              50% { transform: translate(-4px, 1px); opacity: 0.9; }
-            }
-            @keyframes p2-drift {
-              0%, 100% { transform: translate(0, 0); opacity: 0.5; }
-              50% { transform: translate(-8px, -1px); opacity: 0.8; }
-            }
-            @keyframes p3-drift {
-              0%, 100% { transform: translate(0, 0); opacity: 0.4; }
-              50% { transform: translate(-12px, 2px); opacity: 0.7; }
-            }
-            .comet-p1 { animation: p1-drift 0.5s infinite ease-in-out; }
-            .comet-p2 { animation: p2-drift 0.7s infinite ease-in-out; }
-            .comet-p3 { animation: p3-drift 0.6s infinite ease-in-out; }
           </style>
         </defs>
 
@@ -976,7 +940,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
         <circle cx="830" cy="140" r="1.2" class="dust-particle" style="animation-delay: 3s; --duration: 5.5s;" />
         <circle cx="110" cy="160" r="1.5" class="dust-particle" style="animation-delay: 0.8s; --duration: 4.8s;" />
 
-        <!-- STATIC SPECTRUM PATHS (Visual track for comets) -->
+        <!-- Spectrum paths -->
         <g opacity="0.12" stroke-linecap="round">
           <path d="M 390,100 C 480,90 620,30 920,30" stroke="#ff3366" stroke-width="1.5" fill="none" />
           <path d="M 394,108 C 480,102 620,66 920,66" stroke="#ff9f0a" stroke-width="1.5" fill="none" />
@@ -1052,100 +1016,6 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
           <circle cx="410" cy="140" r="2.5" fill="#ff375f" filter="url(#glow-light)" />
         </g>
 
-        <!-- MOVING COMETS WITH AGENT SYMBOLS & TAILS -->
-
-        <!-- Comet 1: AGY (Ruby Gem - Red) -->
-        <g class="comet comet-1">
-          <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#red-tail)" />
-          <circle cx="0" cy="0" r="10" fill="url(#red-glow)" />
-          <!-- Trailing particles -->
-          <circle cx="-15" cy="-2" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
-          <circle cx="-30" cy="3" r="1" fill="#ff3366" opacity="0.6" class="comet-p2" />
-          <circle cx="-45" cy="-1" r="0.8" fill="#ff3366" opacity="0.4" class="comet-p3" />
-          <circle cx="0" cy="0" r="2" fill="#ffffff" />
-          <g transform="translate(0, 0) scale(1.1)">
-            <!-- Ruby Gem Symbol -->
-            <path d="M 0,-5.5 L 4.5,-5.5 L 7.5,-2 L 0,5 L -7.5,-2 L -4.5,-5.5 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
-            <path d="M -4.5,-5.5 L 0,-1.5 L 4.5,-5.5 M -7.5,-2 L 0,-1.5 L 7.5,-2 M 0,-1.5 L 0,5" stroke="#ffffff" stroke-width="0.8" fill="none" opacity="0.8" stroke-linejoin="round" />
-          </g>
-        </g>
-
-        <!-- Comet 2: Jules (Gear - Orange) -->
-        <g class="comet comet-2">
-          <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#orange-tail)" />
-          <circle cx="0" cy="0" r="10" fill="url(#orange-glow)" />
-          <!-- Trailing particles -->
-          <circle cx="-15" cy="-3" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
-          <circle cx="-30" cy="1" r="1" fill="#ff9f0a" opacity="0.6" class="comet-p2" />
-          <circle cx="-45" cy="2" r="0.8" fill="#ff9f0a" opacity="0.4" class="comet-p3" />
-          <circle cx="0" cy="0" r="2" fill="#ffffff" />
-          <g transform="translate(0, 0) scale(1.1)">
-            <!-- Gear Symbol -->
-            <path d="M -1.5,-5 L 1.5,-5 L 2,-3 L 3.5,-2.5 L 5.5,-3.5 L 7,-2 L 6,0 L 6,1.5 L 7,3 L 5.5,4.5 L 3.5,3.5 L 2,4 L 1.5,6 L -1.5,6 L -2,4 L -3.5,3.5 L -5.5,4.5 L -7,3 L -6,1.5 L -6,0 L -7,-2 L -5.5,-3.5 L -3.5,-2.5 L -2,-3 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
-            <circle cx="0" cy="0" r="1.8" stroke="#ffffff" stroke-width="1" fill="none" />
-          </g>
-        </g>
-
-        <!-- Comet 3: Custom (Puzzle Piece - Green) -->
-        <g class="comet comet-3">
-          <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#green-tail)" />
-          <circle cx="0" cy="0" r="10" fill="url(#green-glow)" />
-          <!-- Trailing particles -->
-          <circle cx="-15" cy="2" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
-          <circle cx="-30" cy="-2" r="1" fill="#30d158" opacity="0.6" class="comet-p2" />
-          <circle cx="-45" cy="1" r="0.8" fill="#30d158" opacity="0.4" class="comet-p3" />
-          <circle cx="0" cy="0" r="2" fill="#ffffff" />
-          <g transform="translate(0, 0) scale(1.1)">
-            <!-- Puzzle Piece Symbol -->
-            <path d="M -4,-4 H -1.5 C -1.5,-5.5 1.5,-5.5 1.5,-4 H 4 V -1.5 C 5.5,-1.5 5.5,1.5 4,1.5 V 4 H 1.5 C 1.5,2.5 -1.5,2.5 -1.5,4 H -4 V 1.5 C -5.5,1.5 -5.5,-1.5 -4,-1.5 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
-          </g>
-        </g>
-
-        <!-- Comet 4: Hermes (Wing - Cyan) -->
-        <g class="comet comet-4">
-          <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#cyan-tail)" />
-          <circle cx="0" cy="0" r="10" fill="url(#cyan-glow)" />
-          <!-- Trailing particles -->
-          <circle cx="-15" cy="-1" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
-          <circle cx="-30" cy="2" r="1" fill="#64d2ff" opacity="0.6" class="comet-p2" />
-          <circle cx="-45" cy="-2" r="0.8" fill="#64d2ff" opacity="0.4" class="comet-p3" />
-          <circle cx="0" cy="0" r="2" fill="#ffffff" />
-          <g transform="translate(0, 0) scale(1.1)">
-            <!-- Wing Symbol -->
-            <path d="M 6.5,-1.5 C 4,-4 -3.5,-4 -5.5,-2 C -3.5,-1 -1,-1 1,-1 C -2,0 -2.5,1.5 -2.5,2.5 C -1,1.5 0.5,1 1.5,0.5 C 0,2 -1,3.5 0.2,4 C 2.2,3.5 4.5,2 6.5,-1.5 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
-          </g>
-        </g>
-
-        <!-- Comet 5: Codex (Code Brackets - Blue) -->
-        <g class="comet comet-5">
-          <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#blue-tail)" />
-          <circle cx="0" cy="0" r="10" fill="url(#blue-glow)" />
-          <!-- Trailing particles -->
-          <circle cx="-15" cy="3" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
-          <circle cx="-30" cy="-3" r="1" fill="#5e5ce6" opacity="0.6" class="comet-p2" />
-          <circle cx="-45" cy="0" r="0.8" fill="#5e5ce6" opacity="0.4" class="comet-p3" />
-          <circle cx="0" cy="0" r="2" fill="#ffffff" />
-          <g transform="translate(0, 0) scale(1.1)">
-            <!-- Code Brackets Symbol -->
-            <path d="M -5,-3.5 L -8,0 L -5,3.5 M 1,-4.5 L -1,5 M 5,-3.5 L 8,0 L 5,3.5" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-          </g>
-        </g>
-
-        <!-- Comet 6: Research (Magnifying Glass - Magenta) -->
-        <g class="comet comet-6">
-          <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#magenta-tail)" />
-          <circle cx="0" cy="0" r="10" fill="url(#magenta-glow)" />
-          <!-- Trailing particles -->
-          <circle cx="-15" cy="-2" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
-          <circle cx="-30" cy="2" r="1" fill="#ff375f" opacity="0.6" class="comet-p2" />
-          <circle cx="-45" cy="-3" r="0.8" fill="#ff375f" opacity="0.4" class="comet-p3" />
-          <circle cx="0" cy="0" r="2" fill="#ffffff" />
-          <g transform="translate(0, 0) scale(1.1)">
-            <!-- Magnifying Glass Symbol -->
-            <circle cx="-1.5" cy="-1.5" r="2.5" stroke="#ffffff" stroke-width="1.2" fill="none" />
-            <line x1="0.3" y1="0.3" x2="4.5" y2="4.5" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" />
-          </g>
-        </g>
       </svg>
     </div>
   </div>
@@ -1155,10 +1025,10 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     <div class="section-label">The Autonomy Gap</div>
     <h2 class="section-title">AI agents are a black box. That&rsquo;s the gap.</h2>
     <p class="section-subtitle">You hand work to agents. They hand back <em>finished</em>. Finished by whose measure? Without verification, you&rsquo;re flying blind &mdash; and the bigger the fleet, the blinder.</p>
-    <div class="what-grid">
+    <div class="card-grid card-grid-2">
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff4545"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">THE FOUNDING PAIN</div>
           <div class="agent-name">&ldquo;Done&rdquo; with no proof.</div>
           <div class="agent-details">Agents report done when the work isn&rsquo;t. Prismatic derives the verdict from the done gate &mdash; exact checks, exit codes, evidence &mdash; never from the agent&rsquo;s word.</div>
@@ -1166,7 +1036,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">MERGE DISCIPLINE</div>
           <div class="agent-name">Nobody watching the merge.</div>
           <div class="agent-details">Producers shouldn&rsquo;t merge their own unverified work. The verification contract forbids self-authorized merges: the reviewed SHA must equal the PR head at merge time.</div>
@@ -1174,7 +1044,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ffcc00"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">APPROVALS</div>
           <div class="agent-name">Risky actions, no approval.</div>
           <div class="agent-details">Policy enforcement runs <em>before</em> risky work, not after. Production deploys and auth/security paths stay human-only &mdash; always.</div>
@@ -1182,7 +1052,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">AUDIT</div>
           <div class="agent-name">No trail when it matters.</div>
           <div class="agent-details">Durable jobs, append-only audit events, artifact provenance, a trust ledger of every merge outcome. Reconstruct anything, any time.</div>
@@ -1196,10 +1066,10 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     <div class="section-label">How it works</div>
     <h2 class="section-title">Produce. Verify. Receipt. Merge.</h2>
     
-    <div class="what-grid">
+    <div class="card-grid card-grid-2">
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff4545"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">STEP 1</div>
           <div class="agent-name">Produce</div>
           <div class="agent-details">Any harness does the work &mdash; Claude Code CLI, Gemini CLI, Codex CLI, Hermes agents, GitHub PRs, or your own CLI behind a JSON envelope.</div>
@@ -1207,7 +1077,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">STEP 2</div>
           <div class="agent-name">Verify</div>
           <div class="agent-details">The engine checks the work independently: exact commands, exit codes, digests, measured against the verification contract. Plausible output is not verified completion.</div>
@@ -1215,7 +1085,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">STEP 3</div>
           <div class="agent-name">Receipt</div>
           <div class="agent-details">Every run gets a signed proof-of-done receipt &mdash; what was checked, what passed, what failed, and a DONE / NOT DONE verdict. Ed25519-signed, persisted, dashboard-visible.</div>
@@ -1223,7 +1093,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#00b0ff"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">STEP 4</div>
           <div class="agent-name">Merge</div>
           <div class="agent-details">Verified work merges under earned-autonomy tiers with a signed merge receipt. Unverified work waits. Novel work quarantines. Nothing merges on a claim.</div>
@@ -1237,10 +1107,10 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     <div class="section-label">Capabilities</div>
     <h2 class="section-title">One engine. Every harness. Full audit.</h2>
     
-    <div class="what-grid">
+    <div class="card-grid card-grid-3">
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff4545"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">RECEIPTS</div>
           <div class="agent-name">Proof-of-done receipts</div>
           <div class="agent-details">Signed, persisted, readable. The verdict comes from the checks, not the chat.</div>
@@ -1248,7 +1118,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ff9f1c"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">NEUTRALITY</div>
           <div class="agent-name">Provider-neutral verification</div>
           <div class="agent-details">GitHub, GitLab, Bitbucket, Forgejo, or local. A provider outage reports BLOCKED &mdash; never PASS.</div>
@@ -1256,7 +1126,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#ffcc00"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">AUTONOMY</div>
           <div class="agent-name">Earned autonomy</div>
           <div class="agent-details">T0 is manual today. Higher tiers are earned on evidence from the trust ledger, and promotion stays a human decision.</div>
@@ -1264,7 +1134,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#00e676"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">HARNESSES</div>
           <div class="agent-name">Harness agnostic</div>
           <div class="agent-details">Swappable adapters. Any CLI agent that reads a JSON task envelope and prints JSON back can be driven &mdash; zero per-harness code.</div>
@@ -1272,7 +1142,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#00b0ff"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">GOVERNANCE</div>
           <div class="agent-name">Plugin governance</div>
           <div class="agent-details">Catalog, load gates, policy enforcement before risky work, durable jobs, audit events, artifact provenance.</div>
@@ -1280,7 +1150,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
       </div>
 <div class="agent-card">
         <div class="agent-card-inner">
-          <div class="agent-dot" style="background:#d500f9"></div>
+          <div class="agent-dot"></div>
           <div class="agent-role">LOCAL</div>
           <div class="agent-name">Local-first</div>
           <div class="agent-details">Runs on your machine. Your code, your keys, your ledger. No mandatory cloud, no lock-in.</div>
@@ -1326,8 +1196,8 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
             <span class="file-name">terminal</span>
             <span class="lang-label">bash</span>
             <button class="copy-btn" aria-label="Copy command" data-cmd="git clone https://github.com/mbgulden/prismatic-engine.git&#10;cd prismatic-engine&#10;python3 -m venv .venv&#10;. .venv/bin/activate&#10;python -m pip install --upgrade pip&#10;python -m pip install -e &quot;.[gateway]&quot;&#10;cp .env.example .env&#10;python scripts/public_launch_smoke.py">
-            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <svg class="copy-icon" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg class="check-icon hidden" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </button>
           </div>
           <div class="code-block">
@@ -1350,15 +1220,16 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     <div class="section-label">Early access</div>
     <h2 class="section-title">Ready to stop flying blind?</h2>
     
-    <div class="hero-actions" style="justify-content:flex-start;margin-bottom:0;"><a href="#install" class="btn-primary">Install in five steps</a> <a href="mailto:michael@prismaticengine.com?subject=Prismatic%%20Engine%%20early%%20access" class="btn-ghost">Get early access</a></div>
+    <div class="hero-actions" style="justify-content:flex-start;margin-bottom:0;"><a href="#install" class="btn-primary">Install in five steps</a> <a href="mailto:michael@prismaticengine.com?subject=Prismatic%20Engine%20early%20access" class="btn-ghost">Get early access</a></div>
   </div>
 </section>
 
+</main>
 <footer>
   <div class="container">
     <div class="footer-grid">
       <div class="footer-brand">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" style="display:block;opacity:0.6;" style="display:block;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" style="display:block;opacity:0.6;" aria-hidden="true"> style="display:block;">
         <defs>
           <linearGradient id="logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
