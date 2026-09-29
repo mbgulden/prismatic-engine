@@ -77,12 +77,10 @@ REQUIRED_MARKERS = {
         "public_launch_smoke.py",
     ],
     ".github/workflows/test.yml": [
-        "matrix:",
-        "3.10",
-        "3.11",
-        "3.12",
-        "3.13",
-        "release smoke",
+        "smoke",
+        "review factory gate",
+        "signal",
+        "nightly-full-suite",
     ],
     ".github/workflows/publish.yml": [
         "github.event_name == 'workflow_dispatch'",
