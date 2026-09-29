@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 # ── Constants ──────────────────────────────────────────
-PRISMATIC_HOME = os.environ.get("PRISMATIC_HOME", "/home/ubuntu")
 LINEAR_API_KEY = os.environ.get("LINEAR_API_KEY", "")
 LINEAR_TEAM_ID = "b6fb2651-5a1f-4714-9bcd-9eb6e759ffef"
 
