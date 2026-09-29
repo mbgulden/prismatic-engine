@@ -261,6 +261,10 @@ def test_constants_match_spec():
         "tier_promoted",
         "tier_revoked",
         "brake_pulled",
+        # T1 single arming ceremony (signed t1_armed record is the only
+        # authority that arms T1; t1_disarmed is the emergency stop).
+        "t1_armed",
+        "t1_disarmed",
     }
     assert CHANGE_CLASSES == {
         "docs",

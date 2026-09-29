@@ -46,7 +46,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
@@ -291,15 +291,35 @@ class VerificationWorkerDaemon:
                 return True
         return False
 
+    def _refresh_merge_stage_from_arming(self) -> None:
+        """Attach/detach the merge stage from the single arming record.
+
+        Called on every pump so an arm/disarm ceremony takes effect without
+        a gateway restart. The arming record is the ONLY authority consulted.
+        """
+        try:
+            from prismatic.review_factory import arming
+
+            armed = bool(arming.t1_arming_status().get("armed"))
+        except Exception:
+            armed = False
+        if armed and self.merge_stage is None:
+            self.merge_stage = build_merge_stage_from_arming(
+                queue=self.queue, repo_path=self.repo_path
+            )
+        elif not armed and self.merge_stage is not None:
+            self.merge_stage = None
+
     def _merge_leasing_allowed(self) -> bool:
         """True only when the merge stage may lease MERGE_READY jobs.
 
-        Merge authority is inert by default: no leasing at all when the
-        stage is unconfigured, when merge authority is disabled, or when
-        no tiers are enabled in PRISMATIC_RF_MERGE_LIVE_TIERS. MERGE_READY
+        Merge authority is inert by default: no leasing at all when T1 is
+        not armed (no valid signed ``t1_armed`` trust-ledger record), when
+        the stage is unconfigured, or when no tiers are enabled. MERGE_READY
         jobs then simply wait for a human instead of being leased and
         released on every pump (hot loop).
         """
+        self._refresh_merge_stage_from_arming()
         stage = self.merge_stage
         return (
             stage is not None
@@ -1142,12 +1162,54 @@ _daemon: Optional[VerificationWorkerDaemon] = None
 _daemon_lock = threading.Lock()
 
 
+def build_merge_stage_from_arming(
+    queue: Any = None,
+    repo_path: str | Path | None = None,
+) -> Optional["MergeStage"]:
+    """Wire the merge stage from the single T1 arming record.
+
+    Returns a live ``MergeStage`` iff ``arming.t1_arming_status()`` reports
+    armed; otherwise None (daemon stays observe-only). This is the ONLY
+    production path that constructs a merge stage — the old env-var
+    authority (``PRISMATIC_RF_MERGE_AUTHORITY`` et al.) is retired.
+    Fail-closed: any error yields None.
+    """
+    from prismatic.review_factory import arming
+    from prismatic.review_factory.merge_stage import MergeStage, MergeStageConfig
+
+    try:
+        status = arming.t1_arming_status()
+    except Exception as exc:
+        logger.warning("t1 arming check failed (%s); merge stage unwired", exc)
+        return None
+    if not status.get("armed"):
+        return None
+    record = status.get("record") or {}
+    try:
+        tier = int(record.get("tier", 1))
+    except (TypeError, ValueError):
+        logger.warning("t1 arming record has unusable tier; merge stage unwired")
+        return None
+    config = MergeStageConfig(
+        enabled=True,
+        dry_run=False,
+        live_tiers=frozenset({tier}),
+        repo_path=_resolve_repo_path(repo_path),
+    )
+    return MergeStage(
+        queue=queue if queue is not None else ReviewQueue(), config=config
+    )
+
+
 def instance() -> VerificationWorkerDaemon:
     """Return the process-wide daemon singleton."""
     global _daemon
     with _daemon_lock:
         if _daemon is None:
             _daemon = VerificationWorkerDaemon()
+            _daemon.merge_stage = build_merge_stage_from_arming(
+                queue=_daemon.queue, repo_path=_daemon.repo_path
+            )
         return _daemon
 
 

@@ -51,6 +51,10 @@ EVENT_TYPES = {
     "tier_promoted",
     "tier_revoked",
     "brake_pulled",
+    # T1 single arming ceremony: the signed t1_armed record is the only
+    # authority that arms T1; t1_disarmed is the emergency stop.
+    "t1_armed",
+    "t1_disarmed",
 }
 
 CHANGE_CLASSES = {
@@ -450,6 +454,39 @@ class TrustLedger:
         """Record a manual brake pull (promotion freeze + drop to T0 is
         the operator's call; use revoke(to_tier=0) for that)."""
         return self.record_event("brake_pulled", notes=notes)
+
+    def record_t1_armed(self, *, document: dict[str, Any]) -> dict[str, Any]:
+        """Record the signed T1 arming document (the arming ceremony).
+
+        The document MUST carry a complete ``signature_or_attestation``
+        envelope — unsigned documents are refused with ValueError, so a
+        forged raw ``record_event("t1_armed", ...)`` can never arm T1.
+        """
+        from prismatic.review_factory import arming
+
+        ok, reason = arming._validate_schema(document)
+        if not ok:
+            raise ValueError(f"refusing to record unsigned t1_armed document: {reason}")
+        return self.record_event(
+            "t1_armed",
+            tier_at_event=1,
+            judgment=document,
+            notes=f"T1 armed by {document.get('approver')}",
+        )
+
+    def record_t1_disarmed(
+        self, *, approver: str, rationale: str = ""
+    ) -> dict[str, Any]:
+        """Record the T1 disarm (emergency stop). Latest of t1_armed /
+        t1_disarmed wins in ``arming.t1_arming_status()``."""
+        if not approver or not str(approver).strip():
+            raise ValueError("t1 disarm requires a named approver")
+        return self.record_event(
+            "t1_disarmed",
+            tier_at_event=0,
+            judgment={"approver": approver, "rationale": rationale},
+            notes=f"T1 disarmed by {approver}: {rationale}".strip(),
+        )
 
     def revoke(self, *, reason: str, to_tier: Optional[int] = None) -> dict[str, Any]:
         """Mechanically drop the tier: one step down by default, or to an

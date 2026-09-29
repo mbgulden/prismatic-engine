@@ -30,6 +30,7 @@ from prismatic.merge_candidate_manifest import (
     VerificationEvidence,
 )
 from prismatic.review_factory import merge_executor
+from prismatic.review_factory import arming as arming_module
 from prismatic.review_factory.learn_loop import LearnLoop, TierPromotionProposal
 from prismatic.review_factory.merge_executor import (
     MergeExecutor,
@@ -97,6 +98,11 @@ def _install_phase12(
 ):
     """Stub the phase-1 (trust) and phase-2 (autonomy) modules.
 
+    Post-ceremony, ``MergeStage.process()`` consults the signed T1 arming
+    record FIRST, so these consult tests also stub the arming consult as
+    armed with the given tier (the gate's own fail-closed posture lives in
+    ``test_t1_arming_ceremony.py``).
+
     Returns (autonomy_mod, trust_mod, ledger, seen_kwargs) where
     ``seen_kwargs`` captures the kwargs of the last ``can_auto_merge``
     call.
@@ -121,6 +127,14 @@ def _install_phase12(
     for name, mod in ((_AUTONOMY_MODULE, autonomy_mod), (_TRUST_MODULE, trust_mod)):
         monkeypatch.setitem(sys.modules, name, mod)
         monkeypatch.setattr(rf_pkg, name.rsplit(".", 1)[1], mod, raising=False)
+    # The single arming consult: armed with the record's tier, so the
+    # process() gate opens and the consult under test runs.
+    record = {"tier": tier}
+    monkeypatch.setattr(
+        arming_module,
+        "t1_arming_status",
+        lambda ledger=None: {"armed": True, "reason": "t1_armed", "record": record},
+    )
     return autonomy_mod, trust_mod, ledger, seen
 
 
@@ -135,6 +149,14 @@ def _remove_phase12(monkeypatch):
     for name in (_AUTONOMY_MODULE, _TRUST_MODULE):
         monkeypatch.setitem(sys.modules, name, None)
         monkeypatch.delattr(rf_pkg, name.rsplit(".", 1)[1], raising=False)
+    # The arming gate still opens (stubbed armed): this test is about the
+    # absent autonomy module failing closed, not the arming record.
+    record = {"tier": 1}
+    monkeypatch.setattr(
+        arming_module,
+        "t1_arming_status",
+        lambda ledger=None: {"armed": True, "reason": "t1_armed", "record": record},
+    )
 
 
 # ── merge-stage fakes ────────────────────────────────────────────────
@@ -291,8 +313,13 @@ def test_consult_absent_modules_fail_closed(monkeypatch):
     assert queue.authorize_calls == []
 
 
-def test_consult_trust_failure_degrades_to_tier_zero_refusal(monkeypatch):
-    """A broken trust ledger reads as tier 0, which never auto-merges."""
+def test_consult_ledger_failure_no_longer_degrades_tier(monkeypatch):
+    """A broken trust ledger no longer affects the consult.
+
+    Post-ceremony the tier comes from the signed arming record, never the
+    ledger: even with the ledger down, an armed record with tier 1 lets
+    the consult allow.
+    """
     import prismatic.review_factory as pkg
 
     class BrokenLedger:
@@ -303,7 +330,8 @@ def test_consult_trust_failure_degrades_to_tier_zero_refusal(monkeypatch):
     autonomy_mod = _stub_module(
         _AUTONOMY_MODULE,
         brake_status=lambda: {"engaged": False},
-        # tier 0 is PRs-only: the consult must refuse.
+        # tier 0 is PRs-only: the consult must refuse only when the ARMING
+        # record's tier is 0.
         can_auto_merge=lambda **kwargs: _FakeDecision(
             kwargs["tier"] != 0, "t0_no_auto_merge" if kwargs["tier"] == 0 else "ok"
         ),
@@ -311,26 +339,38 @@ def test_consult_trust_failure_degrades_to_tier_zero_refusal(monkeypatch):
     for name, mod in ((_AUTONOMY_MODULE, autonomy_mod), (_TRUST_MODULE, trust_mod)):
         monkeypatch.setitem(sys.modules, name, mod)
         monkeypatch.setattr(pkg, name.rsplit(".", 1)[1], mod, raising=False)
+    # The single arming consult: armed with tier 1.
+    record = {"tier": 1}
+    monkeypatch.setattr(
+        arming_module,
+        "t1_arming_status",
+        lambda ledger=None: {"armed": True, "reason": "t1_armed", "record": record},
+    )
     queue = _FakeStageQueue()
     stage = _isolated_stage(monkeypatch, queue)
     result = stage.process(_stage_job())
-    assert result.action == "refused_autonomy"
-    assert queue.authorize_calls == []
+    assert result.action == "dry_run_ok"
+    assert queue.authorize_calls == [("job-1", "standing-policy: tier-0")]
 
 
-def test_consult_brake_engaged_refuses(monkeypatch):
-    _install_phase12(
+def test_consult_brake_engaged_no_longer_refuses(monkeypatch):
+    """The autonomy brake no longer gates merges.
+
+    The emergency stop is the disarm ceremony: even with the brake
+    engaged in the stubbed autonomy module, the consult passes
+    brake_engaged=False and allows.
+    """
+    _, _, _, seen = _install_phase12(
         monkeypatch,
-        autonomy_allowed=False,
-        autonomy_reason="brake_engaged",
+        autonomy_allowed=True,
         brake_engaged=True,
     )
     queue = _FakeStageQueue()
     stage = _isolated_stage(monkeypatch, queue)
     result = stage.process(_stage_job())
-    assert result.action == "refused_autonomy"
-    assert result.error == "brake_engaged"
-    assert queue.authorize_calls == []
+    assert result.action == "dry_run_ok"
+    assert seen["brake_engaged"] is False
+    assert queue.authorize_calls == [("job-1", "standing-policy: tier-0")]
 
 
 # ── merge-executor trust recording ───────────────────────────────────
