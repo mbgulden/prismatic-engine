@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from prismatic.verification.attestation import verify_receipt_attestation
 from prismatic.verification.receipt_store import VerificationReceiptStore
