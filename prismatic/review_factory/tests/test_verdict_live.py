@@ -78,10 +78,12 @@ class FakeRunner:
         if args[1:3] == ["pr", "view"]:
             bodies = [{"body": c} for c in self.comments]
             return subprocess.CompletedProcess(
-                args, 0, json.dumps([c["body"] for c in bodies]), ""
+                args, 0, json.dumps({"comments": bodies}), ""
             )
         if args[1:3] == ["label", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(self.labels), "")
+            return subprocess.CompletedProcess(
+                args, 0, json.dumps([{"name": n} for n in self.labels]), ""
+            )
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def posted_bodies(self):

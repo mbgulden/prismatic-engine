@@ -148,7 +148,7 @@ def existing_verdict_marker(
     repo: str, pr_number: int, runner: Runner = _default_runner
 ) -> str | None:
     """Return the verdict class already announced on the PR, if any."""
-    comments = _gh_json(
+    payload = _gh_json(
         [
             "gh",
             "pr",
@@ -158,14 +158,12 @@ def existing_verdict_marker(
             repo,
             "--json",
             "comments",
-            "--jq",
-            ".comments[].body",
         ],
         runner,
     )
-    if not isinstance(comments, list):
-        return None
-    for body in comments:
+    entries = payload.get("comments", []) if isinstance(payload, dict) else []
+    for entry in entries:
+        body = entry.get("body") if isinstance(entry, dict) else None
         if isinstance(body, str) and COMMENT_MARKER_PREFIX in body:
             start = body.index(COMMENT_MARKER_PREFIX) + len(COMMENT_MARKER_PREFIX)
             end = body.find(" -->", start)
@@ -176,11 +174,12 @@ def existing_verdict_marker(
 
 def label_exists(repo: str, label: str, runner: Runner = _default_runner) -> bool:
     """Check the label exists on the repo. Never creates labels."""
-    names = _gh_json(
-        ["gh", "label", "list", "--repo", repo, "--json", "name", "--jq", ".[].name"],
+    items = _gh_json(
+        ["gh", "label", "list", "--repo", repo, "--json", "name"],
         runner,
     )
-    return isinstance(names, list) and label in names
+    names = [i.get("name") for i in items] if isinstance(items, list) else []
+    return label in names
 
 
 def post_verdict_comment(
