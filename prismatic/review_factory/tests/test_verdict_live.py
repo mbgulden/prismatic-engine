@@ -78,17 +78,24 @@ class FakeRunner:
         if args[1:3] == ["pr", "view"]:
             bodies = [{"body": c} for c in self.comments]
             return subprocess.CompletedProcess(
-                args, 0, json.dumps([c["body"] for c in bodies]), ""
+                args, 0, json.dumps({"comments": bodies}), ""
             )
         if args[1:3] == ["label", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(self.labels), "")
+            return subprocess.CompletedProcess(
+                args, 0, json.dumps([{"name": n} for n in self.labels]), ""
+            )
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def posted_bodies(self):
         return [c[c.index("--body") + 1] for c in self.calls if "--body" in c]
 
     def added_labels(self):
-        return [c[c.index("--add-label") + 1] for c in self.calls if "--add-label" in c]
+        out = []
+        for c in self.calls:
+            for tok in c:
+                if tok.startswith("labels[]="):
+                    out.append(tok.split("=", 1)[1])
+        return out
 
 
 def _fresh_log(tmp_path: Path, age_hours: float = 1.0) -> Path:
@@ -242,7 +249,7 @@ def test_issue_live_verdict_watching_takes_no_action(tmp_path):
 
 
 def test_issue_live_verdict_audits_failure(tmp_path):
-    runner = FakeRunner(fail_on={"pr edit"})
+    runner = FakeRunner(fail_on={"issues/"})
     live_log = tmp_path / "live.jsonl"
     action = issue_live_verdict(_record(), "o/r", runner=runner, live_log=live_log)
     assert action["action"] == "failed"
