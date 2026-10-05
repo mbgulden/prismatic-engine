@@ -216,13 +216,22 @@ def apply_verdict_label(
             f"label '{label}' does not exist on {repo}; refusing to create "
             "labels automatically (create it manually, then re-run)"
         )
+    # NOTE: gh pr edit is unusable here (its GraphQL mutation queries the
+    # sunset Projects-classic projectCards field and fails). The REST
+    # issues-labels endpoint is the supported path.
     proc = runner(
-        ["gh", "pr", "edit", str(pr_number), "--repo", repo, "--add-label", label],
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/issues/{pr_number}/labels",
+            "-f",
+            f"labels[]={label}",
+        ],
         None,
     )
     if proc.returncode != 0:
         raise VerdictLiveError(
-            f"gh pr edit --add-label failed for PR #{pr_number}: "
+            f"gh api add-label failed for PR #{pr_number}: "
             f"{(proc.stderr or '').strip()[:300]}"
         )
 
