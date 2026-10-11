@@ -301,3 +301,5 @@ Prismatic Engine is licensed under **AGPL-3.0-only**. See [`LICENSE`](LICENSE).
 ## Security
 
 Please read [`SECURITY.md`](SECURITY.md) before reporting vulnerabilities or wiring credentials.
+
+<!-- T1 canary 2026-10-11: docs-only test, safe to auto-merge -->
