@@ -28,7 +28,7 @@
 # promotion/demotion stay Michael's explicit decisions; zero-AI rule.
 
 version: autonomy-v2
-enabled: false
+enabled: true
 supersedes: autonomy-v1
 activation: "Gate B — Michael's explicit decision. Until activated, the loader keeps v1."
 
