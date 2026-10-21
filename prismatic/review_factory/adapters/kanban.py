@@ -94,14 +94,24 @@ _CHECK_NAMES = (
 
 
 #: Canonical, overridable locations (tests point these at temp fixtures).
+def _hermes_home() -> str:
+    """Hermes home root: ``HERMES_HOME`` when set, else ``~/.hermes``.
+
+    The kanban DB and attachments live under the Hermes home, which is
+    NOT necessarily the process home (agent profiles run with a
+    profile-scoped ``$HOME``), so ``HERMES_HOME`` is authoritative.
+    """
+    return os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
+
+
 def _kanban_db_path() -> str:
-    return os.environ.get("KANBAN_DB_PATH", str(Path.home() / ".hermes" / "kanban.db"))
+    return os.environ.get("KANBAN_DB_PATH", str(Path(_hermes_home()) / "kanban.db"))
 
 
 def _attachments_root() -> str:
     return os.environ.get(
         "KANBAN_ATTACHMENTS_ROOT",
-        str(Path.home() / ".hermes" / "kanban" / "attachments"),
+        str(Path(_hermes_home()) / "kanban" / "attachments"),
     )
 
 
@@ -626,7 +636,7 @@ def post_comment(task_id: str, line: str) -> None:
     import subprocess  # lazy: the only side-effecting import in this module
 
     env = dict(os.environ)
-    env["HERMES_HOME"] = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
+    env["HERMES_HOME"] = os.environ.get("HERMES_HOME", _hermes_home())
     subprocess.run(
         ["hermes", "kanban", "comment", task_id, line],
         check=True,

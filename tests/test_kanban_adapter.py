@@ -303,3 +303,18 @@ def test_build_and_store_does_not_register_global_runner(
     assert _verdict_mod._runner is before, (
         "build_and_store() mutated the verdict process-global runner"
     )
+
+
+def test_hermes_home_overrides_profile_scoped_home(monkeypatch) -> None:
+    """``HERMES_HOME`` must win over a profile-scoped ``$HOME``.
+
+    Agent profiles run with ``$HOME`` pointed at the profile dir (e.g.
+    ``~/.hermes/profiles/<name>/home``); the kanban DB and attachments
+    live under the Hermes home, so the default paths must derive from
+    ``HERMES_HOME`` when it is set, not from ``Path.home()``.
+    """
+    fake = "/tmp/hermes-home-e2e"
+    monkeypatch.setenv("HERMES_HOME", fake)
+    assert kb._hermes_home() == fake
+    assert kb._kanban_db_path() == fake + "/kanban.db"
+    assert kb._attachments_root() == fake + "/kanban/attachments"
