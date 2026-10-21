@@ -232,38 +232,75 @@ def _completion_text(cur: Any, tid: str) -> str | None:
 # Text extraction helpers (pure)
 # ─────────────────────────────────────────────────────────────────────
 
-_AC_HEADING = re.compile(r"^#{0,6}\s*ACCEPTANCE\s+CRITERIA\s*[:\-]?\s*$", re.I | re.M)
+#: The line that opens the acceptance/verification section, in the forms
+#: real kanban bodies actually use (SOAK-1 fix — the original parse only
+#: matched the exact ``ACCEPTANCE CRITERIA:`` heading, which 3 of 5 soak
+#: tasks used differently):
+#
+#   * ``ACCEPTANCE CRITERIA:``            (original exact form; bullets follow)
+#   * ``ACCEPTANCE:``                     (label line; bullets follow)
+#   * ``ACCEPTANCE = items 1-5 pass ...`` (inline clause; the clause itself
+#                                           is the goal)
+#   * ``SUGGESTED VERIFICATIONS FOR <role>`` / ``VERIFICATIONS:``
+#                                           (numbered list follows)
+#: ``group("inline")`` is non-None only for the inline-clause form.
+_AC_LINE = re.compile(
+    r"^\s*#{0,6}\s*(?:"
+    r"ACCEPTANCE\s+CRITERIA\s*[:\-]?\s*$"
+    r"|ACCEPTANCE\s*[:=]?\s+(?P<inline>[^\s].*)$"
+    r"|ACCEPTANCE\s*[:=]\s*$"
+    r"|(?:SUGGESTED\s+)?VERIFICATIONS(?:\s+FOR\s+[\w.+-]+)?\s*[:\-]?\s*$"
+    r")",
+    re.I | re.M,
+)
 _BULLET = re.compile(r"^\s*[-*+]\s+(.*)$")
+#: Numbered list item ("1." / "2)" / "3)") — the style ``SUGGESTED
+#: VERIFICATIONS`` sections use in practice.
+_NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 
 
 def parse_acceptance_goals(body: str) -> list[str]:
-    """Bullets under the first ACCEPTANCE CRITERIA heading (else []).
+    """Acceptance goals from the body's AC/verification section (else []).
+
+    Recognizes the header variants real bodies use (SOAK-1): the exact
+    ``ACCEPTANCE CRITERIA:`` form, the bare ``ACCEPTANCE:`` label, the
+    inline ``ACCEPTANCE = …`` clause (the clause itself is one goal), and
+    ``SUGGESTED VERIFICATIONS FOR <role>`` numbered lists. Bullets and
+    numbered items are collected from the opening line until a new heading
+    or non-list prose ends the section.
 
     A kanban body with no AC section yields [] — that is data, and the
     ``criteria_present`` check is what flags it, not a parsing error.
     """
     if not body:
         return []
-    m = _AC_HEADING.search(body)
-    if m is None:
-        return []
-    tail = body[m.end() :]
-    goals: list[str] = []
-    for line in tail.splitlines():
-        if not line.strip():
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        m = _AC_LINE.match(line)
+        if m is None:
             continue
-        # A new top-level heading ends the AC section.
-        if re.match(r"^#{1,6}\s+\S", line):
-            break
-        if re.match(r"^\S", line) and not line.lstrip().startswith(("-", "*", "+")):
-            # Non-bullet prose line after the heading ends the list.
-            break
-        bm = _BULLET.match(line)
-        if bm:
-            text = bm.group(1).strip()
+        inline = m.group("inline")
+        # "ACCEPTANCE: CRITERIA…" style leftovers are not an inline clause.
+        if inline is not None and re.match(r"^\s*CRITERIA\b", inline, re.I):
+            continue
+        if inline is not None:
+            return [inline.strip()]
+        goals: list[str] = []
+        for nxt in lines[i + 1 :]:
+            if not nxt.strip():
+                continue
+            # A new top-level heading ends the AC section.
+            if re.match(r"^\s*#{1,6}\s+\S", nxt):
+                break
+            item = _BULLET.match(nxt) or _NUMBERED.match(nxt)
+            if item is None:
+                # Non-list prose line after the heading ends the list.
+                break
+            text = item.group(1).strip()
             if text:
                 goals.append(text)
-    return goals
+        return goals
+    return []
 
 
 #: Absolute path: leading '/', at least two segments, path-ish chars only.
@@ -282,6 +319,33 @@ def extract_absolute_paths(text: str | None) -> list[str]:
     seen: dict[str, None] = {}
     for m in _ABS_PATH.finditer(text):
         seen.setdefault(m.group(0), None)
+    return list(seen)
+
+
+#: Framing that marks a path on the same line as a claimed deliverable /
+#: output rather than a reference the prose merely points at. SOAK-1 fix
+#: (t_8b2dd86a): the old ``deliverables_exist`` treated every absolute
+#: path in the result text as a deliverable, so a check-target data
+#: reference like ``/data/today.json`` read as "missing deliverable."
+_DELIVERABLE_FRAME = re.compile(r"deliverable|s?ave[ds]?\s+to|output|attach", re.I)
+
+
+def extract_claimed_deliverables(text: str | None) -> list[str]:
+    """Absolute paths in ``text`` explicitly framed as deliverables.
+
+    A path counts only when its line carries deliverable language
+    (deliverable / saved to / output / attach). Bare server-relative data
+    references in result prose are skipped: a miss degrades to a gap,
+    never a false REPAIR.
+    """
+    if not text:
+        return []
+    seen: dict[str, None] = {}
+    for line in text.splitlines():
+        if not _DELIVERABLE_FRAME.search(line):
+            continue
+        for p in extract_absolute_paths(line):
+            seen.setdefault(p, None)
     return list(seen)
 
 
@@ -355,16 +419,20 @@ def to_artifact(task: KanbanTask) -> ReviewArtifact:
       would break the artifact_id idempotency the comment marker relies on).
     * ``intent.brief``   = task body; ``intent.goals`` = AC bullets.
     * ``diff.files``     = every attachment + every absolute path named in
-      the result text, each with its measured line count (``added``).
+      the result text that is *framed as a deliverable* (SOAK-1: bare data
+      references in prose are not deliverables), each with its measured
+      line count (``added``).
     * ``checks``         = [] (the L1 runner supplies the step-A checks).
     """
     submitted_at = _epoch_to_iso(task.completed_at) if task.completed_at else now_iso()
 
     goals = parse_acceptance_goals(task.body)
 
-    # Deliverable paths: attachments (always) + result-named absolute paths.
+    # Deliverable paths: attachments (always) + result-text paths framed as
+    # deliverables. SOAK-1: bare data references in prose are not
+    # deliverables (a miss degrades to a gap, never a false REPAIR).
     paths: list[str] = [sp for _, sp, _ in task.attachments]
-    for p in extract_absolute_paths(task.result_text):
+    for p in extract_claimed_deliverables(task.result_text):
         if p not in paths:
             paths.append(p)
 
@@ -404,6 +472,20 @@ def _is_file(path: str) -> bool:
         return False
 
 
+def _path_exists(path: str) -> bool:
+    """A deliverable path is present if it exists — file or directory.
+
+    SOAK-1 (t_3a7f4b91): a delivered, populated directory (``sales-kit/``)
+    read as "missing" because the check only accepted regular files.
+    ``os.path.exists`` covers both; line counting still uses ``_is_file``
+    (a directory is 0 lines, not an error).
+    """
+    try:
+        return os.path.exists(path)
+    except OSError:
+        return False
+
+
 def _epoch_to_iso(epoch: int) -> str:
     from datetime import datetime, timezone
 
@@ -438,14 +520,18 @@ def run_checks(task: KanbanTask) -> list[CheckOutcome]:
         )
     )
 
-    # (b) deliverables_exist — every attachment on disk + every absolute path
-    #     named in the result text exists.
+    # (b) deliverables_exist — every attachment on disk + every result-text
+    #     path *framed as a deliverable* exists. SOAK-1: an existing
+    #     directory counts as present (a delivered directory is not a
+    #     missing file), and bare server-relative data references in the
+    #     result prose (e.g. ``/data/today.json``) are not claimed
+    #     deliverables, so only framed paths are required to exist.
     missing: list[str] = []
     for _name, sp, _sz in task.attachments:
-        if not _is_file(sp):
+        if not _path_exists(sp):
             missing.append(sp)
-    for p in extract_absolute_paths(task.result_text):
-        if not _is_file(p):
+    for p in extract_claimed_deliverables(task.result_text):
+        if not _path_exists(p):
             missing.append(p)
     results.append(
         CheckOutcome(
@@ -487,7 +573,7 @@ def run_checks(task: KanbanTask) -> list[CheckOutcome]:
             len(ac_goals) >= 1,
             f"{len(ac_goals)} acceptance bullet(s)"
             if ac_goals
-            else "no ACCEPTANCE CRITERIA section with >=1 bullet",
+            else "no acceptance/verification section with >=1 item",
         )
     )
 

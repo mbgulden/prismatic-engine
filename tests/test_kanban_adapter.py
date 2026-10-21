@@ -191,7 +191,10 @@ def test_complete_handoff_is_clean(env: Path, monkeypatch) -> None:
 def test_missing_deliverable_is_repair(env: Path, monkeypatch) -> None:
     body = "Do the thing.\n\n## ACCEPTANCE CRITERIA\n- deliverable present\n"
     missing = str(env / "nope" / "missing.md")  # intentionally not created
-    result = f"Report written to {missing}."
+    # SOAK-1: a path is a claimed deliverable only with framing; the
+    # original fixture ("Report written to …") no longer claims, so the
+    # fixture states the framing the check now requires.
+    result = f"Deliverable report saved to {missing}."
     db = _make_db(env, task_id="t_repair", body=body, result=result)
     monkeypatch.setenv("KANBAN_DB_PATH", db)
 
@@ -318,3 +321,112 @@ def test_hermes_home_overrides_profile_scoped_home(monkeypatch) -> None:
     assert kb._hermes_home() == fake
     assert kb._kanban_db_path() == fake + "/kanban.db"
     assert kb._attachments_root() == fake + "/kanban/attachments"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# SOAK-1 false-positive mirrors (t_b0e62049 fix pass)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_parse_acceptance_goals_header_variants() -> None:
+    """Fix 1: header variants real bodies use (SOAK-1 DISAGREE analysis)."""
+    # Original exact form still works.
+    assert kb.parse_acceptance_goals("## ACCEPTANCE CRITERIA:\n- a\n- b\n") == [
+        "a",
+        "b",
+    ]
+    # Bare ACCEPTANCE: label (t_3a7f4b91 shape).
+    assert kb.parse_acceptance_goals("ACCEPTANCE:\n- a\n- b\n") == ["a", "b"]
+    # Inline ACCEPTANCE = clause (t_8b2dd86a shape): the clause is the goal.
+    assert kb.parse_acceptance_goals("ACCEPTANCE = items 1-5 pass\n") == [
+        "items 1-5 pass"
+    ]
+    # Numbered SUGGESTED VERIFICATIONS FOR <role> (t_c554a68f shape).
+    assert kb.parse_acceptance_goals(
+        "## SUGGESTED VERIFICATIONS FOR MUSE\n1. one\n2) two\n3. three\n"
+    ) == ["one", "two", "three"]
+    # No AC section -> [] (data, not a parse error).
+    assert kb.parse_acceptance_goals("Do the thing.\n") == []
+
+
+def test_extract_claimed_deliverables_only_framed_paths() -> None:
+    """Fix 3: only explicitly framed paths are claimed deliverables."""
+    text = (
+        "Deliverables saved to /tmp/build/out.zip — done.\n"
+        "Checked /data/today.json and it was fine.\n"
+    )
+    assert kb.extract_claimed_deliverables(text) == ["/tmp/build/out.zip"]
+    assert kb.extract_claimed_deliverables(None) == []
+
+
+def test_soak_t3a7f4b91_directory_is_present_deliverable(
+    env: Path, monkeypatch
+) -> None:
+    """SOAK-1 t_3a7f4b91 mirror: an existing DIRECTORY is a present
+    deliverable (fix 2) and the bare ``ACCEPTANCE:`` header carries the
+    goals (fix 1) -> CLEAN, not REPAIR.
+    """
+    kit = env / "sales-kit"
+    kit.mkdir()
+    (kit / "one-pager.md").write_text("# one-pager\n", encoding="utf-8")
+    body = (
+        "Build the 2026 print kit.\n\n"
+        "COPY RULES — 2026 brand.\n\n"
+        "ACCEPTANCE:\n"
+        "- kit directory exists with all assets\n"
+        "- one-pager renders to PDF\n"
+    )
+    result = f"Deliverables saved to {kit}/ — one-pager + pricing card."
+    db = _make_db(env, task_id="t_soak_dir", body=body, result=result)
+    monkeypatch.setenv("KANBAN_DB_PATH", db)
+
+    kv = kb.build_and_store(kb.load_task("t_soak_dir"))
+    assert kv.verdict.final == "CLEAN"
+    assert {c.name for c in kv.checks if not c.passed} == set()
+
+
+def test_soak_t8b2dd86a_bare_data_ref_not_a_deliverable(env: Path, monkeypatch) -> None:
+    """SOAK-1 t_8b2dd86a mirror: a bare server-relative data reference in
+    the result prose (``/data/today.json``) is not a claimed deliverable
+    (fix 3) and the inline ``ACCEPTANCE = …`` clause satisfies
+    criteria_present (fix 1) -> CLEAN, not REPAIR.
+    """
+    body = (
+        "Verify the Access gate on the console.\n\n"
+        "ACCEPTANCE = items 1-5 pass (item 6 optional spot-check). "
+        "Report findings back here; flag any gate hole loudly.\n"
+    )
+    result = (
+        "ACCEPTANCE PASS: Access gate 302 live on / and /data/today.json "
+        "(no leak); local nginx all-200. No gate holes found."
+    )
+    db = _make_db(env, task_id="t_soak_data", body=body, result=result)
+    monkeypatch.setenv("KANBAN_DB_PATH", db)
+
+    kv = kb.build_and_store(kb.load_task("t_soak_data"))
+    assert kv.verdict.final == "CLEAN"
+    assert {c.name for c in kv.checks if not c.passed} == set()
+
+
+def test_soak_tc554a68f_suggested_verifications_list(env: Path, monkeypatch) -> None:
+    """SOAK-1 t_c554a68f mirror: a numbered ``SUGGESTED VERIFICATIONS FOR
+    <role>`` list satisfies criteria_present (fix 1) -> CLEAN, not REPAIR.
+    """
+    body = (
+        "Review the Sentinel Console nightly roll.\n\n"
+        "NO CHANGES MADE TO THE LIVE CONSOLE.\n\n"
+        "## SUGGESTED VERIFICATIONS FOR MUSE\n"
+        "1. job active in cron list\n"
+        "2. script logic matches brief\n"
+        "3. stale path confirmed\n"
+    )
+    result = (
+        "Reviewed Sentinel Console nightly roll. All static verifications "
+        "PASS; dry-run evidence on the parent task."
+    )
+    db = _make_db(env, task_id="t_soak_verify", body=body, result=result)
+    monkeypatch.setenv("KANBAN_DB_PATH", db)
+
+    kv = kb.build_and_store(kb.load_task("t_soak_verify"))
+    assert kv.verdict.final == "CLEAN"
+    assert {c.name for c in kv.checks if not c.passed} == set()
