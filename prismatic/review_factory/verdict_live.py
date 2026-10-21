@@ -7,7 +7,7 @@ DISABLED BY DEFAULT. Everything in this module performs GitHub writes
 2. A FRESH dry-run log exists (``stranded-verdict-dryrun.jsonl`` written
    within the last 26 hours and non-empty) — the live picture must be current.
 
-The dry-run pipeline in :mod:`prismatic.review_factory.verdict` stays the
+The dry-run pipeline in :mod:`prismatic.review_factory.verdict_dry_run` stays the
 default and is stdlib-only. This module shells out to ``gh`` (subprocess) for
 the live actions only.
 
