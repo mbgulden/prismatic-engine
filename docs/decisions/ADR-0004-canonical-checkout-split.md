@@ -70,6 +70,13 @@ divergence was the two uncommitted autonomy edits in the live tree.
 
 - Divergence audit with full command log:
   `/home/ubuntu/work/prismatic-hypervisor/CANONICAL-CHECKOUT.md` (2026-10-21).
+- Local verification attestation for this PR (re-checkable, durable — never an
+  ephemeral `/tmp` log): `python scripts/public_launch_smoke.py` on a clean detached
+  worktree at the branch head → **PUBLIC_LAUNCH_SMOKE_OK** (public docs, dashboard
+  markers, 10/10 plugins ready), transcript captured at the durable receipt
+  `/home/ubuntu/work/prismatic-receipts/canonical-checkout/canonical-checkout-verify.log`
+  (sha256 `0f03b76c5fa6970b7d053acef6d467896801af6ecb865b2d3162196989fc2b62`).
+  Not claimed: canonical full-suite green (the `smoke`/`signal`/`extended` CI gates).
 - Re-checkable anytime: `git rev-parse HEAD` in both trees,
   `git rev-list --count <tree>..origin/main`, and the audit's per-file hash
   classification against `origin/main`.
