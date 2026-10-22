@@ -208,8 +208,11 @@ def test_load_tier_policy_non_mapping_returns_disabled_default(tmp_path):
 
 def test_load_tier_policy_reads_shipped_spec():
     policy = autonomy.load_tier_policy()
-    assert policy["version"] == "autonomy-v1"
-    assert policy["enabled"] is False  # fail-closed default
+    # Post-Gate-B: the shipped spec is autonomy-v2, enabled by default.
+    # (A *missing* spec file still fails closed to the disabled default —
+    # see test_load_tier_policy_missing_file_returns_disabled_default.)
+    assert policy["version"] == "autonomy-v2"
+    assert policy["enabled"] is True
     tiers = policy["tiers"]
     assert set(tiers) == {0, 1, 2, 3}
     assert tiers[1]["classes"] == ["docs", "chore", "dep_bump"]
@@ -341,21 +344,26 @@ def test_revocation_triggers_healthy_no_triggers():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# autonomy_tiers_v2 — deterministic T1 entry (spec-only; loader unwired)
+# autonomy_tiers_v2 — deterministic T1 entry (Gate B: loader wired to v2)
 # ─────────────────────────────────────────────────────────────────────
+#
+# Post-Gate-B (Michael's 2026-10-21 decision, ADR-0004): the default loader
+# now points at v2. v1 is frozen and loaded only via its literal path.
 
 _V2_PATH = autonomy._DEFAULT_SPEC_PATH.parent / "autonomy_tiers_v2.yaml"
-_V1_PATH = autonomy._DEFAULT_SPEC_PATH
+_V1_PATH = autonomy._DEFAULT_SPEC_PATH.parent / "autonomy_tiers_v1.yaml"
 
 
 def _load_v2():
     return autonomy.load_tier_policy(_V2_PATH)
 
 
-def test_v2_spec_loads_and_is_disabled_by_default():
+def test_v2_spec_loads_and_is_enabled():
+    # Post-Gate-B: v2 is the active spec and ships enabled (Michael's
+    # 2026-10-21 decision). It still supersedes v1, which is frozen.
     spec = _load_v2()
     assert spec["version"] == "autonomy-v2"
-    assert spec["enabled"] is False
+    assert spec["enabled"] is True
     assert spec["supersedes"] == "autonomy-v1"
 
 
@@ -404,9 +412,11 @@ def test_v1_spec_untouched_by_v2():
     assert "agreement_metric_scope" not in v1
 
 
-def test_default_loader_still_points_at_v1():
-    # Until Gate B wiring, the engine must keep loading v1 (T0 active).
-    assert autonomy._DEFAULT_SPEC_PATH.name == "autonomy_tiers_v1.yaml"
+def test_default_loader_points_at_v2():
+    # Post-Gate-B: the engine loads v2 by default (T1 deterministic entry
+    # active). v1 remains on disk, frozen, and loadable via its literal
+    # path (see test_v1_spec_untouched_by_v2).
+    assert autonomy._DEFAULT_SPEC_PATH.name == "autonomy_tiers_v2.yaml"
     assert _V2_PATH.exists()
     default = autonomy.load_tier_policy()
-    assert default["version"] == "autonomy-v1"
+    assert default["version"] == "autonomy-v2"

@@ -46,7 +46,7 @@ from typing import Any
 import yaml
 
 # ─────────────────────────────────────────────────────────────────────
-# Tier class definitions (frozen; mirrors spec/autonomy_tiers_v1.yaml)
+# Tier class definitions (frozen; mirrors spec/autonomy_tiers_v2.yaml)
 # ─────────────────────────────────────────────────────────────────────
 
 TIER_CLASSES: dict[int, tuple[str, ...]] = {
@@ -66,7 +66,7 @@ TIER_CLASSES: dict[int, tuple[str, ...]] = {
 _BRAKE_ENV_VAR = "PRISMATIC_AUTONOMY_ENABLED"
 _BRAKE_ENGAGED_VALUES = frozenset({"0", "false", "no"})
 
-_DEFAULT_SPEC_PATH = Path(__file__).resolve().parent / "spec" / "autonomy_tiers_v1.yaml"
+_DEFAULT_SPEC_PATH = Path(__file__).resolve().parent / "spec" / "autonomy_tiers_v2.yaml"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ def _disabled_policy() -> dict[str, Any]:
 
 
 def load_tier_policy(path: str | Path | None = None) -> dict[str, Any]:
-    """Load the frozen tier spec (``spec/autonomy_tiers_v1.yaml``).
+    """Load the frozen tier spec (``spec/autonomy_tiers_v2.yaml``).
 
     Fail-closed: a missing or unparseable file returns the disabled
     default instead of raising. Never raises on a missing file.
