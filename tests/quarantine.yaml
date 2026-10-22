@@ -35,26 +35,8 @@ entries:
     removal_plan: "Rename the test placeholder and restructure .env.example, or add explicit scanner allowlist entries"
     remove_by: "2026-10-31"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  - id: tests/test_dispatcher_mode_switch.py::TestDispatcherModeSwitchIntegration::test_autonomous_mode_auto_fires_all
+    cause: "resource-exhaustion hang — unbounded memory growth from unmocked dispatch_once seams (AIUltraCreditTracker /tmp rglob, real sqlite event_router.db, real ps subprocess per cycle); 10 OOM kills in 16h on 2026-10-21; last test reached in both local reproductions"
+    inventory_ref: "SIGNAL-HANG-DIAGNOSIS.md (2026-10-21)"
+    removal_plan: "Hermetic test fix: unmock the dispatch_once seams (dispatch_local_tasks, AIUltraCreditTracker, cleanup_stale_agy, telemetry collector) per the diagnosis; then remove this entry"
+    remove_by: "2026-11-21"
