@@ -1,5 +1,11 @@
 """One-shot, crash-recoverable consumer for dashboard task admissions.
 
+RETIRED (G4, 2026-10-21): this module's one-shot CLI entry point
+(``main``) is guarded and will not run. The durable admission writer
+(``task_admissions``/``outbox`` tables) and the AGY harness gate remain
+the standing admission template for any future outside producer.
+See ``docs/task-admission-consumer.md`` (RETIRED banner).
+
 The HTTP admission request remains launch-free. This module is invoked separately,
 claims at most one durable outbox row, revalidates the complete immutable tuple,
 enforces a singleton writer lease, and calls an idempotent launcher with the stable
@@ -8,7 +14,6 @@ event id as its launch key.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import hmac
 import json
@@ -19,6 +24,7 @@ import signal
 import sqlite3
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -1077,25 +1083,20 @@ def command_launcher(config_path: Path) -> Launcher:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Consume at most one task admission")
-    parser.add_argument("--db", required=True, type=Path)
-    parser.add_argument("--policy", required=True, type=Path)
-    parser.add_argument("--launcher-config", required=True, type=Path)
-    parser.add_argument("--identity", required=True)
-    parser.add_argument("--lease-seconds", type=int, default=300)
-    args = parser.parse_args(argv)
-    consumer = TaskAdmissionConsumer(
-        db_path=args.db,
-        policy_path=args.policy,
-        identity=args.identity,
-        lease_seconds=args.lease_seconds,
+    """RETIRED one-shot consumer CLI (G4). Do not use as a live path.
+
+    This entry point is guarded so ``python -m prismatic.task_admission_consumer``
+    fails loudly instead of silently running a retired path. The admission writer,
+    ``task_admissions``/``outbox`` tables, and the AGY harness gate remain the
+    standing admission template for any future outside producer. See
+    ``docs/task-admission-consumer.md`` (RETIRED banner).
+    """
+    print(
+        "ERROR: task_admission_consumer is retired (G4). "
+        "Do not invoke it as a live path.",
+        file=sys.stderr,
     )
-    result = consumer.run_once(command_launcher(args.launcher_config))
-    if result is None:
-        print(json.dumps({"status": "idle"}, sort_keys=True))
-    else:
-        print(json.dumps(result.__dict__, sort_keys=True))
-    return 0
+    return 64
 
 
 if __name__ == "__main__":

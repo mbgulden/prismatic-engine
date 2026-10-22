@@ -2,7 +2,7 @@
 
 **Status:** Canonical
 **Owner:** Prismatic Engine maintainers
-**Last verified:** 2026-07-23
+**Last verified:** 2026-10-21
 
 ## Why
 
@@ -87,6 +87,16 @@ The provider-neutral core binds repository, base, candidate commit, tree, change
 GitHub Actions is one approved backend when available, not a mandatory backend. A hosted-provider billing or control-plane failure means no verification occurred on that backend. It does not convert local mutable-worktree evidence into a valid receipt and does not prevent another approved clean-room backend from issuing one.
 
 See [ADR-0002](../decisions/ADR-0002-provider-neutral-verification-receipts.md).
+
+## Kanban handoff verification (step A)
+
+The deterministic floor extends to kanban review handoffs. `prismatic/review_factory/adapters/kanban.py` projects a kanban task (task row, latest completion event/result, comments, and the task attachments dir — all read-only against `kanban.db`) into a `ReviewArtifact` (`harness_id=hermes-kanban`), runs the four step-A checks (`result_present`, `deliverables_exist`, `hashes_match`, `criteria_present`), and composes a Verdict through the existing `decide()` with judgment `null` (NullJudge — step A is the deterministic floor only; L2 judgment lands in step B).
+
+Verdict mapping: a stated sha256 its file disproves → `REJECT`; missing result/deliverable/criteria → `REPAIR`; all pass → `CLEAN`. The adapter posts exactly one `VERDICT …` comment (the sole kanban mutation) and is idempotent: a re-run of the same task + completion event recomputes the same artifact id and does not re-post.
+
+Runner wiring: the adapter registers its deterministic runner as a process-global **only at the CLI entry point** (`main`), never at import and never inside `build_and_store`. `decide()` always receives the L1 outcome explicitly; the global exists solely for `replay()`'s in-process fallback. Keeping the library path side-effect-free is load-bearing — a runner registered from a library call would leak into other suites in the same process and break `replay` byte-identity.
+
+The advisory watcher hook (`hermes-inbox-watch.sh`, `KANBAN_VERIFY_MODE=advisory`) is wired by the coordinator after this lands; the verdict never changes task state in step A.
 
 ## Sustainable-throughput measures
 

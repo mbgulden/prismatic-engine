@@ -14,8 +14,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from prismatic.review_factory import verdict
-from prismatic.review_factory.verdict import evaluate_pr, run_pipeline
+from prismatic.review_factory import verdict_dry_run as verdict
+from prismatic.review_factory.verdict_dry_run import evaluate_pr, run_pipeline
 
 
 def _pr(number: int, days_old: float, **over) -> dict:
@@ -95,7 +95,7 @@ def test_module_cannot_make_network_calls():
     import inspect
 
     source_path = inspect.getsourcefile(verdict)
-    assert source_path is not None and source_path.endswith("verdict.py")
+    assert source_path is not None and source_path.endswith("verdict_dry_run.py")
     text = open(source_path, encoding="utf-8").read()
     for forbidden in ("subprocess", "urllib", "requests", "httpx", "socket"):
         assert forbidden not in text, f"network-capable import found: {forbidden}"

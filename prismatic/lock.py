@@ -13,7 +13,8 @@ Usage:
 
 Config:
     Lock registry: $PRISMATIC_HOME/.antigravity/swarm_locks.json
-    Stale TTL: 300000ms (5 minutes) — from PRISMATIC_ENGINE.yaml
+    Stale TTL: 3,600,000ms (1 hour) — hardcoded below; the
+    locks.heartbeat_ttl_ms key in PRISMATIC_ENGINE.yaml is not read by code.
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ def _default_prismatic_home() -> Path:
 
 
 LOCK_FILE = _default_prismatic_home() / ".antigravity" / "swarm_locks.json"
-STALE_TTL_MS = 3_600_000  # 5 minutes
+STALE_TTL_MS = 3_600_000  # 1 hour
 
 
 # ── Lock Registry Operations ───────────────────────────
