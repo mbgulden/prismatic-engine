@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from prismatic.review_factory.verdict import run_pipeline
+from prismatic.review_factory.verdict_dry_run import run_pipeline
 from prismatic.review_factory.verdict_live import (
     DEFAULT_DIGEST_FRAGMENT,
     DEFAULT_DRY_RUN_LOG,

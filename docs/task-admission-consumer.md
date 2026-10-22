@@ -1,5 +1,17 @@
 # One-shot dashboard task-admission consumer
 
+> **RETIRED (G4, 2026-10-21).** The one-shot consumer CLI
+> (`python -m prismatic.task_admission_consumer`) is formally retired: the
+> entry point is guarded and will exit loudly with a `SystemExit(64)`
+> pointing here. The consumer has been dead (last activity 2026-08-04) and
+> is not a live path.
+>
+> What is NOT retired: the admission writer, the `task_admissions` /
+> `outbox` tables and triggers, and the AGY harness gate. Those remain the
+> standing admission template for any future outside producer. A new
+> outside producer should reuse that durable writer + gate surface rather
+> than resurrecting a one-shot consumer process.
+
 This consumer is a separate process from the HTTP gateway. The admission request remains launch-free. One invocation claims and processes at most one `dashboard.task.admitted.v1` row.
 
 ## Safety contract
@@ -56,6 +68,10 @@ The command must contain exactly one directly executed launcher artifact; interp
 The receipt has no extension keys. Output is limited to 64 KiB. Only the strict receipt is persisted; lifecycle rows retain hashes rather than arbitrary launcher detail.
 
 ## One-shot invocation
+
+RETIRED: the following command is guarded and exits with `SystemExit(64)`
+pointing to the retirement banner at the top of this file. Kept for
+reference only.
 
 ```text
 python -m prismatic.task_admission_consumer \

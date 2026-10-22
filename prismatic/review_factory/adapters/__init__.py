@@ -20,6 +20,7 @@ from .codex_cli import CodexCliAdapter
 from .gemini_cli import GeminiCliAdapter
 from .github_pr import GitHubPRAdapter
 from .hermes import HermesRunAdapter
+from . import kanban as _kanban  # noqa: F401  (see note below)
 
 __all__ = [
     "AdapterError",
@@ -33,7 +34,17 @@ __all__ = [
     "ReviewArtifact",
     "adapter_harness_ids",
     "get_adapter",
+    "kanban",
 ]
+
+
+#: Integration-tier adapters (DB-reading, side-effecting) that are NOT pure
+#: L0 ``raw -> artifact`` translators and therefore intentionally NOT in the
+#: ``_ADAPTERS`` registry (which ``test_registry_covers_all_five_shipped_adapters``
+#: pins to the five pure translators). ``kanban`` has its own CLI entry point
+#: (``python -m prismatic.review_factory.adapters.kanban <task_id>``) and is
+#: imported here only so it is discoverable as part of the adapters package.
+__integration_adapters__ = [_kanban]
 
 
 @runtime_checkable

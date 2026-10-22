@@ -37,6 +37,7 @@ HARNESS_IDS = frozenset(
         "gemini-cli",
         "codex-cli",
         "hermes",
+        "hermes-kanban",
         "github-pr",
         "manual",
     }
