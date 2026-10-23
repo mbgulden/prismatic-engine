@@ -80,18 +80,8 @@ _MIXED_MODULE = (
 # (d) base and variant that swap two constant *values*. Identical code-token
 # multiset, different *order* — a real behavior change a multiset comparison
 # would misclassify as "not code".
-_SWAP_BASE = (
-    "'''Lock fixture module.'''\n"
-    "\n"
-    "A = 1\n"
-    "B = 2\n"
-)
-_SWAP_MODULE = (
-    "'''Lock fixture module.'''\n"
-    "\n"
-    "A = 2\n"
-    "B = 1\n"
-)
+_SWAP_BASE = "'''Lock fixture module.'''\n\nA = 1\nB = 2\n"
+_SWAP_MODULE = "'''Lock fixture module.'''\n\nA = 2\nB = 1\n"
 
 
 # ── Fixture helpers ──────────────────────────────────────────────────
@@ -400,9 +390,7 @@ class TestDiffReconstructionPath:
         diff = self._full_diff(tmp_path)
         assert _is_code_change(tmp_path, "0" * 40, diff, "locky_module.py") is True
 
-    def test_no_newline_at_eof_comment_only_via_diff_is_not_code(
-        self, tmp_path: Path
-    ):
+    def test_no_newline_at_eof_comment_only_via_diff_is_not_code(self, tmp_path: Path):
         """Regression: a file with no trailing newline makes git emit a
         ``\\ No newline at end of file`` marker line. That marker is not
         content; the reconstruction must skip it or the line counts no

@@ -353,9 +353,7 @@ def _diff_reconstruct(
     # addition hunk "@@ -0,0 +1,N @@" with an empty base span). Anything
     # else means the context is truncated and the reconstruction is
     # incomplete -> fail closed.
-    if hunk_starts[0] != 1 and not (
-        hunk_starts[0] == 0 and hunk_base_span == 0
-    ):
+    if hunk_starts[0] != 1 and not (hunk_starts[0] == 0 and hunk_base_span == 0):
         return None, None  # truncated context: hunk doesn't start at top
 
     # The counted content lines must agree with the hunk headers, else
@@ -924,9 +922,7 @@ class VerificationWorker:
                 exit_code=0,
                 stdout=(
                     "Changed Python files are comment/docstring-only; "
-                    "no test surface ("
-                    + ", ".join(exempted[:5])
-                    + ")."
+                    "no test surface (" + ", ".join(exempted[:5]) + ")."
                 ),
                 passed=True,
             )
