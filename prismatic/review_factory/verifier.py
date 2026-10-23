@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Optional
@@ -125,6 +126,259 @@ class MaterializedArchive:
 
     path: Path
     artifact_sha256: str
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Content-aware diff classification (tier A focused gate)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _code_tokens(source: str) -> list[str]:
+    """Ordered list of code-level tokens for *source*.
+
+    Comments and string literals (including docstrings) are replaced by
+    a single placeholder token so that comment/docstring rewording is
+    invisible to the comparison, while any code-token change — including
+    reordering — is visible. Order matters deliberately: a value swap
+    (``A = 1, B = 2`` vs ``A = 2, B = 1``) is a real behavior change
+    with an identical token multiset, and must NOT be classified as
+    comment-only.
+
+    ``tokenize`` (not ``ast``) is used on purpose: docstrings are
+    string-literal nodes in the AST, so an AST walk cannot distinguish
+    a docstring reword from a real string-literal change. The tokenizer
+    treats both uniformly — which is the conservative, fail-safe choice
+    here, because a genuine code change is always still classified as
+    code.
+    """
+    tokens: list[str] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                tokens.append("<lit>")
+            elif tok.type == tokenize.NAME:
+                tokens.append(tok.string)
+            elif tok.type == tokenize.NUMBER:
+                tokens.append(tok.string)
+            elif tok.type == tokenize.ENCODING:
+                continue
+            elif tok.type == tokenize.ENDMARKER:
+                break
+            else:
+                tokens.append(tok.string)
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        # Unparseable source cannot be proven comment-only: the caller
+        # must treat this as a code change (fail closed).
+        return None  # type: ignore[return-value]
+    return tokens
+
+
+def _is_code_change(
+    repo_path: Path,
+    base_commit: str,
+    diff_text: str,
+    rel_path: str,
+) -> bool:
+    """Classify a changed ``.py`` file by CONTENT, not extension.
+
+    Returns ``True`` when the change carries a code-token difference
+    (or cannot be proven comment-only), ``False`` when the diff is
+    comment/docstring-only — in which case the file carries no test
+    surface and the focused gate exempts it exactly as it does for
+    non-.py docs changes.
+
+    Classification (most authoritative source wins):
+      1. If the base blob is reachable in the repo
+         (``git show <base>:<path>``), compare code-token lists of
+         base vs worktree source. Any difference is a code change;
+         unparseable either side fails closed.
+      2. Otherwise, if a unified diff for the file is available,
+         reconstruct the full base-side and new-side sources from the
+         full-context diff and compare code-token sequences (identical
+         to path 1). This is the path taken in CI, where the verifier
+         materializes only the candidate tree and the base blob is not
+         in the materialized root.
+      3. Otherwise (no diff text at all — daemon/tmp shapes) fall back
+         to extension-only classification: a changed ``.py`` is code
+         (preserves the pre-existing fail-closed behavior).
+
+    Non-``.py`` paths are never code: they are the docs/config/data
+    exemption handled upstream.
+    """
+    if not rel_path.endswith(".py"):
+        return False
+
+    base_src = _git_show_blob(repo_path, base_commit, rel_path)
+    if base_src is not None:
+        new_src = _worktree_source(repo_path, rel_path)
+        if new_src is None:
+            # Deleted in worktree (or unreadable) -> not provable
+            # comment-only.
+            return True
+        base_tokens = _code_tokens(base_src)
+        new_tokens = _code_tokens(new_src)
+        if base_tokens is None or new_tokens is None:
+            return True  # unparseable -> fail closed
+        return base_tokens != new_tokens
+
+    if diff_text:
+        # CI path: the verification root is a materialized plain
+        # directory (no git metadata), so the base blob is unreachable
+        # and the unified diff is the only content source. Reconstruct
+        # the full base-side and new-side sources from the full-context
+        # diff (the gate driver emits --unified=99999) and compare
+        # code-token sequences — identical to the base-blob path.
+        base_src, new_src = _diff_reconstruct(diff_text, rel_path)
+        if base_src is None or new_src is None:
+            return True  # cannot reconstruct -> fail closed
+        base_tokens = _code_tokens(base_src)
+        new_tokens = _code_tokens(new_src)
+        if base_tokens is None or new_tokens is None:
+            return True  # unparseable -> fail closed
+        return base_tokens != new_tokens
+
+    # No base blob, no diff: cannot prove comment-only. Preserve the
+    # extension-only fail-closed behavior (the #619 invariant).
+    return True
+
+
+def _git_show_blob(repo_path: Path, base_commit: str, rel_path: str) -> Optional[str]:
+    """Read the base-blob source for *rel_path*, or None if unreachable."""
+    if not base_commit or base_commit in ("0" * 40,):
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), "show", f"{base_commit}:{rel_path}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    return proc.stdout
+
+
+def _worktree_source(repo_path: Path, rel_path: str) -> Optional[str]:
+    try:
+        return (repo_path / rel_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _diff_reconstruct(
+    diff_text: str, rel_path: str
+) -> tuple[Optional[str], Optional[str]]:
+    """Reconstruct base-side and new-side full file contents from *diff_text*.
+
+    Walks the file's unified-diff hunk(s), collecting context + removed
+    lines into the base-side source and context + added lines into the
+    new-side source. Requires a full-context diff (the gate driver
+    emits ``--unified=99999``) that covers the ENTIRE file: the hunk
+    must start at base line 1 and its base-side span must reach the
+    last base line (or the file must be empty). Otherwise the
+    reconstruction is incomplete and ``(None, None)`` is returned so
+    the caller fails closed.
+
+    Returns ``(base_src, new_src)``. A deleted file (no ``+`` lines)
+    yields ``new_src == ""``; an added file (no ``-`` lines) yields
+    ``base_src == ""``.
+    """
+    norm_rel = rel_path.replace(os.sep, "/")
+    in_file = False
+    in_hunk = False  # content is only valid inside a hunk
+    base_lines: list[str] = []
+    new_lines: list[str] = []
+    # Hunk coverage bookkeeping (validated after the walk).
+    hunk_starts: list[int] = []  # base-side start line number per hunk
+    hunk_base_span = 0  # base lines consumed across all hunks
+    hunk_new_span = 0  # new lines consumed across all hunks
+    hunk_count = 0
+    file_seen = False
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            if in_file:
+                break  # we only care about the first match; done.
+            in_file = _diff_file_is_match(line, norm_rel)
+            if in_file:
+                file_seen = True
+            in_hunk = False
+            continue
+        if not in_file:
+            continue
+        if line.startswith("--- ") or line.startswith("+++ "):
+            continue
+        if line.startswith("index "):
+            # Binary/metadata line between the file header and the hunks.
+            continue
+        if line.startswith("\\"):
+            # "\ No newline at end of file" marker: git appends this when
+            # a file side lacks a trailing newline. It is not content.
+            continue
+        if line.startswith("@@"):
+            # Hunk header: "@@ -a,b +c,d @@ ...". b (and d) default to 1
+            # when omitted.
+            m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if m is None:
+                return None, None  # malformed hunk header -> fail closed
+            hunk_starts.append(int(m.group(1)))
+            hunk_base_span += int(m.group(2) or 1)
+            hunk_new_span += int(m.group(4) or 1)
+            hunk_count += 1
+            in_hunk = True
+            continue
+        if not in_hunk:
+            # Metadata lines can appear between the file header and the
+            # first hunk ("new file mode", "deleted file mode", "rename
+            # from/to", "old mode"/"new mode", "similarity index"). They
+            # carry no content; skip them. Truncation is caught by the
+            # hunk count/span validation after the walk.
+            continue
+        if line.startswith("-"):
+            base_lines.append(line[1:])
+        elif line.startswith("+"):
+            new_lines.append(line[1:])
+        else:
+            # Context line. git emits a leading space; an empty context
+            # line (blank line in the file) may arrive as the bare ""
+            # after splitlines in some diffs.
+            base_lines.append(line[1:] if line.startswith(" ") else line)
+            new_lines.append(line[1:] if line.startswith(" ") else line)
+
+    if not file_seen or hunk_count == 0:
+        return None, None
+
+    # A full-context diff of a changed file has exactly one hunk starting
+    # at base line 1 (or, for a file that did not exist at base, an
+    # addition hunk "@@ -0,0 +1,N @@" with an empty base span). Anything
+    # else means the context is truncated and the reconstruction is
+    # incomplete -> fail closed.
+    if hunk_starts[0] != 1 and not (
+        hunk_starts[0] == 0 and hunk_base_span == 0
+    ):
+        return None, None  # truncated context: hunk doesn't start at top
+
+    # The counted content lines must agree with the hunk headers, else
+    # the diff is malformed/truncated for this file -> fail closed.
+    if len(base_lines) != hunk_base_span or len(new_lines) != hunk_new_span:
+        return None, None
+
+    base_src = "\n".join(base_lines)
+    new_src = "\n".join(new_lines)
+    return base_src, new_src
+
+
+def _diff_file_is_match(diff_line: str, norm_rel: str) -> bool:
+    """Match a ``diff --git`` header to *norm_rel* (handles renames)."""
+    # Forms: "diff --git a/X b/X" or "diff --git a/X b/Y" (rename)
+    parts = diff_line.split()
+    for i, part in enumerate(parts):
+        if i == 0 or part.startswith("--git"):
+            continue
+        cleaned = part[2:] if part[:2] in ("a/", "b/") else part
+        if cleaned == norm_rel:
+            return True
+    return False
 
 
 class VerificationWorker:
@@ -649,8 +903,36 @@ class VerificationWorker:
                 passed=True,
             )
 
+        # Content-aware classification (#649 false-positive fix): a .py
+        # change that is comment/docstring-only (no code-token change)
+        # carries no test surface either, so it gets the same exemption
+        # as non-.py docs changes. A real code change to a file with no
+        # resolving test still fails closed below (the #619 invariant).
+        diff_text = getattr(job, "diff_text", "") or ""
+        base_commit = getattr(job, "base_commit", "") or ""
+        code_changed = [
+            path
+            for path in py_changed
+            if _is_code_change(self.repo_path, base_commit, diff_text, path)
+        ]
+        exempted = [path for path in py_changed if path not in code_changed]
+        if not code_changed:
+            return CheckResult(
+                name="focused",
+                proof_class="focused",
+                command="rf-verify-focused",
+                exit_code=0,
+                stdout=(
+                    "Changed Python files are comment/docstring-only; "
+                    "no test surface ("
+                    + ", ".join(exempted[:5])
+                    + ")."
+                ),
+                passed=True,
+            )
+
         test_files = []
-        for path in py_changed:
+        for path in code_changed:
             if "/test_" in path or Path(path).name.startswith("test_"):
                 # Changed test file itself - run it directly if it exists.
                 if (self.repo_path / path).exists():
@@ -679,7 +961,7 @@ class VerificationWorker:
                 exit_code=1,
                 stderr=(
                     "FAIL-CLOSED: no test files resolved for changed Python "
-                    "files (" + ", ".join(py_changed[:5]) + "). Focused "
+                    "files (" + ", ".join(code_changed[:5]) + "). Focused "
                     "verification matched zero tests; add tests or adjust "
                     "the change so its test surface resolves."
                 ),

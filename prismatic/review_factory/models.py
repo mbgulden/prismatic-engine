@@ -222,6 +222,11 @@ class ReviewJob:
 
     # Classification
     changed_paths_json: str = "[]"  # JSON list of changed paths
+    # Unified diff (base...candidate) for content-aware verification.
+    # Transient: carried in-memory by the CI gate driver and test fixtures.
+    # Not persisted to the review_jobs table (schema predates the field;
+    # row hydration leaves it at "").
+    diff_text: str = ""
     risk_tier: int = RiskTier.STANDARD
     policy_version: str = "v1"
 
