@@ -57,6 +57,49 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         self.sleep_patcher = patch('time.sleep', return_value=None)
         self.mock_sleep = self.sleep_patcher.start()
 
+        # ── Hermetic seams (SIGNAL-HERMETIC-FIX, t_c008fd20) ─────────
+        # dispatch_once (and recover_stalled_agy) have unmocked
+        # side-effect seams that reach the real filesystem / process
+        # table. Mock them so the integration test runs hermetically:
+        # no /tmp rglob, no real sqlite (event_router.db), no `ps`
+        # subprocess. These apply to every test in the class.
+        # 1. dispatch_local_tasks: skip real LocalTaskQueue() → sqlite.
+        #    Called with local_task_queue=None, it would build the real
+        #    queue at ./prismatic_state/event_router.db (local_tasks.py:22).
+        self.local_tasks_patcher = patch(
+            'prismatic.dispatcher.dispatch_local_tasks', return_value=0)
+        self.mock_dispatch_local_tasks = self.local_tasks_patcher.start()
+        # 2. AIUltraCreditTracker: skip the /tmp rglob scan and the
+        #    tracker's own sqlite. Imported inside dispatch_once via
+        #    `from .credit_tracker import AIUltraCreditTracker`, so patch
+        #    it in prismatic.credit_tracker (where it's defined). A truthy
+        #    evaluate_exhaustion_warning would set throttle_dispatch=True,
+        #    so force it falsy to keep the pure auto-fire path under test.
+        self.tracker_patcher = patch(
+            'prismatic.credit_tracker.AIUltraCreditTracker')
+        self.mock_tracker_cls = self.tracker_patcher.start()
+        self.mock_tracker_cls.return_value.evaluate_exhaustion_warning \
+            .return_value = None
+        # 3. cleanup_stale_agy: skip the real `ps -eo ...` subprocess (and
+        #    the live os.kill(SIGTERM) hazard) in dispatch_once and in
+        #    recover_stalled_agy (dispatched with max_age_minutes=0 there).
+        self.cleanup_patcher = patch(
+            'prismatic.dispatcher.cleanup_stale_agy', return_value=0)
+        self.mock_cleanup_stale_agy = self.cleanup_patcher.start()
+        # 4. get_collector: skip real telemetry sqlite (event_router.db)
+        #    on the launch path, so no real DB file is ever opened.
+        self.collector_patcher = patch(
+            'prismatic.dispatcher.get_collector')
+        self.mock_get_collector = self.collector_patcher.start()
+        # 5. Contain the residual cwd write: _persist_polling_budget_status
+        #    writes prismatic_state/dispatcher_polling_budget_state.json.
+        #    _polling_budget_state_path reads PRISMATIC_STATE_DIR at call
+        #    time, so point it at a temp dir and the checkout stays clean.
+        import tempfile as _tempfile
+        self._orig_state_dir = os.environ.get('PRISMATIC_STATE_DIR')
+        self._tmp_state_dir = _tempfile.mkdtemp(prefix='prismatic-test-')
+        os.environ['PRISMATIC_STATE_DIR'] = self._tmp_state_dir
+
         # Reset mode_switch to Collaborative
         dispatcher.mode_switch.set_mode(OrchestrationMode.COLLABORATIVE)
 
@@ -79,6 +122,18 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
     def tearDown(self):
         dispatcher.AGENT_LAUNCHERS = self.original_launchers
         self.sleep_patcher.stop()
+        # ── Hermetic seams (SIGNAL-HERMETIC-FIX) ─────────────────────
+        self.local_tasks_patcher.stop()
+        self.tracker_patcher.stop()
+        self.cleanup_patcher.stop()
+        self.collector_patcher.stop()
+        # 5. restore PRISMATIC_STATE_DIR and remove the temp state dir
+        import shutil as _shutil
+        if self._orig_state_dir is None:
+            os.environ.pop('PRISMATIC_STATE_DIR', None)
+        else:
+            os.environ['PRISMATIC_STATE_DIR'] = self._orig_state_dir
+        _shutil.rmtree(self._tmp_state_dir, ignore_errors=True)
 
     # ── COLLABORATIVE MODE ─────────────────────────────────────
 
