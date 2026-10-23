@@ -58,6 +58,8 @@ def main() -> int:
     head = _git(repo, "rev-parse", "HEAD")
     tree = _git(repo, "rev-parse", f"{head}^{{tree}}")
     diff_ok = True
+    base = "0" * 40
+    diff_text = ""
     try:
         base = _git(repo, "merge-base", args.base, "HEAD")
         changed = [
@@ -65,6 +67,14 @@ def main() -> int:
             for p in _git(repo, "diff", "--name-only", f"{base}...{head}").split("\n")
             if p
         ]
+        # Unified diff for the content-aware focused classification:
+        # comment/docstring-only .py changes must not trip the
+        # fail-closed "no test resolved" branch. Full context
+        # (--unified=99999) so the focused check can reconstruct the
+        # complete base/new file contents and compare code tokens —
+        # the materialized verification root has no git metadata, so
+        # the diff is the classifier's only content source there.
+        diff_text = _git(repo, "diff", "--unified=99999", f"{base}...{head}")
     except subprocess.CalledProcessError:
         print(f"WARNING: could not diff {args.base}...HEAD; using empty change set")
         changed = []
@@ -100,11 +110,16 @@ def main() -> int:
         completed_work_id=f"ci-gate-{head[:8]}",
         task_id=f"CI-GATE-{head[:8]}",
         repository="mbgulden/prismatic-engine",
-        base_commit="0" * 40,
+        # Real merge-base (not the placeholder) so the focused check's
+        # content classifier can try the base-blob path first and fall
+        # back to the unified diff (the materialized verification root
+        # is a plain directory, not a git repo).
+        base_commit=base,
         base_tree="0" * 40,
         candidate_commit=head,
         candidate_tree=tree,
         changed_paths_json=json.dumps(changed),
+        diff_text=diff_text,
     )
 
     log_dir = repo / args.log_dir
