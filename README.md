@@ -1,5 +1,7 @@
 # Prismatic Engine
 
+[![nightly full suite](https://github.com/mbgulden/prismatic-engine/actions/workflows/nightly-full-suite.yml/badge.svg?branch=main)](https://github.com/mbgulden/prismatic-engine/actions/workflows/nightly-full-suite.yml) [![ci-queue-janitor](https://github.com/mbgulden/prismatic-engine/actions/workflows/ci-queue-janitor.yml/badge.svg?branch=main)](https://github.com/mbgulden/prismatic-engine/actions/workflows/ci-queue-janitor.yml) [![post-merge deploy](https://github.com/mbgulden/prismatic-engine/actions/workflows/post-merge-deploy.yml/badge.svg?branch=main)](https://github.com/mbgulden/prismatic-engine/actions/workflows/post-merge-deploy.yml)
+
 **Local-first agent orchestration, plugin governance, and artifact provenance for teams building with AI agents.**
 
 Prismatic Engine gives you a small, inspectable control plane for agent work:
