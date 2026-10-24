@@ -99,6 +99,16 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         self._orig_state_dir = os.environ.get('PRISMATIC_STATE_DIR')
         self._tmp_state_dir = _tempfile.mkdtemp(prefix='prismatic-test-')
         os.environ['PRISMATIC_STATE_DIR'] = self._tmp_state_dir
+        # 6. DEFAULT_DB_PATH: frozen at import time from the default
+        #    ./prismatic_state (dispatcher.py module level), so the
+        #    env-var seam in (5) never reaches recover_stalled_agy —
+        #    it calls os.makedirs('./prismatic_state') and dies with
+        #    PermissionError in a read-only CI checkout. Point the
+        #    module attribute at the same temp state dir.
+        self.db_path_patcher = patch(
+            'prismatic.dispatcher.DEFAULT_DB_PATH',
+            os.path.join(self._tmp_state_dir, 'event_router.db'))
+        self.db_path_patcher.start()
 
         # Reset mode_switch to Collaborative
         dispatcher.mode_switch.set_mode(OrchestrationMode.COLLABORATIVE)
@@ -127,6 +137,7 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         self.tracker_patcher.stop()
         self.cleanup_patcher.stop()
         self.collector_patcher.stop()
+        self.db_path_patcher.stop()
         # 5. restore PRISMATIC_STATE_DIR and remove the temp state dir
         import shutil as _shutil
         if self._orig_state_dir is None:
@@ -306,10 +317,15 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         mock_sqlite.return_value = mock_conn
         mock_cursor = mock_conn.cursor.return_value
 
-        # The dispatcher reads the row once via the stall-tracker cursor.
-        # After update + read the row will look like (cycle_count, escalated).
-        # The first read returns (2, 0) — escalated=0, cycle_count=2.
-        mock_cursor.fetchone.return_value = (2, 0)
+        # recover_stalled_agy reads the stall-tracker row twice via the
+        # cursor, one column per SELECT: first cycle_count, then
+        # escalated. A real cursor returns a 1-tuple per query, so the
+        # mock needs a side_effect sequence: (2,) -> cycle_count becomes
+        # 3 (>= max_retries), then (0,) -> escalated=0, i.e. the approval
+        # gate must engage. (A single (2, 0) return_value would make the
+        # escalated read see fetchone()[0] == 2, truthy, and take the
+        # already-escalated recovery branch, bypassing the gate.)
+        mock_cursor.fetchone.side_effect = [(2,), (0,)]
 
         # Simulate issue stalled in AGY
         mock_get_issues.return_value = [
