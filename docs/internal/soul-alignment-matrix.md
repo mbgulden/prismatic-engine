@@ -10,7 +10,7 @@
 | Document | Alignment | Notes |
 |----------|-----------|-------|
 | **SOUL.md** 🆕 | ✅ Aligned | The source of truth. All other docs derive from this. |
-| **soul-alignment-guide.md** 🆕 | ✅ Aligned | The litmus test for every feature decision. |
+| **docs/internal/soul-alignment-guide.md** 🆕 | ✅ Aligned | The litmus test for every feature decision. |
 | **README.md** 🆕 | ✅ Aligned | Updated to lead with soul, then technical details. |
 | **PRISMATIC_ENGINE.yaml** 🆕 | ✅ Aligned | Includes soul references for every agent and pipeline. |
 | **index.html** 🆕 | ✅ Aligned | Hero now says "Your Idea → Team → Reality." |

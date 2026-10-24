@@ -2,7 +2,7 @@ I'll start by listing the directory structure of `/home/ubuntu/work/prismatic-en
 I will list the contents of the `specs/` directory to see if there is an existing structure or other implementation plans.
 I will view the `specs/security-scanner-analysis.md` file to see what information is already analyzed regarding the security scanner, patterns, and its integration in the project.
 I will list the `specs/implementation-plans/` directory to see if there are any existing plans that could act as templates or reference.
-I will check `style_guide.md` to see if there are guidelines for documents, plans, or coding style that I should adhere to.
+I will check `docs/internal/style_guide.md` to see if there are guidelines for documents, plans, or coding style that I should adhere to.
 I will view a few lines of `specs/telemetry-module-design.md` to see the typical layout, headers, and structure of technical specifications or plans within the `specs/` directory.
 I will list the `portable-skills/` directory to see which skills are stored there.
 I will list the `prismatic/` directory to see if there is a `skills` folder inside it.
