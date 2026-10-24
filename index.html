@@ -1121,7 +1121,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
           <div class="agent-dot"></div>
           <div class="agent-role">NEUTRALITY</div>
           <div class="agent-name">Provider-neutral verification</div>
-          <div class="agent-details">GitHub, GitLab, Bitbucket, Forgejo, or local. A provider outage reports BLOCKED &mdash; never PASS.</div>
+          <div class="agent-details">The signed receipt is the evidence &mdash; never a provider status. GitHub is the wired backend today; other hosts bind through adapters. A provider outage reports BLOCKED &mdash; never PASS.</div>
         </div>
       </div>
 <div class="agent-card">
@@ -1129,7 +1129,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
           <div class="agent-dot"></div>
           <div class="agent-role">AUTONOMY</div>
           <div class="agent-name">Earned autonomy</div>
-          <div class="agent-details">T0 is manual today. Higher tiers are earned on evidence from the trust ledger, and promotion stays a human decision.</div>
+          <div class="agent-details">T0 runs today: a merge executes only on a green verification stack, evidence attached. Higher tiers are earned on evidence from the trust ledger, and promotion stays a human decision.</div>
         </div>
       </div>
 <div class="agent-card">
@@ -1163,7 +1163,9 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
   <div class="container">
     <div class="section-label">Proof, not promises</div>
     <h2 class="section-title">It runs its own development.</h2>
-    <p class="section-subtitle">Every change to Prismatic Engine goes through the same machinery: verified in CI, receipted, merged under the same gates. The trust ledger, the receipts, the quarantine history &mdash; all in the public repo. We don&rsquo;t ask you to trust the engine. We ask you to verify it.</p>
+    <p class="section-subtitle">Prismatic Engine is built by the machinery it ships. Work runs as kanban tasks with acceptance criteria, executed by a fleet of local Hermes worker agents. Every change clears a three-layer gate: CI checks, Prismatic verdicts against the task&rsquo;s acceptance criteria, and a second-witness review. A merge executes only when the full stack is green, with the evidence attached to the pull request. We don&rsquo;t ask you to trust the engine. We ask you to verify it.</p>
+    <p class="section-subtitle" style="margin-top:1rem;">The baseline is measured: a 213-run audit of the fleet found 46% of runs completing and 65% first-attempt success. The checkpoint machinery is the response &mdash; an agent-checkpoint plugin fires at 50% and 80% of each run&rsquo;s time and turn budgets, and every task starts deliverable-first, with a report due before its timeout.</p>
+    <p class="section-subtitle" style="margin-top:1rem;">One piece already ships beyond this repo: the hermes-kanban-stream plugin was merged upstream into NousResearch/hermes-agent on October 20, 2026.</p>
     <p style="margin-top:1.5rem;"><a href="https://github.com/mbgulden/prismatic-engine" class="btn-ghost">Verify it yourself &mdash; view the repo</a></p>
   </div>
 </section>
@@ -1171,7 +1173,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
   <div class="container">
     <div class="section-label">No lock-in</div>
     <h2 class="section-title">Your verification shouldn&rsquo;t depend on your provider.</h2>
-    <p class="section-subtitle">A GitHub outage reports <strong>BLOCKED</strong> &mdash; never PASS. Verification receipts are provider-neutral: GitHub, GitLab, Bitbucket, Forgejo, or local. No mandatory cloud, no mandatory backend.</p>
+    <p class="section-subtitle">A GitHub outage reports <strong>BLOCKED</strong> &mdash; never PASS. Verification receipts are provider-neutral by design (ADR-0002): the signed receipt is the merge evidence, portable across GitHub, GitLab, Bitbucket, Forgejo, or a local repo. GitHub is the wired backend today; the other hosts bind through adapters. No mandatory cloud, no mandatory backend.</p>
     
   </div>
 </section>
