@@ -47,12 +47,12 @@ The **All Hermes Agents** group is the single coordination channel for everyone.
 
 | Repo | Branch Strategy | Deploys To |
 |---|---|---|
-| **active-oahu-tours-mirror** (static HTML mirror) | **Work directly on `master`** (verify: repo has diverged `main`/`master`) | CF Pages → activeoahutours.com |
+| **active-oahu-tours-mirror** (static HTML mirror) | **`main` is the canonical production branch** (settled Nov 6, 2026 — see §2) | CF Pages → activeoahutours.com |
 | Astro rebuild / future SPA | Branch off `deploy-fresh` → merge to `main` | CF Pages staging → production |
 
 ### Mirror repo (`active-oahu-tours-mirror`):
 - **Two production branches exist: `main` and `master`** — they have DIVERGED. The file contents differ and they cannot be cherry-picked or merged between.
-- **The active CF Pages deployment branch is NOT fixed** — `master` has been the deploy target historically, but production may switch to `main`. **Always verify the live branch before pushing.** Use this protocol:
+- **The production branch is `main`** — settled Nov 6, 2026 by the owner's ruling and live evidence (a merge to `main` deployed a new page to the domain within a minute; a main-only page is live while `master` lacks it). `master` is a diverged legacy branch: never deploy from it. The protocol below stays as a diagnostic if live behavior ever looks off:
 
   ```bash
   # Step 1: Check what the production domain actually serves
@@ -72,7 +72,7 @@ The **All Hermes Agents** group is the single coordination channel for everyone.
 - No feature branches needed for single-agent fixes
 - No merge protocol needed — single branch, single source of truth
 - **Never cherry-pick between `main` and `master`** — the file content has diverged too much; re-apply changes fresh
-- **When branches are diverged and the change is needed on both**: apply the same change fresh on each branch. Workflow: (1) commit + push on the production branch, (2) verify live via curl, (3) stash, checkout the non-production branch, `git pull`, apply same changes with `patch`, commit + push, (4) checkout back to the production branch and pop stash. Do NOT merge or rebase — the branches intentionally diverge.
+- **Changes land on `main` only.** Do not mirror changes onto `master`; it is a frozen legacy branch. If something exists only on `master` and is needed, re-apply it fresh on `main` (never cherry-pick or merge). The old both-branches workflow, kept for reference only: Workflow: (1) commit + push on the production branch, (2) verify live via curl, (3) stash, checkout the non-production branch, `git pull`, apply same changes with `patch`, commit + push, (4) checkout back to the production branch and pop stash. Do NOT merge or rebase — the branches intentionally diverge.
 - **When a change must go to both branches, verify content in each first**: `git show origin/main:path/to/file | tail -5` vs `git show origin/master:path/to/file | tail -5`. The files may differ, so the `patch` command must match the existing content on each branch. A `patch` that works on master may fail on main.
 
 ### Astro rebuild (future):
@@ -90,7 +90,7 @@ pr/jules-{task-id}        — Jules PR branches
 ```
 
 ### Rules:
-- **Mirror repo**: verify the active deployment branch first (`git fetch origin && curl -sI` against a known-unique redirect), then work directly on that branch. The repo has diverged `main` and `master`.
+- **Mirror repo**: work on `main` — the canonical production branch (settled Nov 6, 2026). `master` is diverged legacy; never deploy from it. If live behavior ever contradicts this, verify with `git fetch origin && curl -sI` against a known-unique redirect and escalate to the owner.
 - **Astro rebuild**: branch off `deploy-fresh`, never `main`
 - Never create branches off another agent's branch
 - Branch names are lowercase, hyphen-separated
@@ -156,10 +156,10 @@ Verify production: `https://activeoahutours.com/`
 ## 4. Deployment Governance
 
 ### Branch rules:
-- **Mirror repo** (`active-oahu-tours-mirror`): The production branch is **NOT fixed** — `master` has been the deploy target historically, but production may switch to `main`. **Always verify the live production branch** using the redirect-content-based technique in §2 before pushing. The repo has `main` and `master` which have diverged.
+- **Mirror repo** (`active-oahu-tours-mirror`): The production branch is **`main`** — canonical, settled Nov 6, 2026 by the owner's ruling and live deploy evidence. `master` is a diverged legacy branch: never deploy from it, never merge it into `main`. The redirect-content check in §2 remains as a diagnostic if live behavior looks wrong.
 - **Astro rebuild**: `deploy-fresh` = staging, `main` = production
 - **Never force-push** any branch
-- **Mirror repo**: commit to the production branch directly (single-branch workflow; verify which branch is live with `curl -sI` against a known-unique redirect target)
+- **Mirror repo**: commit to `main`, the production branch (single-branch workflow)
 - **Astro rebuild**: all changes go to `deploy-fresh` first, then merge to `main`
 - **Hotfix exceptions**: If a hotfix goes directly to main on the Astro rebuild, replicate it identically on deploy-fresh within 5 min
 
