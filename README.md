@@ -15,6 +15,20 @@ Prismatic Engine gives you a small, inspectable control plane for agent work:
 
 Prismatic is still alpha, but the public path below is designed to work from a clean checkout without Michael-specific infrastructure.
 
+## Review Factory
+
+Prismatic's verification core. Agent work is checked against evidence before it is accepted — never taken on the agent's word.
+
+- **Frozen-archive verification:** checks run against an immutable copy of the deliverable, with hashes recomputed and compared to the handoff's claims. A mismatch is a hard reject.
+- **Replayable verdicts:** re-running the deterministic layer from the stored artifact must reproduce the verdict byte-identically. Judgments are recorded once, never re-run, and can never downgrade a deterministic verdict.
+- **Hollow-proof detection:** screens for stub code (missing integration imports), circular proof (tests that validate a stub against itself), and dead imports (imported, never called).
+- **Risk-tiered proof requirements:** focused tests at the low tier; failure, recovery, and rollback evidence at the highest.
+- **Harness-agnostic:** adapters for Claude Code, Codex, Gemini CLI, GitHub pull requests, Hermes, and kanban task handoffs.
+- **Trust ledger:** append-only outcome record; autonomy promotions are proposals until a named human approves.
+
+Status: in production on the author's fleet in an advisory role, with agreement tallied against human verdicts before any gating promotion.
+
+
 ---
 
 ## Quick start
