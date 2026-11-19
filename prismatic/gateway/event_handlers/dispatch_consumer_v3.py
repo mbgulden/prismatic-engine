@@ -2027,10 +2027,26 @@ def vacuum_processed(
                     f"[FAIL_CLOSED] Database generation mismatch during vacuum: expected {expected_generation!r} vs db {db_gen!r}\n"
                     "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
                 )
-        conn.execute(
-            "DELETE FROM events WHERE processed = 1 AND ts < ?",
+        # Layer (a) guard (2026-11-18; root cause 2026-11-15): a vacuum pass
+        # must never empty the live `events` table. Count the rows that would
+        # survive the delete; if none would remain (every row is processed and
+        # older than the 24h horizon), refuse the events delete and keep at
+        # least the newest processed row as the floor. The 30-day pek prune
+        # below is left unchanged and still runs in either branch.
+        would_remain = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE NOT (processed = 1 AND ts < ?)",
             (time.time() - 86400,),
-        )
+        ).fetchone()[0]
+        if would_remain == 0:
+            print(
+                "[consumer] VACUUM_REFUSED_EMPTY: refusing vacuum pass that "
+                "would empty events; keeping newest processed row as the floor"
+            )
+        else:
+            conn.execute(
+                "DELETE FROM events WHERE processed = 1 AND ts < ?",
+                (time.time() - 86400,),
+            )
         # Dedup keys are useless once their event is vacuumed: rowids only
         # increase within a DB generation, so a vacuumed event can never be
         # refetched. Retain 30d (vs the 24h event vacuum) for margin.
