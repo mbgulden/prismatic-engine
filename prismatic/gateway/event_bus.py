@@ -307,8 +307,136 @@ class EventBus:
 
 # Module-level singleton — one EventBus per gateway process.
 # Initialized by gateway server startup, accessed by WebSocket
+
+# ── Layer (b) startup migration ──────────────────────────────
+# The live `events` table was created before `_persist_to_sqlite` gained the
+# `rowid ... AUTOINCREMENT` clause (the v2-era plain-rowid schema). Because
+# `CREATE TABLE IF NOT EXISTS` is a no-op on the pre-existing table, the
+# AUTOINCREMENT declaration never took effect on the live bus: after the
+# consumer's vacuum emptied `events`, the next insert restarted rowids at 1
+# under a cursor that assumes they never decrease (the split-bus defect).
+# This migration removes that root condition: it recreates a plain-rowid
+# `events` table with the declared AUTOINCREMENT schema, preserving every
+# existing rowid (so the cursor stays valid) and pinning `sqlite_sequence.seq`
+# to the max rowid so the next insert is max+1. Idempotent and one-way by
+# design — an AUTOINCREMENT table stays AUTOINCREMENT. Called once at gateway
+# startup (server.py lifespan), never on the per-publish path.
+
+
+def _events_table_exists(conn: sqlite3.Connection) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'"
+        ).fetchone()
+        is not None
+    )
+
+
+def _events_is_autoincrement(conn: sqlite3.Connection) -> bool:
+    """True when the `events` DDL declares rowid ... AUTOINCREMENT.
+
+    Detection is on the schema SQL, NOT on the `sqlite_sequence` row: a 0-row
+    AUTOINCREMENT table has no `sqlite_sequence` row at all, so the sequence
+    row is an unreliable idempotency signal.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='events'"
+    ).fetchone()
+    return bool(row) and "AUTOINCREMENT" in (row[0] or "").upper()
+
+
+def migrate_events_to_autoincrement(db_path: str) -> str:
+    """Migrate a legacy plain-rowid `events` table to AUTOINCREMENT.
+
+    Safe to call on every gateway startup: it is a no-op when the table is
+    already AUTOINCREMENT or does not exist, and a one-way conversion when the
+    table is the old plain-rowid schema. Runs under `BEGIN IMMEDIATE` so a
+    concurrent consumer/gateway write cannot interleave the recreate. All
+    existing rowids are preserved and `sqlite_sequence.seq` is pinned to the
+    max rowid, so the cursor and any future inserts continue from where the
+    table left off instead of restarting at 1.
+
+    Returns a short status for logging:
+        'missing'        — no `events` table; nothing to do.
+        'skipped'        — already AUTOINCREMENT (idempotent no-op).
+        'migrated'       — converted a non-empty table (rowids preserved).
+        'migrated-empty' — converted an empty plain-rowid table.
+    """
+    conn = sqlite3.connect(db_path, timeout=5)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        if not _events_table_exists(conn):
+            return "missing"
+        if _events_is_autoincrement(conn):
+            return "skipped"
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("ALTER TABLE events RENAME TO events_old")
+            conn.execute(
+                """
+                CREATE TABLE events (
+                    rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dedup_key TEXT UNIQUE,
+                    topic TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    ts REAL NOT NULL,
+                    processed INTEGER DEFAULT 0
+                )
+                """
+            )
+            # Copy rows with rowids preserved (explicit rowid → cursor stays valid).
+            conn.execute(
+                """
+                INSERT INTO events (rowid, dedup_key, topic, payload_json, ts, processed)
+                SELECT rowid, dedup_key, topic, payload_json, ts, processed FROM events_old
+                """
+            )
+            max_row = conn.execute("SELECT MAX(rowid) FROM events").fetchone()[0]
+            # Belt + suspenders: pin sqlite_sequence.seq to the max rowid so the
+            # next insert is max+1, never a recycled low id. (INSERT..SELECT with
+            # an explicit rowid already advances seq, but set it explicitly to
+            # match the spec.) sqlite_sequence has no PK on `name` here, so no
+            # ON CONFLICT — use a conditional UPDATE/INSERT instead.
+            if max_row is not None:
+                if conn.execute(
+                    "SELECT 1 FROM sqlite_sequence WHERE name='events'"
+                ).fetchone():
+                    conn.execute(
+                        "UPDATE sqlite_sequence SET seq=? WHERE name='events'",
+                        (max_row,),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO sqlite_sequence (name, seq) VALUES ('events', ?)",
+                        (max_row,),
+                    )
+            conn.execute("DROP TABLE events_old")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        return "migrated" if max_row is not None else "migrated-empty"
+    finally:
+        conn.close()
+
+
+# ── Singleton (continued) ────────────────────────────────────
 # endpoint and IPC bridge.
 _bus: EventBus | None = None
+
+
+def ensure_bus_autoincrement() -> str:
+    """Run the Layer (b) bus migration against this process's own bus DB.
+
+    Thin public wrapper so callers (the gateway lifespan in server.py) don't
+    touch the private ``_BUS_DB_PATH``. Safe to call on every startup: it is a
+    no-op when the bus is already AUTOINCREMENT or absent. Returns the same
+    status string as :func:`migrate_events_to_autoincrement`.
+    """
+    status = migrate_events_to_autoincrement(str(_BUS_DB_PATH))
+    logger.info("Bus AUTOINCREMENT migration at startup: %s", status)
+    return status
 
 
 def get_event_bus() -> EventBus:
