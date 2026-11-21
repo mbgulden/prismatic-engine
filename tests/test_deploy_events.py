@@ -128,7 +128,8 @@ class StubRunner:
 
 
 class StubHealth:
-    def check(self, version_dir=None, release_symlink=None, dry_run=False):
+    def check(self, version_dir=None, release_symlink=None, dry_run=False,
+              require_http=False):
         return {"passed": True, "checks": {}, "details": {}}
 
 
