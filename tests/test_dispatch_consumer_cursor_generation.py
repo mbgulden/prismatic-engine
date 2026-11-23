@@ -2555,3 +2555,118 @@ def test_58_absent_to_present_race_preserves_descriptor_close_failure(
     finally:
         for fd in leaked_fds:
             orig_close(fd)
+
+
+# -----------------------------------------------------------------------------
+# Layer (a) vacuum empty-table guard (root cause 2026-11-15; fix 2026-11-18)
+# -----------------------------------------------------------------------------
+
+
+def test_59_vacuum_refuses_to_empty_events_table(tmp_path: Path) -> None:
+    """Adversarial case 1 (Layer a): all 5 rows processed and >24h old, zero
+    new events. Pre-fix vacuum deleted every row (table emptied, rowids later
+    restarted beneath the cursor). With the guard, the pass is refused:
+    >=1 row survives and the newest row is intact."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+    conn = sqlite3.connect(canon_db)
+    try:
+        # Age every event past the 24h vacuum horizon and mark processed.
+        conn.execute(
+            "UPDATE events SET processed = 1, ts = ? WHERE 1 = 1",
+            (time.time() - 90 * 86400,),
+        )
+        conn.commit()
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 5
+        newest_before = conn.execute("SELECT MAX(rowid) FROM events").fetchone()[0]
+        assert newest_before == 5
+    finally:
+        conn.close()
+
+    consumer.vacuum_processed(expected_generation=gen, db_path=canon_db)
+
+    conn = sqlite3.connect(canon_db)
+    try:
+        cnt = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        assert cnt >= 1, (
+            f"vacuum emptied events: {cnt} rows remain (floor must be kept)"
+        )
+        rows = conn.execute(
+            "SELECT rowid, processed, ts FROM events ORDER BY rowid"
+        ).fetchall()
+        assert len(rows) == cnt
+        # The newest processed row must be the surviving floor, intact.
+        assert rows[-1][0] == newest_before, (
+            f"floor row {newest_before} was deleted; survivors={rows}"
+        )
+        assert rows[-1][1] == 1
+        # No unprocessed row was ever present, so nothing should be lost
+        # either: every surviving row is the pre-existing floor set.
+        assert all(r[1] == 1 for r in rows)
+    finally:
+        conn.close()
+
+
+def test_60_vacuum_keeps_floor_row_but_prunes_old_processed(tmp_path: Path) -> None:
+    """Floor-row-kept half of the Layer (a) spec: a vacuum pass that would
+    NOT empty the table deletes the old processed rows exactly as before,
+    but a pass that would empty it must keep the newest processed row.
+
+    Setup: 4 old processed rows (>24h) + 1 unprocessed row (fresh). The
+    normal pass deletes the 4 old processed rows (remainder is 1, the
+    unprocessed row) — proving the guard does not change normal deletion.
+    Then mark that row processed and age it; a second pass now would-empty,
+    so it must be refused with the floor (that same row) kept."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+    conn = sqlite3.connect(canon_db)
+    try:
+        now = time.time()
+        # Rows 1-4: processed, aged >24h. Row 5: fresh, unprocessed.
+        conn.execute(
+            "UPDATE events SET processed = 1, ts = ? WHERE rowid IN (1, 2, 3, 4)",
+            (now - 90 * 86400,),
+        )
+        conn.execute("UPDATE events SET processed = 0, ts = ? WHERE rowid = 5", (now,))
+        conn.commit()
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 5
+    finally:
+        conn.close()
+
+    # Pass 1: would leave row 5 (unprocessed) behind, so the events delete
+    # proceeds exactly as pre-fix: 4 old processed rows deleted.
+    consumer.vacuum_processed(expected_generation=gen, db_path=canon_db)
+    conn = sqlite3.connect(canon_db)
+    try:
+        rows = conn.execute(
+            "SELECT rowid, processed FROM events ORDER BY rowid"
+        ).fetchall()
+        assert rows == [(5, 0)], (
+            f"pass 1 should delete the 4 old processed rows, got {rows}"
+        )
+    finally:
+        conn.close()
+
+    # Age row 5 past the horizon and mark it processed: the next pass would
+    # leave 0 rows, so it must be refused with row 5 kept as the floor.
+    conn = sqlite3.connect(canon_db)
+    try:
+        conn.execute(
+            "UPDATE events SET processed = 1, ts = ? WHERE rowid = 5",
+            (time.time() - 90 * 86400,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    consumer.vacuum_processed(expected_generation=gen, db_path=canon_db)
+    conn = sqlite3.connect(canon_db)
+    try:
+        rows = conn.execute(
+            "SELECT rowid, processed, ts FROM events ORDER BY rowid"
+        ).fetchall()
+        assert len(rows) == 1, f"would-empty pass must keep the floor row, got {rows}"
+        assert rows[0][0] == 5, "the floor must be the newest processed row (5)"
+        assert rows[0][1] == 1, "floor row content must be intact"
+    finally:
+        conn.close()
