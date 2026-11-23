@@ -7,7 +7,7 @@ DECOMPOSE ──▶ DISPATCH ──▶ EXECUTE ──▶ REVIEW ──▶ FEEDBA
 
 Grounded in:
 - specs/7-step-loop-specification.md
-- SOUL.md & soul-alignment-guide.md
+- SOUL.md & docs/internal/soul-alignment-guide.md
 - Linear task conventions ([GRO-XXXX])
 - Real-time SwarmLock acquisition & telemetry emission
 """

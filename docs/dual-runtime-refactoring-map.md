@@ -144,7 +144,7 @@ Portable skills referencing `/home/ubuntu/` in examples and docs.
 `templates/cron/cron-job-templates.md`, profile SOUL.md templates
 
 ### 6.5 Root-level docs (4 files)
-`SOUL.md`, `README.md`, `beyondsaas-setup-guide.md`, `soul-alignment-matrix.md`
+`SOUL.md`, `README.md`, `docs/internal/beyondsaas-setup-guide.md`, `docs/internal/soul-alignment-matrix.md`
 
 ---
 
