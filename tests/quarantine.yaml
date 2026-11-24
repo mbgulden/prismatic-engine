@@ -20,14 +20,14 @@ entries:
   - id: tests/test_group_e_importer_exact_identity.py::test_importer_isolates_two_rows_sharing_candidate
     cause: "C5: contract conflict — test expects two jobs for shared (task_id, candidate_commit); queue deliberately deduplicates that identity as a zombie-job safeguard"
     inventory_ref: "signal-inventory-2026-09-24.md"
-    removal_plan: "Michael decision required: keep code + update test, or keep test + change code; then implement"
-    remove_by: "2026-11-15"
+    removal_plan: "Quarantined per Michael's C5 contract decision, Nov 23, 2026 — underlying contract conflict deferred by his call; families C–G fixes proceed with these two groups quarantined."
+    remove_by: "2027-02-28"
 
   - id: tests/test_group_f_rf_routes_surface.py::test_group_f_authorize_route_maps_exact_domain_actor_without_bypass
     cause: "C5: contract conflict — test expects missing expected_merge_tree to return 400; route deliberately falls back to candidate_tree/candidate_commit"
     inventory_ref: "signal-inventory-2026-09-24.md"
-    removal_plan: "Michael decision required on merge-authorization binding strictness; then implement"
-    remove_by: "2026-11-15"
+    removal_plan: "Quarantined per Michael's C5 contract decision, Nov 23, 2026 — underlying contract conflict deferred by his call; families C–G fixes proceed with these two groups quarantined."
+    remove_by: "2027-02-28"
 
   - id: tests/test_installed_wheel_clean_room.py::test_clean_room_installed_wheel_plugin_contract
     cause: "C6: security-audit finding — secret scanner flags SECRET= placeholder (tests/test_jev_security.py:22) and .env.example credential markers; release_smoke runs the same audit"
