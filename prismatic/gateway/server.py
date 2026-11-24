@@ -186,7 +186,7 @@ from prismatic.completed_work_gate import (
 )
 from prismatic.dispatcher import get_dispatcher_polling_budget_snapshot
 from prismatic.gateway.control_auth import control_authorization_middleware
-from prismatic.gateway.event_bus import get_event_bus
+from prismatic.gateway.event_bus import ensure_bus_autoincrement, get_event_bus
 from prismatic.gateway.ipc_bridge import (
     UnixSocketListener,
     create_event_ingest_route,
@@ -415,6 +415,16 @@ async def lifespan(app: FastAPI):
 
     # Initialize EventBus (ensure singleton)
     get_event_bus()
+
+    # Layer (b): migrate any legacy plain-rowid `events` table to AUTOINCREMENT
+    # so a future vacuum/emptied table can never restart rowids under the cursor.
+    # Idempotent (no-op when already AUTOINCREMENT). Non-fatal: a transient DB
+    # hiccup at startup logs a warning and retries next startup — the Layer (a)
+    # vacuum guard and the fail-closed gate still protect the bus meanwhile.
+    try:
+        ensure_bus_autoincrement()
+    except Exception as exc:
+        logger.warning("Bus AUTOINCREMENT migration at startup failed (will retry next start): %s", exc)
 
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
