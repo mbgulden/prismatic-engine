@@ -347,6 +347,27 @@ def test_parse_acceptance_goals_header_variants() -> None:
     ) == ["one", "two", "three"]
     # No AC section -> [] (data, not a parse error).
     assert kb.parse_acceptance_goals("Do the thing.\n") == []
+    # Decorated ACCEPTANCE CRITERIA headers (the 3-of-4 false-REPAIR shape):
+    # a parenthetical / colon annotation after the canonical two-word phrase
+    # must NOT read as an inline clause; the bullets below are the section.
+    # Pre-fix, the leftover guard swallowed the header and its bullets -> []
+    # -> criteria_present failed -> spurious REPAIR (3/4).
+    assert kb.parse_acceptance_goals(
+        "## Acceptance criteria (pre-registered, not worker-editable)\n"
+        "- AC1: foo\n- AC2: bar\n- AC3: baz\n"
+    ) == ["AC1: foo", "AC2: bar", "AC3: baz"]
+    assert kb.parse_acceptance_goals(
+        "ACCEPTANCE CRITERIA (copied from the original task):\n- a\n- b\n"
+    ) == ["a", "b"]
+    assert kb.parse_acceptance_goals(
+        "## Acceptance criteria (copied from the original task)\n- a\n"
+    ) == ["a"]
+    # True leftover: "ACCEPTANCE: CRITERIA …" (colon BETWEEN the words) with
+    # no following list is still not a section -> [] (pre-existing behavior,
+    # pinned here so the guard is not removed blindly).
+    assert kb.parse_acceptance_goals(
+        "ACCEPTANCE: CRITERIA items as described\n"
+    ) == []
 
 
 def test_extract_claimed_deliverables_only_framed_paths() -> None:
