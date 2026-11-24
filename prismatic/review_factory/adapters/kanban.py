@@ -238,15 +238,27 @@ def _completion_text(cur: Any, tid: str) -> str | None:
 #: tasks used differently):
 #
 #   * ``ACCEPTANCE CRITERIA:``            (original exact form; bullets follow)
+#   * ``ACCEPTANCE CRITERIA (pre-registered …):``
+#                                           (decorated variant; a parenthetical
+#                                            / colon annotation after the
+#                                            canonical two-word phrase; bullets
+#                                            follow — t_6f85ccf7, 3-of-4 tasks
+#                                            used this and were mis-read as an
+#                                            inline clause, dropping the list)
 #   * ``ACCEPTANCE:``                     (label line; bullets follow)
 #   * ``ACCEPTANCE = items 1-5 pass ...`` (inline clause; the clause itself
 #                                           is the goal)
 #   * ``SUGGESTED VERIFICATIONS FOR <role>`` / ``VERIFICATIONS:``
 #                                           (numbered list follows)
 #: ``group("inline")`` is non-None only for the inline-clause form.
+#: Note: the decorated variant above is matched by the FIRST alternative
+#: (annotation absorbed as ``[^\s].*``), so it is a section opener and its
+#: bullets are collected — unlike ``ACCEPTANCE: CRITERIA …`` (colon between
+#: the words), which still falls to the inline alternative and is screened
+#: by the leftover guard.
 _AC_LINE = re.compile(
     r"^\s*#{0,6}\s*(?:"
-    r"ACCEPTANCE\s+CRITERIA\s*[:\-]?\s*$"
+    r"ACCEPTANCE\s+CRITERIA\s*[:\-]?\s*(?:[^\s].*)?$"
     r"|ACCEPTANCE\s*[:=]?\s+(?P<inline>[^\s].*)$"
     r"|ACCEPTANCE\s*[:=]\s*$"
     r"|(?:SUGGESTED\s+)?VERIFICATIONS(?:\s+FOR\s+[\w.+-]+)?\s*[:\-]?\s*$"
